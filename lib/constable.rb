@@ -143,3 +143,8 @@ module Constable
     def run_after_suite!  = @after_suite_hooks.each(&:call)
   end
 end
+
+# Registers Constable as the app's generator test framework, so `rails generate model`
+# writes a case instead of a Minitest file. Conditional on purpose: everything above this
+# line must load in a process with no Rails at all, which is what the :unit tier is for.
+require "constable/railtie" if defined?(Rails::Railtie)
