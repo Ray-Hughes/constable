@@ -58,11 +58,10 @@ module Constable
 
     # => Integer exit status (0 clean, 1 failures)
     def call
-      # Before anything is loaded. Ruby's Coverage only counts files that are required
-      # after it starts, so starting it later than this measures an empty application and
-      # then cheerfully reports 100%.
-      # force: the decision was already made in #coverage?, which folds --coverage together
-      # with the config setting. Asking the config a second time would ignore the flag.
+      # Before anything is loaded: Coverage only counts files required after it starts, so
+      # starting it any later measures an empty application and reports a confident 100%.
+      # force:, because #coverage? has already folded --coverage together with the config
+      # setting, and asking the config again would throw the flag away.
       Constable::Coverage.start!(config: @config, force: true) if coverage?
 
       load_suite!
@@ -93,8 +92,6 @@ module Constable
       duration = monotonic - started
 
       Constable.configuration.run_after_suite!
-      # Cold cases contribute their numbers but are never held to the diff gate, so a run
-      # carrying nothing else must not be gated at all.
       @coverage_report = build_coverage_report if coverage?
 
       persist(run_id, @results, @coverage_report)
