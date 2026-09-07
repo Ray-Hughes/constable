@@ -54,6 +54,13 @@ Initial release.
 - Parallel workers, load-balanced by a cached per-test duration index.
 - Git-diff-based local test selection; `--full` for everything.
 
+### Watching the suite
+
+- `constable watchlist` — jailed, paroled and warranted tests in one view.
+- `constable status` — the trend view: how much of the suite is still running as cold
+  cases and whether that number is moving, the recent runs, and the ten slowest tests
+  historically.
+
 ### Output
 
 - Live glyph stream, then a summary that leads with what is most urgent: parole
