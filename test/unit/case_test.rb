@@ -539,5 +539,269 @@ module Constable
 
       assert_equal "signed in as admin", klass.run(klass.investigations.first)
     end
+
+    # --- the Minitest lifecycle shim ------------------------------------------
+    #
+    # `setup`/`teardown` exist so Rails' testing modules can be mixed into a Case.
+    # `briefing` is still the API a person writes.
+
+    def test_setup_is_a_synonym_for_briefing
+      runs = []
+      klass = build_case do
+        briefing { runs << :briefing }
+        setup { runs << :setup }
+        investigate("body") { runs << :body }
+      end
+
+      klass.run(klass.investigations.first)
+
+      assert_equal %i[briefing setup body], runs
+    end
+
+    def test_setup_accepts_method_names
+      runs = []
+      klass = build_case do
+        define_method(:prepare_one) { runs << :one }
+        define_method(:prepare_two) { runs << :two }
+        setup :prepare_one, :prepare_two
+        investigate("body") { runs << :body }
+      end
+
+      klass.run(klass.investigations.first)
+
+      assert_equal %i[one two body], runs
+    end
+
+    def test_setup_runs_parents_before_children
+      runs = []
+      parent = build_case("ParentCase") { setup { runs << :parent } }
+      child = build_case("ChildCase", parent) do
+        setup { runs << :child }
+        investigate("body") { runs << :body }
+      end
+
+      child.run(child.investigations.first)
+
+      assert_equal %i[parent child body], runs
+    end
+
+    def test_teardown_runs_after_the_body_in_reverse_order
+      runs = []
+      parent = build_case("ParentCase") { teardown { runs << :parent } }
+      child = build_case("ChildCase", parent) do
+        teardown { runs << :child_first }
+        teardown { runs << :child_second }
+        investigate("body") { runs << :body }
+      end
+
+      child.run(child.investigations.first)
+
+      assert_equal %i[body child_second child_first parent], runs
+    end
+
+    def test_teardown_accepts_method_names
+      runs = []
+      klass = build_case do
+        define_method(:clean_up) { runs << :cleaned }
+        teardown :clean_up
+        investigate("body") { runs << :body }
+      end
+
+      klass.run(klass.investigations.first)
+
+      assert_equal %i[body cleaned], runs
+    end
+
+    def test_teardown_runs_even_when_the_body_raises
+      runs = []
+      klass = build_case do
+        teardown { runs << :torn_down }
+        investigate("explodes") { raise Constable::AssertionFailed, "nope" }
+      end
+
+      assert_raises(Constable::AssertionFailed) { klass.run(klass.investigations.first) }
+      assert_equal %i[torn_down], runs
+    end
+
+    def test_teardown_runs_even_when_a_briefing_raises
+      runs = []
+      klass = build_case do
+        briefing { raise "setup rot" }
+        teardown { runs << :torn_down }
+        investigate("never runs") { runs << :body }
+      end
+
+      assert_raises(RuntimeError) { klass.run(klass.investigations.first) }
+      assert_equal %i[torn_down], runs
+    end
+
+    # The first thing that went wrong is the thing worth reporting -- a teardown that
+    # blows up on the wreckage must not become the message the developer reads.
+    def test_a_raising_teardown_never_masks_the_investigations_own_failure
+      klass = build_case do
+        teardown { raise "teardown fallout" }
+        investigate("explodes") { raise Constable::AssertionFailed, "the real problem" }
+      end
+
+      error = assert_raises(Constable::AssertionFailed) { klass.run(klass.investigations.first) }
+      assert_equal "the real problem", error.message
+    end
+
+    def test_every_teardown_runs_even_if_an_earlier_one_raises
+      runs = []
+      klass = build_case do
+        teardown { runs << :outermost }
+        teardown { raise "boom" }
+        teardown { runs << :innermost }
+        investigate("body") { :ok }
+      end
+
+      error = assert_raises(RuntimeError) { klass.run(klass.investigations.first) }
+      assert_equal "boom", error.message
+      assert_equal %i[innermost outermost], runs
+    end
+
+    def test_a_raising_teardown_surfaces_when_the_body_passed
+      klass = build_case do
+        teardown { raise "teardown fallout" }
+        investigate("passes") { :ok }
+      end
+
+      error = assert_raises(RuntimeError) { klass.run(klass.investigations.first) }
+      assert_equal "teardown fallout", error.message
+    end
+
+    def test_run_setup_does_not_run_teardowns
+      runs = []
+      klass = build_case do
+        teardown { runs << :torn_down }
+        investigate("never runs") { runs << :body }
+      end
+      instance = klass.new
+
+      instance.run_setup(klass.investigations.first)
+
+      assert_empty runs
+    end
+
+    def test_run_teardown_returns_the_first_error_rather_than_raising
+      klass = build_case do
+        teardown { raise "first" }
+        investigate("x") { :ok }
+      end
+      instance = klass.new
+
+      error = instance.run_teardown
+
+      assert_kind_of RuntimeError, error
+      assert_equal "first", error.message
+    end
+
+    def test_lifecycle_hooks_are_no_ops_that_chain_to_included_modules
+      order = []
+      hooks = Module.new do
+        define_method(:before_setup) do
+          order << :before_setup
+          super()
+        end
+        define_method(:after_setup) do
+          order << :after_setup
+          super()
+        end
+        define_method(:before_teardown) do
+          order << :before_teardown
+          super()
+        end
+        define_method(:after_teardown) do
+          order << :after_teardown
+          super()
+        end
+      end
+      klass = build_case do
+        include hooks
+
+        briefing { order << :briefing }
+        teardown { order << :teardown }
+        investigate("body") { order << :body }
+      end
+
+      klass.run(klass.investigations.first)
+
+      assert_equal %i[before_setup briefing after_setup body before_teardown teardown after_teardown],
+                   order
+    end
+
+    def test_constable_failure_is_readable_while_teardown_runs
+      seen = []
+      klass = build_case do
+        teardown { seen << constable_failure }
+        investigate("explodes") { raise Constable::AssertionFailed, "boom" }
+      end
+
+      assert_raises(Constable::AssertionFailed) { klass.run(klass.investigations.first) }
+      assert_kind_of Constable::AssertionFailed, seen.first
+    end
+
+    def test_constable_failure_is_nil_when_the_investigation_passed
+      seen = []
+      klass = build_case do
+        teardown { seen << constable_failure }
+        investigate("passes") { :ok }
+      end
+
+      klass.run(klass.investigations.first)
+
+      assert_nil seen.first
+    end
+
+    # Rails names a failure screenshot after the test method. Constable has no test
+    # method, so the description is the closest honest answer.
+    def test_method_name_is_a_slug_of_the_description
+      klass = build_case { investigate("creates a user, politely!") { method_name } }
+
+      assert_equal "creates_a_user_politely", klass.run(klass.investigations.first)
+    end
+
+    def test_method_name_includes_the_docket_path
+      klass = build_case do
+        docket("as an admin") { investigate("creates a user") { method_name } }
+      end
+
+      assert_equal "as_an_admin_creates_a_user", klass.run(klass.investigations.first)
+    end
+
+    def test_method_name_falls_back_when_there_is_no_investigation
+      assert_equal "investigation", build_case.new.method_name
+    end
+
+    def test_setups_and_teardowns_are_inherited_by_dockets
+      runs = []
+      klass = build_case do
+        setup { runs << :outer_setup }
+        teardown { runs << :outer_teardown }
+
+        docket "as an admin" do
+          setup { runs << :inner_setup }
+          teardown { runs << :inner_teardown }
+          investigate("body") { runs << :body }
+        end
+      end
+
+      klass.run(klass.investigations.first)
+
+      assert_equal %i[outer_setup inner_setup body inner_teardown outer_teardown], runs
+    end
+
+    def test_sibling_dockets_do_not_share_teardowns
+      klass = build_case do
+        docket("one") { teardown { :one } }
+        docket("two") { investigate("body") { :ok } }
+      end
+
+      two = klass.dockets.last
+
+      assert_empty two.own_teardowns
+      assert_empty two.teardowns
+    end
   end
 end

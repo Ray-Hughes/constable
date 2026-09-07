@@ -60,22 +60,43 @@ end
 #  These are plain classes. Anything a whole tier needs belongs here: an
 #  ActiveJob test adapter, a factory module, `include Authenticatable` for every
 #  integration case.
+#
+#  The two Constable::RailsSupport modules below are the bridge to Rails' own
+#  testing code. Constable does not reimplement `post users_path` or
+#  `click_on "Save"` -- Rails ships both as ordinary modules, and every
+#  reimplementation of them would be a slightly wrong one.
 # -----------------------------------------------------------------------------
 
+# No database, no request stack, no browser -- just Ruby. The fastest thing
+# Constable can run, and where most of a suite should live.
 class UnitCase < Constable::Case
   tier :unit
 end
 
+# get/post/patch/delete, `response`, `follow_redirect!`, cookies, and every URL
+# helper your routes define (`users_path`, `article_url(article)`). Each
+# investigation runs inside a transaction that is rolled back afterwards.
 class IntegrationCase < Constable::Case
+  include Constable::RailsSupport::Integration
+
   tier :integration
 end
 
+# The browser instead of the request stack: Capybara's `visit`/`click_on`/
+# `fill_in`/`page`, its assertions, your URL helpers pointed at the test server,
+# and Rails' own `driven_by`. There is no `response` here -- a system case looks
+# at the rendered page, which is the whole reason to pay for a browser.
 class SystemCase < Constable::Case
   # Capybara is not a Constable dependency. System cases are opt-in, and a suite
   # with no browser tests shouldn't be made to install a browser driver to boot.
-  include Capybara::DSL if defined?(Capybara::DSL)
+  include Constable::RailsSupport::System if defined?(Capybara)
 
   tier :system
+
+  # The default is Selenium driving Chrome, exactly as Rails' own system tests
+  # default. Change it here and every system case follows:
+  #
+  # driven_by :selenium, using: :headless_chrome, screen_size: [1400, 1400]
 end
 
 # -----------------------------------------------------------------------------

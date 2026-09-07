@@ -10,14 +10,10 @@ module Constable
     class MailboxGenerator < Base
       check_class_collision suffix: "MailboxCase"
 
+      strips_suffix(/_mailbox\z/i)
+
       def create_case_file
         template "mailbox_case.rb.tt", case_path("mailboxes", class_path, "#{file_name}_mailbox_case.rb")
-      end
-
-      private
-
-      def file_name
-        @_file_name ||= super.sub(/_mailbox\z/i, "")
       end
     end
   end

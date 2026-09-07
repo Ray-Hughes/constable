@@ -417,7 +417,22 @@ module Constable
 
       instance = Case.constable_instance_for(investigation)
       begin
-        Isolation.with_rollback(investigation.tier) { instance.run_setup(investigation) }
+        # Setup without a body, but with its teardown -- skipping the body is the point of
+        # the jail; skipping the cleanup would just leave the request session, the browser
+        # or whatever else a teardown releases open for whatever runs next.
+        Isolation.with_rollback(investigation.tier) do
+          raised = nil
+          begin
+            instance.run_setup(investigation)
+          rescue StandardError => e
+            raised = e
+          end
+          # On its own line, not behind an ||=: teardown has to run whether or not setup
+          # got that far, and the first failure is still the one worth reporting.
+          teardown_failure = instance.run_teardown
+          raised ||= teardown_failure
+          raise raised if raised
+        end
       rescue StandardError => e
         failure = Failure.from_exception(e, context: "setup for a jailed test still runs, and it failed")
       ensure
@@ -446,6 +461,9 @@ module Constable
       instance = Case.constable_instance_for(investigation)
 
       begin
+        # run_investigation is the whole lifecycle: before_setup, briefings, body,
+        # teardowns, after_teardown. The teardown half runs inside the rollback whether or
+        # not the body raised, and a teardown that raises never masks the body's failure.
         Isolation.with_rollback(investigation.tier) { instance.run_investigation(investigation) }
       rescue AssertionFailed => e
         status = :failed
@@ -664,6 +682,10 @@ module Constable
       report
     end
 
+    # The last thing to happen to an instance, after its own teardowns and after the
+    # transaction is gone: the runtime DSL's global state -- a frozen clock, a barred
+    # network, a half-open unsafe block -- belongs to the process, not to the test, so it
+    # is released once everything that might still depend on it has finished.
     def teardown(instance)
       instance._constable_dsl_teardown if instance.respond_to?(:_constable_dsl_teardown)
     rescue StandardError => e

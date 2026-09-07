@@ -48,6 +48,7 @@ module Constable
   autoload :LogRouter,     "constable/log_router"
   autoload :Matchers,      "constable/matchers"
   autoload :OrderAudit,    "constable/order_audit"
+  autoload :RailsSupport,  "constable/rails_support"
   autoload :Registry,      "constable/registry"
   autoload :Reporter,      "constable/reporter"
   autoload :Result,        "constable/result"

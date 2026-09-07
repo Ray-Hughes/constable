@@ -7,6 +7,13 @@
 require "rails/generators/named_base"
 require "constable"
 
+# Rails' own generators get these for free because a booted app has loaded all of
+# ActiveSupport by the time anything generates. Ours can be loaded by a bare
+# `rails generate` in a half-booted process, and GeneratedAttribute#parse reaches for
+# String#remove, so name what we actually depend on rather than hoping.
+require "active_support/core_ext/string/filters"
+require "active_support/core_ext/string/inflections"
+
 module Constable
   module Generators
     # Shared ground for the generators Rails invokes on Constable's behalf.
@@ -26,9 +33,26 @@ module Constable
       # Each generator keeps its templates beside itself. Rails' default looks for them
       # under railties' own directory, which is no use to a gem that isn't railties.
       def self.source_root(path = nil)
-        return @_constable_source_root = path if path
+        return @source_root = path if path
 
-        @_constable_source_root ||= File.expand_path(File.join(__dir__, generator_name, "templates"))
+        @source_root ||= File.expand_path(File.join(__dir__, generator_name, "templates"))
+      end
+
+      # `rails generate job CleanUpJob` and `rails generate job CleanUp` have to land in
+      # the same file, so the generators Rails hooks strip their own suffix off the name
+      # first. Declared here once rather than written out six times, and with one thing
+      # worth knowing: the memo has to be @_file_name and not @file_name, because
+      # NamedBase's own reader is backed by @file_name -- memoizing into it would make
+      # `super` hand back the already-stripped value and the suffix would never come off.
+      # The no_commands wrapper is not decoration: Thor turns every public instance method
+      # on a generator into a runnable step, and a generator whose first step is
+      # "file_name" writes no files at all.
+      def self.strips_suffix(pattern)
+        no_commands do
+          # rubocop:disable-next Naming/MemoizedInstanceVariableName -- @file_name is taken, see above
+          define_method(:file_name) { @_file_name ||= super().sub(pattern, "") }
+        end
+        private :file_name
       end
 
       private

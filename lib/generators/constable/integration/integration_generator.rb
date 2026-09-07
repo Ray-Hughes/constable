@@ -17,14 +17,10 @@ module Constable
     class IntegrationGenerator < Base
       check_class_collision suffix: "Case"
 
+      strips_suffix(/_test\z/i)
+
       def create_case_file
         template "request_case.rb.tt", case_path("controllers", class_path, "#{file_name}_case.rb")
-      end
-
-      private
-
-      def file_name
-        @_file_name ||= super.sub(/_test\z/i, "")
       end
     end
   end

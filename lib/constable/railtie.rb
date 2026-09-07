@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "rails/railtie"
-
 module Constable
   # The one file in the gem that cannot exist without Rails.
   #
@@ -15,7 +13,10 @@ module Constable
   #
   # Loaded conditionally from lib/constable.rb, never unconditionally: `require
   # "constable"` has to keep working in a process with no Rails app at all, which is the
-  # whole premise of the :unit tier.
+  # whole premise of the :unit tier. That guard is also why there is no
+  # `require "rails/railtie"` at the top of this file -- by the time anything reaches
+  # here, Rails::Railtie is already defined, and requiring it from a bare Ruby process
+  # would only turn a clean NameError into a confusing one from inside railties.
   class Railtie < ::Rails::Railtie
     config.app_generators do |g|
       # `fixture: false` is not an oversight. Constable has no fixtures: a witness builds

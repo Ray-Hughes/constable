@@ -10,14 +10,10 @@ module Constable
     class ChannelGenerator < Base
       check_class_collision suffix: "ChannelCase"
 
+      strips_suffix(/_channel\z/i)
+
       def create_case_file
         template "channel_case.rb.tt", case_path("channels", class_path, "#{file_name}_channel_case.rb")
-      end
-
-      private
-
-      def file_name
-        @_file_name ||= super.sub(/_channel\z/i, "")
       end
     end
   end

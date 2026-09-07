@@ -11,6 +11,8 @@ module Constable
     class MailerGenerator < Base
       argument :actions, type: :array, default: [], banner: "method method"
 
+      strips_suffix(/_mailer\z/i)
+
       def check_class_collision
         class_collisions "#{class_name}MailerCase", "#{class_name}MailerPreview"
       end
@@ -24,12 +26,6 @@ module Constable
       # buy nothing and break /rails/mailers, so it stays exactly where Rails put it.
       def create_preview_file
         template "preview.rb.tt", File.join("test/mailers/previews", class_path, "#{file_name}_mailer_preview.rb")
-      end
-
-      private
-
-      def file_name
-        @_file_name ||= super.sub(/_mailer\z/i, "")
       end
     end
   end

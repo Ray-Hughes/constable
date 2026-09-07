@@ -10,14 +10,10 @@ module Constable
     class JobGenerator < Base
       check_class_collision suffix: "JobCase"
 
+      strips_suffix(/_job\z/i)
+
       def create_case_file
         template "job_case.rb.tt", case_path("jobs", class_path, "#{file_name}_job_case.rb")
-      end
-
-      private
-
-      def file_name
-        @_file_name ||= super.sub(/_job\z/i, "")
       end
     end
   end

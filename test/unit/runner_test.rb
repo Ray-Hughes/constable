@@ -44,6 +44,56 @@ module Constable
       assert(runner.results.any? { |r| r.failure&.message.to_s.include?("NoSuchParent") })
     end
 
+    # --- the jailed path -------------------------------------------------------
+    #
+    # A jailed test still runs its setup, so setup rot surfaces on the next ordinary run
+    # rather than lying in wait until someone gets around to `constable jail run`. Its
+    # teardown has to run for the same reason the body's does: skipping the body is the
+    # point of the jail, leaving a session or a clock open for the next test is not.
+
+    def jailed_runner
+      selection = Selection.new([], config: Constable.config, root: tmp_root, full: true)
+      Runner.new(
+        selection: selection, config: Constable.config,
+        reporter: Reporter.new(io: StringIO.new, config: Constable.config, color: false),
+        storage: Constable.storage
+      )
+    end
+
+    def jail_entry = Struct.new(:reason, :times_jailed).new("flaky", 2)
+
+    def test_a_jailed_test_runs_setup_and_teardown_but_never_its_body
+      runs = []
+      klass = build_case("JailedCase") do
+        briefing { runs << :briefed }
+        teardown { runs << :torn_down }
+        investigate("body") { runs << :body }
+      end
+
+      result = jailed_runner.send(:run_jailed_setup, klass.investigations.first, jail_entry)
+
+      assert_equal %i[briefed torn_down], runs
+      assert_predicate result, :jailed?
+      assert_nil result.failure
+    end
+
+    # Regression: the teardown call sat behind an `||=`, so the one case that needed it
+    # most -- a briefing that blew up mid-way -- was the one case that never got it.
+    def test_a_jailed_test_tears_down_even_when_its_briefing_raises
+      runs = []
+      klass = build_case("RottenJailedCase") do
+        briefing { raise "setup rot" }
+        teardown { runs << :torn_down }
+        investigate("body") { runs << :body }
+      end
+
+      result = jailed_runner.send(:run_jailed_setup, klass.investigations.first, jail_entry)
+
+      assert_equal %i[torn_down], runs
+      assert_match(/setup rot/, result.failure.message)
+      assert_match(/jailed test still runs/, result.failure.context.to_s)
+    end
+
     # Regression: worker pipes were opened in text mode while Marshal payloads are binary,
     # so the first byte that was not valid UTF-8 killed the worker.
     def test_results_survive_the_worker_pipe_when_they_contain_binary_bytes

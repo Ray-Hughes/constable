@@ -76,6 +76,41 @@ module Constable
         block
       end
 
+      # --- Minitest lifecycle compatibility -----------------------------------
+      #
+      # `briefing` is how a person writes setup in Constable. `setup` exists because
+      # Rails' testing modules -- ActionDispatch::IntegrationTest::Behavior and friends --
+      # are written against Minitest's contract and call these macros on the class they
+      # are included into. Answering that contract is what lets a case get `post
+      # users_path` and `response` for free instead of a reimplementation of them.
+      #
+      # It is a synonym, not a second mechanism: a `setup` block is appended to exactly
+      # the same list `briefing` appends to, so ordering is one rule rather than two --
+      # parents before children, declaration order preserved within a class.
+
+      # setup { ... } and setup :method_name, :other_method are both legal, because both
+      # forms appear in Rails' own modules.
+      def setup(*method_names, &block)
+        method_names.each { |name| own_briefings << proc { send(name) } }
+        own_briefings << block if block
+        self
+      end
+
+      # Cleanup, run after the investigation body in reverse declaration order -- a
+      # child's teardowns before its parent's -- and run whether or not the body raised.
+      def teardown(*method_names, &block)
+        method_names.each { |name| own_teardowns << proc { send(name) } }
+        own_teardowns << block if block
+        self
+      end
+
+      # Innermost-first: the mirror image of #briefings.
+      def teardowns
+        constable_lineage.flat_map(&:own_teardowns).reverse
+      end
+
+      def own_teardowns = (@constable_own_teardowns ||= [])
+
       # In-file grouping. A docket is an anonymous subclass with the description pushed
       # onto its docket path -- so witnesses and briefings declared inside it are scoped
       # to it, and nothing is shared with its siblings. Nests arbitrarily deep.
@@ -207,10 +242,32 @@ module Constable
     # point warnings and failures at the user's own file:line.
     attr_accessor :constable_investigation
 
-    # The full path the Runner takes for one test: fresh instance, briefings, body.
+    # Whatever the investigation raised, readable while teardown is running and nil when
+    # it passed. Rails' system-test screenshot helper asks a test whether it failed; this
+    # is how a case can answer without Minitest's result object.
+    attr_reader :constable_failure
+
+    # The full path the Runner takes for one test: fresh instance, before_setup,
+    # briefings, body, teardowns, after_teardown.
     def run_investigation(investigation)
-      run_setup(investigation)
-      run_body(investigation)
+      failure = nil
+      value = nil
+      begin
+        run_setup(investigation)
+        value = run_body(investigation)
+      rescue StandardError => e
+        failure = e
+      ensure
+        @constable_failure = failure
+        # A raise from teardown must never replace the investigation's own failure. The
+        # first thing that went wrong is the thing worth reporting; the rest is fallout.
+        teardown_failure = run_teardown
+        failure ||= teardown_failure
+      end
+
+      raise failure if failure
+
+      value
     end
 
     # Setup only. A jailed test still gets this -- its briefings and witnesses run, just
@@ -218,13 +275,43 @@ module Constable
     def run_setup(investigation = nil)
       @constable_investigation = investigation if investigation
       clear_witnesses!
+      before_setup
       self.class.briefings.each { |briefing| instance_exec(&briefing) }
+      after_setup
       self
     end
 
     def run_body(investigation)
       @constable_investigation = investigation
       instance_exec(&investigation.block)
+    end
+
+    # Returns the first exception raised rather than raising it, so the caller stays in
+    # charge of which failure the run reports. Every teardown runs even if an earlier one
+    # blew up -- half-released state is worse than a noisy log.
+    def run_teardown
+      errors = []
+      constable_swallow(errors) { before_teardown }
+      self.class.teardowns.each { |block| constable_swallow(errors) { instance_exec(&block) } }
+      constable_swallow(errors) { after_teardown }
+      errors.first
+    end
+
+    # The four hooks Minitest's contract requires. They are no-ops here on purpose: this
+    # is the bottom of the chain, and the Rails modules a tier base class mixes in sit
+    # above it, each calling super until it lands here.
+    def before_setup    = (super if defined?(super))
+    def after_setup     = (super if defined?(super))
+    def before_teardown = (super if defined?(super))
+    def after_teardown  = (super if defined?(super))
+
+    # Minitest names a test by the method that defines it. Constable's descriptions are
+    # plain strings, so this is the closest honest answer -- and it is what Rails uses to
+    # name a failure screenshot, which is the only place it shows up.
+    def method_name
+      slug = constable_investigation&.full_description.to_s.gsub(/[^A-Za-z0-9]+/, "_")
+      slug = slug.gsub(/\A_+|_+\z/, "").downcase
+      slug.empty? ? "investigation" : slug[0, 120]
     end
 
     # Per-test memo store for `witness`. Fresh instance, fresh hash, no exceptions.
@@ -237,5 +324,13 @@ module Constable
     end
 
     def constable_display_name = self.class.constable_display_name
+
+    private
+
+    def constable_swallow(errors)
+      yield
+    rescue StandardError => e
+      errors << e
+    end
   end
 end

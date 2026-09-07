@@ -102,16 +102,29 @@ module Constable
       helper = generated("test/case_helper.rb")
 
       assert_match(/class UnitCase < Constable::Case\n  tier :unit\nend/, helper)
-      assert_match(/class IntegrationCase < Constable::Case\n  tier :integration\nend/, helper)
+      assert_match(/class IntegrationCase < Constable::Case\b/, helper)
+      assert_match(/tier :integration/, helper)
       assert_match(/class SystemCase < Constable::Case\b/, helper)
       assert_match(/tier :system/, helper)
+    end
+
+    # The tier base classes are only useful if they actually carry the request and
+    # browser stacks -- an IntegrationCase with no `post` is the headline example of
+    # the spec failing to run.
+    def test_case_helper_wires_the_rails_support_modules
+      install
+      helper = generated("test/case_helper.rb")
+
+      assert_match(/include Constable::RailsSupport::Integration/, helper)
+      assert_match(/include Constable::RailsSupport::System/, helper)
     end
 
     # Capybara is not a dependency; a suite with no browser tests must still boot.
     def test_system_case_guards_the_capybara_include
       install
 
-      assert_match(/include Capybara::DSL if defined\?\(Capybara::DSL\)/, generated("test/case_helper.rb"))
+      assert_match(/include Constable::RailsSupport::System if defined\?\(Capybara\)/,
+                   generated("test/case_helper.rb"))
     end
 
     def test_case_helper_boots_rails_and_requires_the_gem

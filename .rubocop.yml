@@ -48,3 +48,9 @@ Style/FormatStringToken:
 Naming/MemoizedInstanceVariableName:
   Exclude:
     - "lib/constable/case.rb"
+
+# lib/constable-rails.rb has to be spelled with the hyphen: Bundler requires a gem by its
+# gem name, and this gem is published as "constable-rails".
+Naming/FileName:
+  Exclude:
+    - "lib/constable-rails.rb"
