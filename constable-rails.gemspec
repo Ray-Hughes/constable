@@ -6,7 +6,7 @@ Gem::Specification.new do |spec|
   spec.name    = "constable-rails"
   spec.version = Constable::VERSION
   spec.authors = ["Ray Hughes"]
-  spec.email   = ["r.hughes2136@gmail.com"]
+  spec.email   = ["raymond.hughes@live.com"]
 
   spec.summary     = "A strict Rails testing framework where fast and non-flaky are structural, " \
                      "not disciplinary."

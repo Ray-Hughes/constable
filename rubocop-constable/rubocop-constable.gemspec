@@ -6,7 +6,7 @@ Gem::Specification.new do |spec|
   spec.name    = "rubocop-constable"
   spec.version = RuboCop::Constable::VERSION
   spec.authors = ["Ray Hughes"]
-  spec.email   = ["r.hughes2136@gmail.com"]
+  spec.email   = ["raymond.hughes@live.com"]
 
   spec.summary     = "RuboCop cops that catch test nondeterminism before CI does."
   spec.description = <<~DESC
