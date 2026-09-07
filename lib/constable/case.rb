@@ -19,21 +19,10 @@ module Constable
   # thing this framework exists to make impossible.
   class Case
     # The runtime DSL (freeze_time, stub_network!, unsafe, assertion primitives) and the
-    # `attest` expectation sugar are separate components. They're mixed in here so every
-    # investigation body has them. The rescue exists only so a Case remains loadable --
-    # and its registration DSL testable -- in a checkout where those files haven't landed
-    # yet; once they exist this is an ordinary include.
-    begin
-      include Constable::DSL
-    rescue LoadError, NameError # :nocov:
-      nil
-    end
-
-    begin
-      include Constable::Matchers::Expectations
-    rescue LoadError, NameError # :nocov:
-      nil
-    end
+    # `attest` expectation sugar live in their own components, mixed in here so every
+    # investigation body has both without asking.
+    include Constable::DSL
+    include Constable::Matchers::Expectations
 
     class << self
       # Every subclass -- a tier base class, a real case, a docket -- starts with its own

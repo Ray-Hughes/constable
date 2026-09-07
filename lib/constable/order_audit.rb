@@ -99,12 +99,15 @@ module Constable
 
       pid = fork do
         reader.close
+        instance = Case.constable_instance_for(investigation)
         status =
           begin
-            Isolation.with_rollback(investigation.tier) { Case.run(investigation) }
+            Isolation.with_rollback(investigation.tier) { instance.run_investigation(investigation) }
             "P"
           rescue StandardError
             "F"
+          ensure
+            instance._constable_dsl_teardown if instance.respond_to?(:_constable_dsl_teardown)
           end
         writer.write(status)
         writer.close

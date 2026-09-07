@@ -326,13 +326,13 @@ module Constable
       started = monotonic
       failure = nil
 
+      instance = Case.constable_instance_for(investigation)
       begin
-        Isolation.with_rollback(investigation.tier) do
-          instance = Case.constable_instance_for(investigation)
-          instance.run_setup(investigation)
-        end
+        Isolation.with_rollback(investigation.tier) { instance.run_setup(investigation) }
       rescue StandardError => e
         failure = Failure.from_exception(e, context: "setup for a jailed test still runs, and it failed")
+      ensure
+        teardown(instance)
       end
 
       result = Result.from_investigation(
@@ -353,16 +353,20 @@ module Constable
       failure = nil
       status = :passed
 
+      instance = Case.constable_instance_for(investigation)
+
       begin
-        Isolation.with_rollback(investigation.tier) do
-          Case.run(investigation)
-        end
+        Isolation.with_rollback(investigation.tier) { instance.run_investigation(investigation) }
       rescue AssertionFailed => e
         status = :failed
         failure = Failure.from_exception(e, context: e.context)
       rescue StandardError => e
         status = :errored
         failure = Failure.from_exception(e)
+      ensure
+        # Time stays frozen and the network stays blocked only for the life of one
+        # investigation. Whatever the outcome, the next one starts from clean ground.
+        teardown(instance)
       end
 
       duration = monotonic - started
@@ -494,6 +498,12 @@ module Constable
 
     def new_warnings
       Constable.warnings[@warnings_before..] || []
+    end
+
+    def teardown(instance)
+      instance._constable_dsl_teardown if instance.respond_to?(:_constable_dsl_teardown)
+    rescue StandardError => e
+      Constable.warn!("teardown after an investigation raised: #{e.message}", kind: :teardown)
     end
 
     def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
