@@ -1,0 +1,34 @@
+# frozen_string_literal: true
+
+require "case_helper"
+
+<% module_namespacing do -%>
+class <%= class_name %>MailerCase < IntegrationCase
+<% if actions.empty? -%>
+  # `rails generate mailer <%= name %>` ran with no methods, so there is nothing to send
+  # yet. When there is, an investigation reads like this:
+  #
+  #   investigate "welcome" do
+  #     mail = <%= class_name %>Mailer.welcome
+  #
+  #     attest(mail.subject).to eq("Welcome")
+  #     attest(mail.to).to eq(["to@example.org"])
+  #     attest(mail.body.encoded).to include("Hi")
+  #   end
+<% else -%>
+  # Rails wrote these headers into the generated views; they are placeholders and every
+  # one of these assertions is meant to be rewritten as the mailer becomes real.
+<% actions.each_with_index do |action, index| -%>
+<%= "\n" unless index.zero? -%>
+  investigate "<%= action %>" do
+    mail = <%= class_name %>Mailer.<%= action %>
+
+    attest(mail.subject).to eq(<%= action.to_s.humanize.inspect %>)
+    attest(mail.to).to eq(["to@example.org"])
+    attest(mail.from).to eq(["from@example.com"])
+    attest(mail.body.encoded).to include("Hi")
+  end
+<% end -%>
+<% end -%>
+end
+<% end -%>

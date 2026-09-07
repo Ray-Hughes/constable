@@ -54,6 +54,9 @@ module Constable
       def history_for(identity, limit: 50)       = raise(NotImplementedError)
       def last_status(identity)                  = raise(NotImplementedError)
       def known_identities                       = raise(NotImplementedError)
+      # Native-vs-cold counts per run, newest run first. Backs the trend in `constable
+      # status`, which is the one place the split between the two matters over time.
+      def kind_totals(limit: 30)                 = raise(NotImplementedError)
       def relink(old_identity, new_identity)     = raise(NotImplementedError)
 
       # --- jail docket -----------------------------------------------------------

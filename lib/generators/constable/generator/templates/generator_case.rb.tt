@@ -1,0 +1,28 @@
+# frozen_string_literal: true
+
+require "case_helper"
+require "<%= generator_path %>"
+
+<% module_namespacing do -%>
+class <%= class_name %>GeneratorCase < UnitCase
+  # Rails' generator harness is a module, so it composes into a case rather than needing
+  # a base class of its own. Wire it up here:
+  #
+  #   include Rails::Generators::Testing::Behaviour
+  #   include FileUtils
+  #
+  #   self.generator_class  = <%= class_name %>Generator
+  #   self.destination_root = Rails.root.join("tmp/generators")
+  #
+  #   briefing { prepare_destination }
+  #
+  # A generator is one of the few things whose test is genuinely about files on disk, so
+  # assert on what it wrote and on what is inside it:
+  #
+  #   investigate "writes the file it promises" do
+  #     run_generator ["Post"]
+  #
+  #     attest(File.read(File.join(destination_root, "app/post.rb"))).to include("class Post")
+  #   end
+end
+<% end -%>

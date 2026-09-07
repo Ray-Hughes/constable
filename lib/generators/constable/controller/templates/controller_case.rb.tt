@@ -1,0 +1,32 @@
+# frozen_string_literal: true
+
+require "case_helper"
+
+<% module_namespacing do -%>
+class <%= class_name %>ControllerCase < IntegrationCase
+<% if mountable_engine? -%>
+  include Engine.routes.url_helpers
+
+<% end -%>
+<% if actions.empty? || options[:skip_routes] -%>
+  # `rails generate controller <%= name %>` ran <%= actions.empty? ? "without any actions" : "with --skip-routes" %>, so there is no route to
+  # drive yet. When there is, an investigation reads like this -- one request, one
+  # assertion about the response, nothing shared with the next one:
+  #
+  #   investigate "index responds successfully" do
+  #     get <%= url_helper_prefix %>_index_url
+  #
+  #     attest(response).to have_http_status(:ok)
+  #   end
+<% else -%>
+<% actions.each do |action| -%>
+  investigate "<%= action %> responds successfully" do
+    get <%= url_helper_prefix %>_<%= action %>_url
+
+    attest(response).to have_http_status(:ok)
+  end
+<%= "\n" unless action == actions.last -%>
+<% end -%>
+<% end -%>
+end
+<% end -%>

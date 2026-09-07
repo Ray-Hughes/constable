@@ -1,0 +1,22 @@
+# frozen_string_literal: true
+
+require "case_helper"
+
+<% module_namespacing do -%>
+class <%= class_name %>Case < IntegrationCase
+  # A request case drives the whole stack from the outside -- routes, middleware,
+  # controller, view -- which is why it is :integration tier and gets a transaction rolled
+  # back around every investigation.
+  #
+  # The generator does not know which route this covers. Once you do, it reads like this:
+  #
+  #   witness(:<%= singular_name %>) { <%= class_name.singularize %>.create!(name: "MyString") }
+  #
+  #   investigate "GET /<%= plural_file_name %> lists every <%= singular_name %>" do
+  #     get <%= plural_file_name %>_url
+  #
+  #     attest(response).to have_http_status(:ok)
+  #     attest(response.body).to include(<%= singular_name %>.name)
+  #   end
+end
+<% end -%>

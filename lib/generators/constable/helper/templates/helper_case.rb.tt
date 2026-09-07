@@ -1,0 +1,19 @@
+# frozen_string_literal: true
+
+require "case_helper"
+
+<% module_namespacing do -%>
+class <%= class_name %>HelperCase < UnitCase
+  # A helper is a plain module, so a helper case is a plain unit case: include it and call
+  # the method. No request, no database, no browser -- which is why this is the fastest
+  # tier and the one where a helper belongs.
+  include <%= class_name %>Helper
+
+  # `rails generate helper <%= name %>` writes an empty module, so there is nothing to
+  # call yet. The first method it gains gets an investigation like this:
+  #
+  #   investigate "formats a badge number" do
+  #     attest(badge_number(1)).to eq("No. 1")
+  #   end
+end
+<% end -%>

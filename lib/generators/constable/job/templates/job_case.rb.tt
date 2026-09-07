@@ -1,0 +1,33 @@
+# frozen_string_literal: true
+
+require "case_helper"
+
+<% module_namespacing do -%>
+class <%= class_name %>JobCase < IntegrationCase
+  # `rails generate job <%= name %>` writes an empty #perform, so there is nothing to
+  # assert on yet. When there is, a job has two halves worth testing and they are two
+  # different investigations.
+  #
+  # What perform actually does -- run it directly, assert on the effect:
+  #
+  #   investigate "marks the record as processed" do
+  #     record = <%= class_name %>.create!
+  #
+  #     <%= class_name %>Job.perform_now(record)
+  #
+  #     attest(record.reload).to be_processed
+  #   end
+  #
+  # That it gets enqueued at all -- this one needs ActiveJob's test adapter, which is a
+  # line in the IntegrationCase base class in test/case_helper.rb (or here, if only jobs
+  # want it):
+  #
+  #   include ActiveJob::TestHelper
+  #
+  #   investigate "goes on the queue it declares" do
+  #     assert_difference("enqueued_jobs.size", 1) do
+  #       <%= class_name %>Job.perform_later
+  #     end
+  #   end
+end
+<% end -%>

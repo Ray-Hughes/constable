@@ -774,3 +774,59 @@ module Constable
     end
   end
 end
+
+module Constable
+  # `constable status` answers "how much of this suite is still opted out of native
+  # rules, and is that number moving" -- which needs the split counted per run.
+  class StorageKindTotalsTest < Constable::TestCase
+    def setup
+      super
+      write_config("storage:\n  adapter: sqlite\n  path: .constable/constable.sqlite3\n")
+      @storage = Constable.storage
+    end
+
+    def record(run_id, identity, kind)
+      @storage.record_result(run_id, Result.new(
+                                       identity: identity, case_name: "C", description: identity,
+                                       file: "test/cases/#{identity}.rb", line: 1, kind: kind
+                                     ))
+    end
+
+    def test_counts_native_and_cold_separately_per_run
+      run_id = @storage.start_run(seed: 1, mode: "full", full: true)
+      record(run_id, "a", :native)
+      record(run_id, "b", :native)
+      record(run_id, "c", :cold)
+
+      totals = @storage.kind_totals(limit: 5)
+
+      assert_equal 1, totals.size
+      assert_equal 2, totals.first[:native]
+      assert_equal 1, totals.first[:cold]
+    end
+
+    def test_returns_newest_run_first
+      first = @storage.start_run(seed: 1, mode: "full", full: true)
+      record(first, "a", :cold)
+      second = @storage.start_run(seed: 2, mode: "full", full: true)
+      record(second, "b", :native)
+
+      totals = @storage.kind_totals(limit: 5)
+
+      assert_equal second, totals.first[:run_id]
+      assert_equal 1, totals.first[:native]
+      assert_equal 0, totals.first[:cold]
+    end
+
+    def test_a_kind_with_no_rows_counts_zero_rather_than_going_missing
+      run_id = @storage.start_run(seed: 1, mode: "full", full: true)
+      record(run_id, "a", :native)
+
+      assert_equal 0, @storage.kind_totals(limit: 5).first[:cold]
+    end
+
+    def test_no_runs_means_no_rows
+      assert_empty @storage.kind_totals(limit: 5)
+    end
+  end
+end

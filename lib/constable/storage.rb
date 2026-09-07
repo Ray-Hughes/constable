@@ -175,6 +175,31 @@ module Constable
         rows(query("SELECT * FROM runs ORDER BY id DESC LIMIT ?", [limit.to_i]))
       end
 
+      # How much of each run was native and how much was still running as a cold case.
+      # Grouped in SQL, folded per run in Ruby -- a LIMIT inside an IN subquery is the one
+      # shape MySQL refuses, and this store has to read identically on all three engines.
+      def kind_totals(limit: 30)
+        grouped = rows(query(<<~SQL, [(limit.to_i * 4) + 8]))
+          SELECT run_id, kind, COUNT(*) AS tally
+          FROM flake_history
+          GROUP BY run_id, kind
+          ORDER BY run_id DESC
+          LIMIT ?
+        SQL
+
+        grouped.group_by { |row| row[:run_id] }
+               .sort_by { |run_id, _| -run_id.to_i }
+               .first(limit.to_i)
+               .map do |run_id, entries|
+                 counts = entries.to_h { |e| [e[:kind].to_s, e[:tally].to_i] }
+                 {
+                   run_id: run_id,
+                   native: counts.fetch("native", 0),
+                   cold: counts.fetch("cold", 0)
+                 }
+               end
+      end
+
       # --- flake history ---------------------------------------------------------
 
       # Every result, native and cold alike, one row per test per run. This is the raw

@@ -1,0 +1,26 @@
+# frozen_string_literal: true
+
+require "case_helper"
+
+<% module_namespacing do -%>
+class <%= class_name %>MailboxCase < IntegrationCase
+  # ActionMailbox's helpers for building an inbound email are a plain module, so they
+  # compose into a case like any other shared behavior. One line, here or in the
+  # IntegrationCase base class in test/case_helper.rb:
+  #
+  #   include ActionMailbox::TestHelper
+  #
+  # Then the investigation worth writing is about what the mailbox did with the message,
+  # not that it received one:
+  #
+  #   witness(:inbound) do
+  #     create_inbound_email_from_mail(to: "<%= file_name %>@example.com", subject: "Hello")
+  #   end
+  #
+  #   investigate "files the message against its sender" do
+  #     inbound.route
+  #
+  #     attest(inbound.reload).to be_delivered
+  #   end
+end
+<% end -%>

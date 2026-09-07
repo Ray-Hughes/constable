@@ -1,0 +1,29 @@
+# frozen_string_literal: true
+
+require "case_helper"
+
+<% module_namespacing do -%>
+class <%= class_name %>ChannelCase < IntegrationCase
+  # ActionCable ships its own harness -- `subscribe`, `subscription`, `perform` -- as a
+  # module, so it composes into a case the same way any shared behavior does. One line,
+  # here or in the IntegrationCase base class in test/case_helper.rb:
+  #
+  #   include ActionCable::Channel::TestCase::Behavior
+  #
+  #   self.channel_class = <%= class_name %>Channel
+  #
+  # With that in place, the first two investigations write themselves:
+  #
+  #   investigate "subscribes" do
+  #     subscribe
+  #
+  #     attest(subscription).to be_confirmed
+  #   end
+  #
+  #   investigate "streams from its own room" do
+  #     subscribe(room: "1")
+  #
+  #     attest(streams).to include("<%= file_name %>_1")
+  #   end
+end
+<% end -%>

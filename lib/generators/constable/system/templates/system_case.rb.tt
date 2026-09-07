@@ -1,0 +1,18 @@
+# frozen_string_literal: true
+
+require "case_helper"
+
+<% module_namespacing do -%>
+class <%= class_name.pluralize %>Case < SystemCase
+  # System cases drive a real browser, so they are the slowest thing Constable runs and
+  # the easiest place in a suite to write a flaky test. Two rules cover most of it: never
+  # sleep (Capybara's finders already wait, and a bare sleep is a lint error anyway), and
+  # assert on what the page shows rather than on how long it took to show it.
+  #
+  #   investigate "visiting the index" do
+  #     visit <%= plural_table_name %>_url
+  #
+  #     assert page.has_selector?("h1", text: "<%= class_name.pluralize %>")
+  #   end
+end
+<% end -%>

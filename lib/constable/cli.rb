@@ -96,14 +96,23 @@ module Constable
     end
 
     desc "status", "How the suite is doing over time"
+    long_desc <<~DESC
+      The trend view: how much of the suite is still running as cold cases, how the last
+      runs went, and which tests have been the slowest historically. For what is flagged
+      right now -- jailed, paroled, warranted -- use `constable watchlist` instead.
+    DESC
     def status
-      config = load_config
       storage = Constable.storage
-      Reporter.new(io: $stdout, config: config, color: color?).status(
-        runs: storage.runs(limit: 30),
-        slowest: storage.slowest(limit: 10),
-        coverage: (storage.coverage_trend(limit: 30) rescue []) # rubocop:disable Style/RescueModifier
-      )
+      runs = storage.runs(limit: 20)
+
+      if runs.empty?
+        say "No runs recorded yet. Run: constable test --full"
+        exit(EXIT_CLEAN)
+      end
+
+      print_adoption(storage, runs)
+      print_recent_runs(runs)
+      print_historical_slowest(storage)
       exit(EXIT_CLEAN)
     end
 
@@ -411,6 +420,50 @@ module Constable
 
       def short_date(value)
         value.to_s[0, 10]
+      end
+
+      # The adoption number: what share of the suite is still opted out of native rules.
+      # It only means anything as a direction of travel, so it is shown against the run
+      # the blotter remembers furthest back.
+      def print_adoption(storage, runs)
+        totals = storage.kind_totals(limit: runs.size)
+        return if totals.empty?
+
+        latest = totals.first
+        total = latest[:native] + latest[:cold]
+        return if total.zero?
+
+        native_pct = (latest[:native] * 100.0 / total).round
+        say_table("ADOPTION", [latest]) do |entry|
+          ["#{native_pct}% native", "#{entry[:native]} native", "#{entry[:cold]} cold"]
+        end
+
+        oldest = totals.last
+        oldest_total = oldest[:native] + oldest[:cold]
+        return if oldest_total.zero? || totals.size < 2
+
+        was = (oldest[:native] * 100.0 / oldest_total).round
+        say "  #{was}% native #{totals.size} runs ago -> #{native_pct}% now"
+        say ""
+      end
+
+      def print_recent_runs(runs)
+        say_table("RECENT RUNS", runs.first(10)) do |run|
+          [
+            short_date(run[:started_at]),
+            format("%-5s", run[:mode]),
+            "#{run[:passed].to_i} passed",
+            "#{run[:failed].to_i} failed",
+            ("#{run[:jailed].to_i} jailed" if run[:jailed].to_i.positive?)
+          ]
+        end
+      end
+
+      def print_historical_slowest(storage)
+        slowest = storage.slowest(limit: 10)
+        say_table("SLOWEST, HISTORICALLY", slowest) do |entry|
+          [format("%6.2fs", entry[:average].to_f), entry[:label] || entry[:identity]]
+        end
       end
 
       def describe_counts(counts)
