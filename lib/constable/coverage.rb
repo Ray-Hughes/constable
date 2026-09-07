@@ -203,6 +203,54 @@ module Constable
         nil
       end
 
+      # The raw stdlib numbers as they stand, without ending the measurement. Workers use
+      # this to send their counts home: Ruby's Coverage is per-process, so a forked worker's
+      # hits exist only in that worker and would otherwise be thrown away when it exits.
+      def peek_raw
+        return nil unless ::Coverage.running?
+
+        ::Coverage.peek_result
+      rescue StandardError
+        nil
+      end
+
+      # Sums two raw coverage results. Line arrays are added element-wise; nil means the
+      # line isn't executable and stays nil, which is not the same as zero and must not
+      # become it -- a nil turned into a 0 invents an uncovered line that never existed.
+      def merge_raw(left, right)
+        merged = (left || {}).dup
+
+        (right || {}).each do |path, entry|
+          existing = merged[path]
+          merged[path] = existing.nil? ? entry : merge_entry(existing, entry)
+        end
+
+        merged
+      end
+
+      def merge_entry(left, right)
+        if left.is_a?(Hash) || right.is_a?(Hash)
+          lines = merge_lines(left.is_a?(Hash) ? left[:lines] : left,
+                              right.is_a?(Hash) ? right[:lines] : right)
+          return (left.is_a?(Hash) ? left : right).merge(lines: lines)
+        end
+
+        merge_lines(left, right)
+      end
+
+      def merge_lines(left, right)
+        return right if left.nil?
+        return left if right.nil?
+
+        [left.size, right.size].max.times.map do |i|
+          a = left[i]
+          b = right[i]
+          next nil if a.nil? && b.nil?
+
+          a.to_i + b.to_i
+        end
+      end
+
       # Reads the numbers out of the stdlib. When someone else owns the measurement we
       # peek rather than stop, so their own report still comes out right at exit.
       def harvest(stop:)

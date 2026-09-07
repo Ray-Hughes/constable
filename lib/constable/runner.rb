@@ -46,6 +46,7 @@ module Constable
       @io         = io
       @reporter   = reporter || Reporter.new(io: io, config: config)
       @results    = []
+      @worker_coverage = {}
       @warnings_before = Constable.warnings.size
     end
 
@@ -57,14 +58,18 @@ module Constable
 
     # => Integer exit status (0 clean, 1 failures)
     def call
+      # Before anything is loaded. Ruby's Coverage only counts files that are required
+      # after it starts, so starting it later than this measures an empty application and
+      # then cheerfully reports 100%.
+      # force: the decision was already made in #coverage?, which folds --coverage together
+      # with the config setting. Asking the config a second time would ignore the flag.
+      Constable::Coverage.start!(config: @config, force: true) if coverage?
+
       load_suite!
       items = build_items
       ordered = order(items)
 
       run_id = @storage.start_run(seed: @seed, mode: mode_label, full: @selection.full?)
-      nil
-
-      Constable::Coverage.start!(config: @config) if coverage?
       Constable.configuration.run_before_suite!
 
       started = monotonic
@@ -90,14 +95,7 @@ module Constable
       Constable.configuration.run_after_suite!
       # Cold cases contribute their numbers but are never held to the diff gate, so a run
       # carrying nothing else must not be gated at all.
-      @coverage_report =
-        if coverage?
-          Constable::Coverage.stop!(
-            config: @config,
-            root: Constable.root,
-            gate: !@selection.unsafe_only?
-          )
-        end
+      @coverage_report = build_coverage_report if coverage?
 
       persist(run_id, @results, @coverage_report)
       suggestions = rename_suggestions(@results)
@@ -254,8 +252,13 @@ module Constable
         pid = fork do
           reader.close
           bucket.each do |item|
-            run_item(item).each { |result| write_result(writer, result) }
+            run_item(item).each { |result| write_message(writer, :result, result.to_h) }
           end
+
+          # Ruby's Coverage counts lines in the process that executed them, so a worker's
+          # hits would die with it. They ride home on the same pipe as the results.
+          write_message(writer, :coverage, Constable::Coverage.peek_raw) if coverage?
+
           writer.close
           exit!(0)
         end
@@ -274,8 +277,10 @@ module Constable
       collected
     end
 
-    def write_result(writer, result)
-      payload = Marshal.dump(result.to_h)
+    # Every message on the pipe is tagged, because results are not the only thing a worker
+    # has to send home.
+    def write_message(writer, kind, body)
+      payload = Marshal.dump([kind, body])
       writer.write([payload.bytesize].pack("N"))
       writer.write(payload)
       writer.flush
@@ -308,10 +313,15 @@ module Constable
           end
 
           buffers[reader] << chunk
-          extract(buffers[reader]).each do |hash|
-            result = Result.from_h(hash)
-            collected << result
-            @reporter.record(result)
+          extract(buffers[reader]).each do |kind, body|
+            case kind
+            when :result
+              result = Result.from_h(body)
+              collected << result
+              @reporter.record(result)
+            when :coverage
+              @worker_coverage = Constable::Coverage.merge_raw(@worker_coverage, body)
+            end
           end
         end
       end
@@ -638,6 +648,23 @@ module Constable
 
     def new_warnings
       Constable.warnings[@warnings_before..] || []
+    end
+
+    # Combines what this process saw with everything the workers sent back. Cold cases
+    # count here too -- Coverage works at the process level, so it never knew which engine
+    # ran the code.
+    def build_coverage_report
+      merged = Constable::Coverage.merge_raw(Constable::Coverage.peek_raw, @worker_coverage)
+      report = Constable::Coverage.build_report(
+        merged,
+        config: @config,
+        root: Constable.root,
+        # Cold cases contribute their numbers but are never held to the diff gate, so a
+        # run carrying nothing else must not be gated at all.
+        gate: !@selection.unsafe_only?
+      )
+      Constable::Coverage.abort!
+      report
     end
 
     def teardown(instance)
