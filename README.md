@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/logo.png" alt="Constable" width="200">
+<img src="https://raw.githubusercontent.com/Ray-Hughes/constable/main/docs/assets/logo.png" alt="Constable" width="200">
 
 # Constable
 
