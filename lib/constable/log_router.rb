@@ -116,7 +116,7 @@ module Constable
         true
       end
 
-      def current = @current
+      attr_reader :current
 
       def routed? = !!@current&.routed?
 

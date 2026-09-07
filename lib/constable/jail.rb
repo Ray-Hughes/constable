@@ -29,10 +29,10 @@ module Constable
     # Why a test is on the docket. Stored as free text so the blotter stays readable to a
     # human running `constable jail`, keyed by symbol so callers don't retype prose.
     REASONS = {
-      flake:            "flake history flip -- passed, then failed with no code change",
-      jail_mode:        "failed during a --jail run",
+      flake: "flake history flip -- passed, then failed with no code change",
+      jail_mode: "failed during a --jail run",
       parole_violation: "parole violation -- failed while out on parole",
-      manual:           "jailed by hand"
+      manual: "jailed by hand"
     }.freeze
 
     # One row of the docket, normalized.
@@ -255,7 +255,7 @@ module Constable
     def jail_run_report(results)
       results = Array(results)
       {
-        candidates:    candidates_for_release(results),
+        candidates: candidates_for_release(results),
         still_failing: results.reject { |r| passing?(r) }.filter_map { |r| entry(r.identity) }
       }
     end
@@ -318,9 +318,9 @@ module Constable
     def summary_counts(results)
       results = Array(results)
       {
-        jailed:            results.count { |r| r.status == :jailed },
+        jailed: results.count { |r| r.status == :jailed },
         parole_violations: results.count { |r| r.status == :parole_violation },
-        on_parole:         paroled.size
+        on_parole: paroled.size
       }
     end
 

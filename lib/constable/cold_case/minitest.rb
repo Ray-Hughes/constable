@@ -250,7 +250,7 @@ module Constable
 
           results = minitest_results.map do |outcome|
             result_for(outcome, path: path, relative: relative, class_name: class_name,
-                           config: config, tier: tier, seed: seed)
+                                config: config, tier: tier, seed: seed)
           end
 
           if load_error

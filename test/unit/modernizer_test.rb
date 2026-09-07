@@ -88,14 +88,31 @@ module Constable
       assert_equal "witness(:valid_params)", result.converted.find { |c| c[:kind] == :witness }[:to]
     end
 
-    def test_before_becomes_briefing_with_a_do_end_block
+    # SPEC.md writes one-line hooks with braces (`briefing { sign_in(:admin) }`), and
+    # `briefing do stub_network! end` on a single line is valid Ruby nobody writes.
+    def test_a_single_line_before_becomes_a_braced_briefing
       result = convert(<<~SPEC)
         describe User do
           before { stub_network! }
         end
       SPEC
 
-      assert_includes result.source, "briefing do stub_network! end"
+      assert_includes result.source, "briefing { stub_network! }"
+      refute_includes result.source, "before"
+    end
+
+    def test_a_multiline_before_becomes_a_do_end_briefing
+      result = convert(<<~SPEC)
+        describe User do
+          before {
+            stub_network!
+            sign_in(:admin)
+          }
+        end
+      SPEC
+
+      assert_includes result.source, "briefing do\n"
+      assert_includes result.source, "end"
       refute_includes result.source, "before"
     end
 

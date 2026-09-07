@@ -9,21 +9,21 @@ module Constable
   # tier base classes, one-time global setup) lives in test/case_helper.rb instead.
   class Config
     DEFAULTS = {
-      "cold_cases"         => [],
-      "storage"            => { "adapter" => "sqlite", "path" => ".constable/constable.sqlite3", "url" => nil },
-      "warrants"           => false,
-      "warrant_retries"    => 5,
-      "auto_relink"        => false,
-      "parole_period"      => 10,
-      "coverage"           => false,
+      "cold_cases" => [],
+      "storage" => { "adapter" => "sqlite", "path" => ".constable/constable.sqlite3", "url" => nil },
+      "warrants" => false,
+      "warrant_retries" => 5,
+      "auto_relink" => false,
+      "parole_period" => 10,
+      "coverage" => false,
       "coverage_threshold" => 90,
-      "coverage_html"      => false,
-      "fail_on_warnings"   => false,
-      "parallel_workers"   => "auto",
-      "tiers"              => {
-        "unit"        => "test/cases/models/**/*",
+      "coverage_html" => false,
+      "fail_on_warnings" => false,
+      "parallel_workers" => "auto",
+      "tiers" => {
+        "unit" => "test/cases/models/**/*",
         "integration" => "test/cases/controllers/**/*",
-        "system"      => "test/cases/system/**/*"
+        "system" => "test/cases/system/**/*"
       }
     }.freeze
 

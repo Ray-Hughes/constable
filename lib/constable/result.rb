@@ -7,12 +7,12 @@ module Constable
     STATUSES = %i[passed failed jailed skipped errored warranted parole_violation].freeze
 
     GLYPHS = {
-      passed:           "✓", # check
-      failed:           "✗", # ballot x
-      jailed:           "⛓", # chains
-      skipped:          "○", # hollow circle
-      errored:          "!",
-      warranted:        "⚖", # scales
+      passed: "✓", # check
+      failed: "✗", # ballot x
+      jailed: "⛓", # chains
+      skipped: "○", # hollow circle
+      errored: "!",
+      warranted: "⚖", # scales
       parole_violation: "⛓"
     }.freeze
 
@@ -104,7 +104,9 @@ module Constable
     attr_reader :message, :context, :backtrace, :exception_class
 
     def initialize(message:, context: nil, backtrace: [], exception_class: nil)
-      @message         = message
+      # Other engines wrap their messages in blank lines for their own reporters. Ours
+      # already puts the message in a block of its own, so the padding just leaves holes.
+      @message         = message.is_a?(String) ? message.strip : message
       @context         = context
       @backtrace       = Array(backtrace)
       @exception_class = exception_class

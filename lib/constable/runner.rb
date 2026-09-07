@@ -62,13 +62,16 @@ module Constable
       ordered = order(items)
 
       run_id = @storage.start_run(seed: @seed, mode: mode_label, full: @selection.full?)
-      coverage_report = nil
+      nil
 
       Constable::Coverage.start!(config: @config) if coverage?
       Constable.configuration.run_before_suite!
 
       started = monotonic
-      @reporter.start(total: ordered.size, seed: @seed)
+      # A cold-case file is one work item but an unknown number of tests until its own
+      # engine has run it, so claim a total only when every item is a native investigation.
+      announced = ordered.all?(&:native?) ? ordered.size : nil
+      @reporter.start(total: announced, seed: @seed)
 
       # The "alone" half of the order audit has to happen before the suite has touched
       # anything, so it runs here rather than alongside the results it will be compared to.
@@ -180,7 +183,7 @@ module Constable
 
     def worker_count(items)
       requested = @workers || @config.parallel_workers
-      [[requested.to_i, 1].max, items.size].min
+      requested.to_i.clamp(1, items.size)
     end
 
     def forkable?
@@ -252,7 +255,7 @@ module Constable
         ready.each do |reader|
           chunk = begin
             reader.read_nonblock(65_536)
-          rescue EOFError, IOError
+          rescue IOError # EOFError is one of these -- the worker finished and closed its end.
             nil
           rescue IO::WaitReadable
             next
@@ -321,7 +324,18 @@ module Constable
     end
 
     def run_cold(item)
-      ColdCase.run_file(item.path, config: @config).each { |r| r.seed = @seed }
+      warnings_before = Constable.warnings.size
+      # The seed goes in, not just onto the results: Minitest randomizes its own method
+      # order, so passing it is what makes `constable test PATH --seed N` actually replay.
+      results = ColdCase.run_file(item.path, config: @config, seed: @seed)
+      raised = Constable.warnings[warnings_before..] || []
+
+      results.each { |r| r.seed = @seed }
+
+      # A cold case warns once per file, not once per test, so the warning rides home on
+      # the first result rather than being repeated on all of them.
+      results.first&.warnings&.concat(raised)
+      results
     rescue StandardError => e
       [Result.new(
         identity: Identity.for_cold_case(item.path, "load"),

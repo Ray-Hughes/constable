@@ -170,8 +170,9 @@ module Constable
         <<~MESSAGE.strip
           Cold cases#{where} need #{label}, but `require "#{ENGINE_REQUIRES.fetch(engine)}"` failed#{" (#{error.message})" if error}.
 
-          #{label} is only needed while cold cases exist, so `rails generate constable:install`
-          puts it in an optional Gemfile group. Add the group back and run `bundle install`:
+          #{label} (the `#{ENGINE_GEMS.fetch(engine)}` gem) is only needed while cold cases exist, so
+          `rails generate constable:install` puts it in an optional Gemfile group.
+          Add the group back and run `bundle install`:
 
           #{GEMFILE_GROUP.chomp.gsub(/^/, "  ")}
 

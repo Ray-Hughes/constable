@@ -8,7 +8,8 @@ Gem::Specification.new do |spec|
   spec.authors = ["Ray Hughes"]
   spec.email   = ["r.hughes2136@gmail.com"]
 
-  spec.summary     = "An opinionated, strict Rails testing framework where fast and non-flaky are structural, not disciplinary."
+  spec.summary     = "A strict Rails testing framework where fast and non-flaky are structural, " \
+                     "not disciplinary."
   spec.description = <<~DESC
     Constable replaces RSpec/Minitest for Rails apps that want tests to be fast and
     non-flaky by construction. Every test is isolated by default, nondeterminism is a
@@ -51,8 +52,10 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   spec.add_dependency "activesupport", ">= 7.0"
-  spec.add_dependency "railties",      ">= 7.0"
-  spec.add_dependency "thor",          ">= 1.2"
-  spec.add_dependency "sqlite3",       ">= 1.6"
+  # The AST rewrite behind `constable modernize`.
   spec.add_dependency "parser",        ">= 3.1"
+  spec.add_dependency "railties",      ">= 7.0"
+  # The default blotter. Swappable for Postgres or MySQL, which stay optional.
+  spec.add_dependency "sqlite3",       ">= 1.6"
+  spec.add_dependency "thor",          ">= 1.2"
 end

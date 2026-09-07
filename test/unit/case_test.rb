@@ -533,6 +533,7 @@ module Constable
       end
       klass = build_case do
         include helpers
+
         investigate("uses the module") { sign_in(:admin) }
       end
 

@@ -42,7 +42,7 @@ module Constable
       @cases.find { |klass| klass.constable_display_name == name.to_s || klass.name == name.to_s }
     end
 
-    def each(&block) = @cases.each(&block)
+    def each(&) = @cases.each(&)
 
     def size    = @cases.size
     def empty?  = @cases.empty?

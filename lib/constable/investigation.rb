@@ -20,7 +20,12 @@ module Constable
 
     # "UsersController::CreatesUserCase" -- the outermost real (non-docket) class.
     def case_name
-      @case_name ||= @case_class.respond_to?(:constable_display_name) ? @case_class.constable_display_name : @case_class.name.to_s
+      @case_name ||=
+        if @case_class.respond_to?(:constable_display_name)
+          @case_class.constable_display_name
+        else
+          @case_class.name.to_s
+        end
     end
 
     # Docket nesting folds into the description the way a reader would say it aloud:

@@ -57,7 +57,7 @@ module Constable
       def relink(old_identity, new_identity)     = raise(NotImplementedError)
 
       # --- jail docket -----------------------------------------------------------
-      def jail(identity, label:, file:, line:, reason:)  = raise(NotImplementedError)
+      def jail(identity, label:, file:, line:, reason:) = raise(NotImplementedError)
       def jailed                                          = raise(NotImplementedError)
       def jail_entry(identity)                            = raise(NotImplementedError)
       def jailed?(identity)                               = !jail_entry(identity).nil?

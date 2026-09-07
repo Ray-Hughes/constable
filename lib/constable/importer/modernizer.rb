@@ -669,8 +669,11 @@ module Constable
         replace(node.loc.end, "end") if node.loc.begin.source == "{"
       end
 
+      # `briefing do @seen = [] end` is valid Ruby and nobody writes it. A one-line hook
+      # keeps its braces; only a block that already spans lines becomes do/end.
       def to_do_end(node)
         return unless node.loc.begin.source == "{"
+        return if node.loc.begin.line == node.loc.end.line
 
         replace(node.loc.begin, "do")
         replace(node.loc.end, "end")

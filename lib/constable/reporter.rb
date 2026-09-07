@@ -49,35 +49,35 @@ module Constable
     # Result::GLYPHS covers statuses. These four are summary vocabulary, not statuses:
     # supervision and coverage are properties of a test, not outcomes of one.
     GLYPHS = Result::GLYPHS.merge(
-      parole:   "◑",
-      warrant:  "⚖",
-      warning:  "⚠",
+      parole: "◑",
+      warrant: "⚖",
+      warning: "⚠",
       coverage: "◐"
     ).freeze
 
     STYLES = {
-      reset:   0,
-      bold:    1,
-      dim:     2,
-      red:     31,
-      green:   32,
-      yellow:  33,
-      blue:    34,
+      reset: 0,
+      bold: 1,
+      dim: 2,
+      red: 31,
+      green: 32,
+      yellow: 33,
+      blue: 34,
       magenta: 35,
-      cyan:    36
+      cyan: 36
     }.freeze
 
     COLORS = {
-      passed:           :green,
-      failed:           :red,
-      errored:          :red,
+      passed: :green,
+      failed: :red,
+      errored: :red,
       parole_violation: :red,
-      jailed:           :yellow,
-      warranted:        :yellow,
-      warning:          :yellow,
-      skipped:          :dim,
-      parole:           :cyan,
-      coverage:         :cyan
+      jailed: :yellow,
+      warranted: :yellow,
+      warning: :yellow,
+      skipped: :dim,
+      parole: :cyan,
+      coverage: :cyan
     }.freeze
 
     # The spec prints SLOWEST's rule one character longer than its title. Reproduced
@@ -333,13 +333,13 @@ module Constable
 
     def tally(results)
       {
-        passed:            results.count(&:passed?),
-        failed:            results.count(&:failed?),
-        jailed:            results.count(&:jailed?),
+        passed: results.count(&:passed?),
+        failed: results.count(&:failed?),
+        jailed: results.count(&:jailed?),
         parole_violations: results.count(&:parole_violation?),
-        on_parole:         results.count { |r| r.parole_day && !r.parole_violation? },
-        warranted:         results.count(&:warranted?),
-        skipped:           results.count(&:skipped?)
+        on_parole: results.count { |r| r.parole_day && !r.parole_violation? },
+        warranted: results.count(&:warranted?),
+        skipped: results.count(&:skipped?)
       }
     end
 

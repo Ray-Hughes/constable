@@ -70,7 +70,7 @@ module Constable
       build_case("SecondCase") { investigate("three") { :ok } }
 
       assert_equal %w[one two three], registry.investigations.map(&:description)
-      assert(registry.investigations.all? { |inv| inv.is_a?(Investigation) })
+      assert(registry.investigations.all?(Investigation))
     end
 
     def test_investigations_is_empty_when_cases_declare_nothing

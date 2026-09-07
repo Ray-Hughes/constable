@@ -736,7 +736,7 @@ module Constable
     def headline = lines[3]
 
     def section_titles
-      lines.select { |line| line.match?(/\A  [A-Z][A-Z ]+\z/) }.map(&:strip)
+      lines.grep(/\A  [A-Z][A-Z ]+\z/).map(&:strip)
     end
 
     # Squiggly heredocs strip exactly the leading indentation these blocks are asserting

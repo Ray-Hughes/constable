@@ -68,7 +68,7 @@ module Constable
       assert_equal 1, targets.size
       assert_equal 12, targets.first.line
       assert_equal [12], selection(["test/cases/models/user_case.rb:12"])
-                         .line_filter_for(File.join(tmp_root, "test/cases/models/user_case.rb"))
+        .line_filter_for(File.join(tmp_root, "test/cases/models/user_case.rb"))
     end
 
     def test_explicit_directory_expands_to_its_files

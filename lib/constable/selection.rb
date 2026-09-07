@@ -173,7 +173,7 @@ module Constable
     end
 
     def files_under(dir)
-      Dir.glob(File.join(dir, "**", "*.rb")).sort
+      Dir.glob(File.join(dir, "**", "*.rb"))
     end
 
     def glob(patterns)

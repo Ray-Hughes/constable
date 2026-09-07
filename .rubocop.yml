@@ -29,7 +29,7 @@ Style/StringLiteralsInInterpolation:
 Style/EndlessMethod:
   Enabled: false
 
-Naming/PredicateName:
+Naming/PredicatePrefix:
   Enabled: false
 
 Naming/PredicateMethod:
@@ -42,3 +42,9 @@ Lint/SuppressedException:
 # table rows, where the format string and its arguments sit on the same line.
 Style/FormatStringToken:
   Enabled: false
+
+# Class-level state on a Case carries a constable_ prefix deliberately, so it can never
+# collide with an instance variable a user's own case class sets.
+Naming/MemoizedInstanceVariableName:
+  Exclude:
+    - "lib/constable/case.rb"
