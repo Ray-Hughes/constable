@@ -105,7 +105,7 @@ module Constable
     # A blotter that counts but refuses to move a paroled test back to jail, standing in
     # for a third-party adapter that implements the interface only half way.
     class LazyBlotter < FakeBlotter
-      def record_parole_violation(identity)
+      def record_parole_violation(_identity)
         @calls[:record_parole_violation] += 1
         nil
       end

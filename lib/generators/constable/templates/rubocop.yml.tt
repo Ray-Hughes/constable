@@ -1,0 +1,12 @@
+# Constable's linter.
+#
+# Nondeterminism is caught here, at edit time, rather than discovered in CI three
+# weeks later: bare `sleep`, unfrozen Time.now/Date.today, unstubbed network
+# calls, shared mutable state, conditional assertions, retry helpers.
+#
+# The cops are scoped to native Constable::Case files only. A file inheriting
+# from Constable::ColdCase::* is exempt by design -- cold cases are how a legacy
+# suite adopts Constable without a rewrite, and holding them to native rules on
+# day one would defeat that entirely.
+require:
+  - rubocop-constable

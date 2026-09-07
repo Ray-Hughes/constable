@@ -199,10 +199,14 @@ module Constable
         end
       end
 
+      # Thor reserves `run` as a method name, so the command is named for the user and the
+      # method is named for Ruby.
+      map "run" => :rerun
+
       desc "run [PATH:LINE]", "Re-run jailed tests -- sequentially, for clean attribution"
       option :full, type: :boolean, default: false,
                     desc: "Re-run the whole docket in one parallel batch (faster, coarser)"
-      def run(path = nil)
+      def rerun(path = nil)
         config = Constable.config
         storage = Constable.storage
         jail = Jail.new(config: config, storage: storage)

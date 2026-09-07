@@ -23,8 +23,12 @@ module Constable
 
       def path = config.storage_path
 
+      # Drops the handle as well as closing it, so a later query reconnects instead of
+      # reaching for a closed database. The Runner closes before forking workers, because
+      # SQLite is explicit that a connection must not be carried across a fork.
       def close
-        @connection&.close unless @connection&.closed?
+        @connection.close if @connection && !@connection.closed?
+        @connection = nil
         super
       end
 
@@ -72,7 +76,7 @@ module Constable
       end
 
       def connection
-        connect! unless @connection
+        connect! if @connection.nil? || @connection.closed?
         @connection
       end
     end

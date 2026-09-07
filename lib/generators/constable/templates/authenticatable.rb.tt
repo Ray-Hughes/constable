@@ -1,0 +1,31 @@
+# frozen_string_literal: true
+
+# Shared behavior is just a module.
+#
+# There is deliberately no shared-examples DSL in Constable. `include` already
+# does that job: it composes, it respects ancestry, it shows up in `.ancestors`,
+# your editor can jump to the definition, and there is no second set of scoping
+# rules to learn on top of Ruby's own.
+#
+# Any case can pick this up directly:
+#
+#   class SessionsCase < IntegrationCase
+#     include Authenticatable
+#
+#     investigate "signs a user in" do
+#       sign_in(witnessed_user)
+#       attest(response).to redirect_to(root_path)
+#     end
+#   end
+#
+# Or a whole tier can, by adding `include Authenticatable` to IntegrationCase in
+# test/case_helper.rb.
+#
+# One rule applies here exactly as it does inside a case: a support module must
+# not hold mutable state across tests. Methods and constants, not @@class_vars.
+
+module Authenticatable
+  def sign_in(user)
+    post session_path, params: { email: user.email, password: "password" }
+  end
+end

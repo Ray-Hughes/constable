@@ -1,0 +1,56 @@
+# frozen_string_literal: true
+
+# A worked example, so `constable test` does something the moment you install the
+# gem. Delete it once you have a real case file -- or keep it as a scratchpad for
+# checking that the harness itself still boots.
+#
+# The vocabulary is the API:
+#
+#   investigate  a test        (it / def test_)      -- a plain string description
+#   witness      a fixture     (let)                 -- memoized per test, never per process
+#   briefing     setup         (before / setup)      -- runs before every investigation
+#   docket       grouping      (nested describe)     -- scoping sugar, no shared state
+#   attest       an assertion  (expect)              -- sugar over assert_*, which still works
+class ExampleCase < UnitCase
+  # A witness is memoized inside one investigation and thrown away at the end of
+  # it. Name it five times in a test, pay for it once; the next test builds its
+  # own. That boundary is the whole reason there is no cross-test cache.
+  witness(:badge) { { number: 1, name: "Constable" } }
+
+  # A briefing runs before *every* investigation below, against a brand-new
+  # instance. There is no before(:all) to reach for, which is why nothing an
+  # investigation does here can reach the next one.
+  briefing do
+    @notes = []
+  end
+
+  investigate "runs the moment the gem is installed" do
+    @notes << badge[:name]
+
+    attest(@notes).to eq(["Constable"])
+  end
+
+  investigate "hands the next investigation a clean slate" do
+    # @notes was emptied by the briefing again, and the previous investigation's
+    # push is nowhere to be found. This passes in any order, on any machine.
+    attest(@notes).to be_empty
+  end
+
+  # Dockets group related investigations and scope setup to the group. They
+  # introduce no shared state -- each investigation inside still gets its own
+  # fresh instance, its own briefings, its own witnesses.
+  docket "with a nested docket" do
+    briefing { @notes << "on the beat" }
+
+    investigate "inherits the outer briefing before running its own" do
+      attest(@notes).to eq(["on the beat"])
+    end
+  end
+
+  # The assert_* primitives are always available alongside attest. attest is
+  # sugar, never the only road.
+  investigate "still speaks plain assertions" do
+    assert_equal 1, badge[:number]
+    assert_includes badge[:name], "Const"
+  end
+end

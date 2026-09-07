@@ -70,6 +70,10 @@ module Constable
       # anything, so it runs here rather than alongside the results it will be compared to.
       order_audit.record_isolated!(ordered.select(&:native?).map(&:investigation))
 
+      # Warm everything that reads the blotter while we are still single-process.
+      docket_snapshot
+      duration_index
+
       raw = order_audit.audit(execute(ordered))
 
       @results = adjudicate(raw)
@@ -182,6 +186,11 @@ module Constable
       readers = []
       pids = []
 
+      # Everything that reads the blotter has already been warmed, so the handle can go.
+      # A child inheriting a writable SQLite connection is a corruption risk, and the
+      # driver rightly complains about it.
+      @storage.close
+
       buckets.each do |bucket|
         reader, writer = IO.pipe
         pid = fork do
@@ -199,6 +208,11 @@ module Constable
 
       collected = drain(readers)
       pids.each { |pid| Process.waitpid(pid) rescue nil } # rubocop:disable Style/RescueModifier
+
+      # A warning raised inside a worker only ever reached that worker's memory, so the
+      # results carry them home. Nothing that bends the rules is allowed to go missing
+      # just because it happened in a subprocess.
+      collected.each { |result| Constable.warnings.concat(Array(result.warnings)) }
       collected
     end
 
@@ -308,11 +322,9 @@ module Constable
 
     def run_native(item)
       investigation = item.investigation
-      jail_entry = jail.entry(investigation.identity)
+      jail_entry = docket_snapshot[investigation.identity]
 
-      if jail_entry && jail.skip_body?(investigation.identity)
-        return run_jailed_setup(investigation, jail_entry)
-      end
+      return run_jailed_setup(investigation, jail_entry) if jail_entry&.jailed?
 
       result = execute_investigation(investigation)
       result.seed = @seed
@@ -350,6 +362,7 @@ module Constable
     def execute_investigation(investigation)
       started = monotonic
       before = leak_check? ? Isolation.snapshot : nil
+      warnings_before = Constable.warnings.size
       failure = nil
       status = :passed
 
@@ -370,6 +383,7 @@ module Constable
       end
 
       duration = monotonic - started
+      raised = Constable.warnings[warnings_before..] || []
 
       if before
         leaks = Isolation.diff(before, Isolation.snapshot)
@@ -382,7 +396,13 @@ module Constable
         end
       end
 
-      Result.from_investigation(investigation, status: status, duration: duration, failure: failure)
+      Result.from_investigation(
+        investigation,
+        status: status,
+        duration: duration,
+        failure: failure,
+        warnings: Constable.warnings[warnings_before..] || raised
+      )
     end
 
     # The leak check walks every user class's class variables, which is worth it per test
@@ -425,6 +445,16 @@ module Constable
 
     def jail
       @jail ||= Jail.new(config: @config, storage: @storage)
+    end
+
+    # The docket, read once in the parent and inherited by every worker through fork.
+    # A worker that queried it directly would be reaching into a database handle it does
+    # not own -- SQLite is explicit that a connection must not cross a fork -- and the
+    # answer cannot change mid-run anyway.
+    def docket_snapshot
+      @docket_snapshot ||= jail.entries.to_h { |entry| [entry.identity, entry] }
+    rescue StandardError
+      {}
     end
 
     def warrants

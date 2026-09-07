@@ -1,0 +1,150 @@
+# Defaults for rubocop-constable.
+#
+# Every cop here is scoped to native `Constable::Case` files. A file whose class
+# inherits from `Constable::ColdCase::RSpec` or `Constable::ColdCase::Minitest`
+# has explicitly opted out of native rules and is exempt from all of them, no
+# matter which of the `Include` globs below it happens to sit under.
+
+Constable:
+  Enabled: true
+  DocumentationBaseURL: https://github.com/Ray-Hughes/constable/blob/main/rubocop-constable/README.md
+
+Constable/NoConditionalAssertions:
+  Description: >-
+    Do not put `if`/`unless`/ternary/`case` branching around `attest` or
+    `assert_*` calls. An assertion behind a branch may never run, so the case
+    passes whichever way the branch falls.
+  Enabled: true
+  VersionAdded: '0.1.0'
+  SafeAutoCorrect: false
+  AssertionMethods:
+    - attest
+  AssertionPrefixes:
+    - assert
+    - refute
+  Include:
+    - 'test/cases/**/*.rb'
+    - 'spec/cases/**/*.rb'
+    - 'test/**/*_case.rb'
+    - 'spec/**/*_case.rb'
+
+Constable/NoNetworkWithoutStub:
+  Description: >-
+    Do not make real HTTP calls from a case that never calls `stub_network!`.
+    A test that depends on somebody else's uptime is not testing your code.
+  Enabled: true
+  VersionAdded: '0.1.0'
+  SafeAutoCorrect: false
+  StubHelpers:
+    - stub_network!
+  HttpConstants:
+    - Net::HTTP
+    - Net::HTTPS
+    - HTTParty
+    - Faraday
+    - RestClient
+    - Excon
+    - Typhoeus
+    - HTTPClient
+    - HTTPX
+    - HTTP
+    - Curl
+    - Patron
+    - Mechanize
+    - OpenURI
+    - Down
+  Include:
+    - 'test/cases/**/*.rb'
+    - 'spec/cases/**/*.rb'
+    - 'test/**/*_case.rb'
+    - 'spec/**/*_case.rb'
+
+Constable/NoRetryHelpers:
+  Description: >-
+    Do not retry. `retry`, `eventually`, `wait_for` and `sleep`-driven polling
+    loops all hide a flaky test instead of fixing it -- that is what warrants
+    are for.
+  Enabled: true
+  VersionAdded: '0.1.0'
+  SafeAutoCorrect: false
+  RetryHelpers:
+    - wait_for
+    - eventually
+    - with_retries
+    - try_again
+    - retry_until
+    - retry_on_failure
+    - poll_until
+    - keep_trying
+  Include:
+    - 'test/cases/**/*.rb'
+    - 'spec/cases/**/*.rb'
+    - 'test/**/*_case.rb'
+    - 'spec/**/*_case.rb'
+
+Constable/NoSharedMutableState:
+  Description: >-
+    Do not assign or mutate class variables or globals inside a case. State that
+    outlives an investigation makes the suite order-dependent, which is the
+    hardest class of flake to debug. Use `witness` or `briefing`.
+  Enabled: true
+  VersionAdded: '0.1.0'
+  SafeAutoCorrect: false
+  Include:
+    - 'test/cases/**/*.rb'
+    - 'spec/cases/**/*.rb'
+    - 'test/**/*_case.rb'
+    - 'spec/**/*_case.rb'
+
+Constable/NoSleep:
+  Description: >-
+    Do not use a bare `sleep` in a case. It costs seconds on every green run and
+    is still not long enough on the red one. Wrap it in `unsafe { }` when the
+    delay itself is under test.
+  Enabled: true
+  VersionAdded: '0.1.0'
+  SafeAutoCorrect: false
+  Include:
+    - 'test/cases/**/*.rb'
+    - 'spec/cases/**/*.rb'
+    - 'test/**/*_case.rb'
+    - 'spec/**/*_case.rb'
+
+Constable/NoUnfrozenTime:
+  Description: >-
+    Do not read the wall clock in a case without freezing it first. Call
+    `freeze_time` or `travel_to`, otherwise the test is a function of when it
+    runs.
+  Enabled: true
+  VersionAdded: '0.1.0'
+  SafeAutoCorrect: false
+  ForbiddenCalls:
+    - Time.now
+    - Time.current
+    - Time.zone.now
+    - Date.today
+    - Date.current
+    - DateTime.now
+    - DateTime.current
+  FreezeHelpers:
+    - freeze_time
+    - travel_to
+  Include:
+    - 'test/cases/**/*.rb'
+    - 'spec/cases/**/*.rb'
+    - 'test/**/*_case.rb'
+    - 'spec/**/*_case.rb'
+
+Constable/UnsafeBlockVisibility:
+  Description: >-
+    An `unsafe` block must say why it exists -- a trailing comment, a comment on
+    the line above, or a literal reason argument. Every escape hatch is visible.
+  Enabled: true
+  VersionAdded: '0.1.0'
+  SafeAutoCorrect: false
+  AllowReasonArgument: true
+  Include:
+    - 'test/cases/**/*.rb'
+    - 'spec/cases/**/*.rb'
+    - 'test/**/*_case.rb'
+    - 'spec/**/*_case.rb'

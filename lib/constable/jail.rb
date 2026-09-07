@@ -228,8 +228,8 @@ module Constable
 
       Transition.new(
         outcome: :parole_violation, entry: after, parole_day: day, parole_period: parole_period,
-        times_jailed: after&.times_jailed || before.times_jailed + 1,
-        parole_violations: after&.parole_violations || before.parole_violations + 1
+        times_jailed: after&.times_jailed || (before.times_jailed + 1),
+        parole_violations: after&.parole_violations || (before.parole_violations + 1)
       )
     end
 

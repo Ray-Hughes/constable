@@ -1,0 +1,36 @@
+# frozen_string_literal: true
+
+# Custom matchers.
+#
+# `attest(actual).to matcher` is sugar over the plain assert_* primitives, which
+# are always available too -- attest never becomes the only way to say a thing.
+# A matcher block returns truthy to pass:
+#
+#   Constable::Matchers.define(:name) { |actual, *args| ... }
+#
+# or returns [passed, message, context] when it can say something more useful
+# than "expected it to match" on failure. `context` is printed under the failure
+# in the run summary, which is where a response body or a record's attributes
+# earn their keep.
+#
+# Everything in test/support/ is loaded by test/case_helper.rb before any case
+# file, so a matcher defined here is available to every case in the suite.
+
+Constable::Matchers.define(:be_created) do |response|
+  response.status == 201
+end
+
+Constable::Matchers.define(:exist) do |model_class, attrs|
+  model_class.exists?(attrs)
+end
+
+# The richer form, for when the failure message is the difference between a
+# five-second fix and a five-minute one:
+#
+# Constable::Matchers.define(:have_role) do |user, role|
+#   [
+#     user.roles.include?(role),
+#     "expected #{user.class}##{user.id} to have role #{role.inspect}",
+#     { roles: user.roles }
+#   ]
+# end

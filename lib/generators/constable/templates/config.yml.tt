@@ -1,0 +1,67 @@
+# .constable/config.yml
+#
+# Settings, as opposed to code. Everything here is a number, a flag or a glob;
+# anything that is Ruby -- custom matchers, tier base classes, one-time global
+# setup -- lives in test/case_helper.rb instead.
+#
+# Every key Constable understands is present below at its default value, so this
+# file doubles as the complete reference. Delete anything you haven't changed;
+# the behavior is identical either way. CLI flags win over this file for the
+# duration of a single run.
+
+# Glob paths to run as cold cases: original RSpec/Minitest files, driven verbatim
+# through their own real engine, with pass/fail/timing fed into Constable's
+# reporting, flake history and CI gate alongside native cases.
+#
+# This is the zero-file-change adoption route. The alternative is one line per
+# file -- inheriting from Constable::ColdCase::RSpec or ::Minitest -- which is
+# more explicit but touches source. Either way nothing gets rewritten.
+#
+# Every cold-case file is reported as a warning on every run: one per file, not
+# one per test. Not to nag, but so "12 tests not yet under native rules" is never
+# something the suite quietly forgets to mention.
+cold_cases: []
+# cold_cases:
+#   - spec/controllers/**/*_spec.rb
+#   - test/legacy/**/*_test.rb
+
+# The blotter: flake history, the jail docket, warrants.
+#
+# Constable owns this store outright. It is deliberately not the app's own
+# database, for two reasons. Native cases run inside a transaction that gets
+# rolled back, so writing "this test just failed" through that connection would
+# roll the record back too. And :unit-tier runs skip booting the database
+# entirely for speed -- requiring a live server to record a pass would undo that.
+#
+# SQLite in WAL mode handles the real workload (a handful of tables, one row per
+# test per run) comfortably. Point it at Postgres or MySQL only if you genuinely
+# need one queryable store shared across many CI machines -- and always at a
+# separate database from the app's own, never its test connection.
+storage:
+  adapter: sqlite                      # sqlite (default) | postgres | mysql
+  path: .constable/constable.sqlite3   # sqlite only
+  url:                                 # postgres/mysql only, e.g.
+                                       #   postgres://user:pass@host/constable_metadata
+
+warrants: false          # opt-in flaky detector -- rerun a failure in isolation before believing it
+warrant_retries: 5       # reruns before declaring a warrant (flaky) or a genuine failure
+auto_relink: false       # auto-confirm high-confidence rename detection instead of suggesting it
+
+parole_period: 10        # consecutive clean runs before a paroled test is auto-released
+
+coverage: false          # record coverage during test runs
+coverage_threshold: 90   # diff-based -- only lines changed in the current diff are held to it
+coverage_html: false     # generate a browsable report by default
+
+fail_on_warnings: false  # CI: fail the build when the warning count doesn't trend down
+
+parallel_workers: auto   # or an explicit integer
+
+# Fallback path-based tier inference, used only when a case doesn't inherit from
+# a tiered base class. The base classes in test/case_helper.rb are the primary
+# mechanism and always win -- this is here so an un-migrated file still lands in
+# a sensible tier rather than the slowest one.
+tiers:
+  unit:        "test/cases/models/**/*"
+  integration: "test/cases/controllers/**/*"
+  system:      "test/cases/system/**/*"

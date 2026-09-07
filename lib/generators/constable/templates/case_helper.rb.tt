@@ -1,0 +1,146 @@
+# frozen_string_literal: true
+
+# =============================================================================
+#  test/case_helper.rb
+#
+#  Constable's equivalent of RSpec's spec_helper.rb + rails_helper.rb, or of
+#  Minitest's test_helper.rb. `constable test` loads this file once, before any
+#  case file -- individual cases never require it themselves.
+#
+#  Three things live here:
+#
+#    1. Booting the Rails test environment.
+#    2. The per-tier base classes your cases inherit from.
+#    3. Constable.configure -- configuration that is *code*.
+#
+#  Configuration that is merely a *setting* (a number, a flag, a glob) lives in
+#  .constable/config.yml instead, so it can be overridden by a CLI flag for one
+#  run without editing Ruby.
+# =============================================================================
+
+ENV["RAILS_ENV"] ||= "test"
+
+require_relative "../config/environment"
+require "constable"
+
+# A test suite that can reach production data is a suite that will eventually
+# destroy some. This costs one string comparison per run.
+abort("The Rails environment is running in production mode!") if Rails.env.production?
+
+# -----------------------------------------------------------------------------
+#  Tiers are base classes, not magic.
+#
+#  A tier says how much of the stack a case needs: :unit skips the database and
+#  the request stack entirely and is the fastest thing Constable can run,
+#  :integration gets a transactional database plus request helpers, :system
+#  additionally drives a browser.
+#
+#  Rather than infer that from a file path, declare it once on a base class and
+#  let ordinary Ruby inheritance carry it down:
+#
+#      class UsersController::CreatesUserCase < IntegrationCase
+#
+#  Path-based inference (the `tiers:` section of .constable/config.yml) still
+#  works as a fallback for cases that don't inherit from one of these, but
+#  inheritance is the recommended pattern -- there is nothing to infer, nothing
+#  to surprise you, and no rule to learn that Ruby didn't already teach you.
+#
+#  These are plain classes. Anything a whole tier needs belongs here: an
+#  ActiveJob test adapter, a factory module, `include Authenticatable` for every
+#  integration case.
+# -----------------------------------------------------------------------------
+
+class UnitCase < Constable::Case
+  tier :unit
+end
+
+class IntegrationCase < Constable::Case
+  tier :integration
+end
+
+class SystemCase < Constable::Case
+  # Capybara is not a Constable dependency. System cases are opt-in, and a suite
+  # with no browser tests shouldn't be made to install a browser driver to boot.
+  include Capybara::DSL if defined?(Capybara::DSL)
+
+  tier :system
+end
+
+# -----------------------------------------------------------------------------
+#  Support files -- shared modules and custom matchers.
+#
+#  Same role RSpec's spec/support/**/*.rb plays. Shared behavior *across* files
+#  is a plain module you `include`; there is deliberately no shared-examples DSL
+#  here, because Ruby's own composition tools already do that job with fewer
+#  rules to learn and more flexibility once the reuse stops being simple.
+#
+#  Sorted on purpose: Dir[] returns filesystem order, which differs between your
+#  laptop and CI. A suite that loads its own support files in an unpredictable
+#  order has already lost the argument about determinism.
+# -----------------------------------------------------------------------------
+
+Dir[Rails.root.join("test/support/**/*.rb")].sort.each { |f| require f }
+
+# -----------------------------------------------------------------------------
+#  Code-level configuration.
+# -----------------------------------------------------------------------------
+
+Constable.configure do |c|
+  # Workers default to `auto` -- processor count minus a little headroom, so the
+  # machine stays usable while the suite runs. Pin it only when a CI container
+  # lies about its core count.
+  # c.parallel_workers = 4
+
+  # One-time global setup, run once per process before the whole suite. This is
+  # for configuring the world -- drivers, adapters, formats -- and deliberately
+  # not for creating records that tests then share. See the note at the bottom
+  # of this file about why that distinction is the whole ballgame.
+  #
+  # c.before_suite do
+  #   Capybara.default_driver    = :rack_test
+  #   Capybara.javascript_driver = :headless_chrome
+  # end
+  #
+  # c.after_suite do
+  #   SomeExternalHarness.shut_down
+  # end
+
+  # Custom matchers can be defined here too, though test/support/matchers.rb is
+  # the better home once there is more than one of them:
+  #
+  # Constable::Matchers.define(:be_created) { |response| response.status == 201 }
+end
+
+# =============================================================================
+#  Two things are missing from this file on purpose.
+#
+#  1. There is no before(:all), no setup_once, no one-time fixture hook.
+#
+#     A before(:all) block builds state once and hands the same objects to many
+#     tests. That is faster right up until one test mutates one of them -- and
+#     then you have a bug that appears only in a particular order, on a
+#     particular machine, in CI, roughly once a week. The ordering that produced
+#     it isn't written down anywhere, so it isn't reproducible, so it doesn't get
+#     fixed: it gets a retry, and the retry gets copied to the next test.
+#
+#     Constable doesn't have the hook, so it can't have the bug. `briefing` runs
+#     before *every* investigation, against a fresh instance, inside a
+#     transaction that is rolled back afterwards. When that is genuinely too
+#     slow, the fix is a cheaper fixture -- build_stubbed instead of create, one
+#     record instead of five -- not state shared across tests.
+#
+#     `c.before_suite` above is not a loophole. It runs once per process to
+#     configure the world, not to populate it.
+#
+#  2. `witness` memoizes per test, and never per process.
+#
+#     witness(:user) { create(:user) } is memoized within a single
+#     investigation, so naming `user` five times in one test hits the database
+#     once. The moment that investigation finishes the memo is gone, and the
+#     next one builds its own.
+#
+#     Caching across tests would be faster, and would reintroduce exactly the
+#     shared, mutable, order-dependent state that (1) exists to prevent. So the
+#     cache is scoped to the one place it is provably safe: inside a single test
+#     that owns the object outright.
+# =============================================================================
