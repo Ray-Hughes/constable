@@ -19,6 +19,16 @@ Initial release.
 - No `before(:all)` equivalent exists, deliberately.
 - Shared behavior across files is a plain Ruby module you `include` — no shared-examples DSL.
 
+### Rails
+
+- A railtie registers Constable as the app's generator test framework, so
+  `rails generate scaffold` writes cases rather than Minitest files. Every generator Rails
+  hooks is covered, and no fixtures are generated — a `witness` replaces them.
+- `Constable::RailsSupport::Integration` and `::System` give the tier base classes the
+  request stack and Capybara respectively.
+- `Constable::Case` answers to minitest's `setup`/`teardown` macros and lifecycle hooks, so
+  the Rails ecosystem's testing modules compose with it. `briefing` remains the primary API.
+
 ### Adoption
 
 - `Constable::ColdCase::RSpec` and `Constable::ColdCase::Minitest` run an existing spec or

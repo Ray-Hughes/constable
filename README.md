@@ -158,17 +158,26 @@ class UnitCase < Constable::Case
 end
 
 class IntegrationCase < Constable::Case
+  include Constable::RailsSupport::Integration
   tier :integration
 end
 
 class SystemCase < Constable::Case
-  include Capybara::DSL
+  include Constable::RailsSupport::System if defined?(Capybara)
   tier :system
 end
 ```
 
 Subclass whichever fits. Path-based inference (`test/cases/models/**` → `:unit`) still works
 as a fallback, but ordinary inheritance is the recommended pattern — nothing to infer.
+
+`RailsSupport::Integration` is what gives a case `get`/`post`, `response` and your app's URL
+helpers; `RailsSupport::System` gives it Capybara and `driven_by`. `UnitCase` gets neither,
+deliberately — that is the tier that boots without them. The installer writes all three.
+
+Rails' testing modules expect minitest's lifecycle, so `Constable::Case` also answers to the
+`setup` and `teardown` class macros. `setup` is an exact synonym for `briefing` and exists so
+those modules compose — **`briefing` is still the way to write setup.**
 
 ### Matchers
 

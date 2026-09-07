@@ -98,6 +98,22 @@ One fresh instance per investigation, always.
 excluding anonymous docket subclasses from the top-level list, and can return all
 investigations across all loaded cases. `Registry#clear` for test isolation.
 
+`Constable::Case` also carries a **minitest compatibility layer**, because Rails' testing
+modules cannot be mixed into a plain class without it: the `setup`/`teardown` class macros
+(variadic — both `setup { }` and `setup :method_name`) and the `before_setup`, `after_setup`,
+`before_teardown`, `after_teardown` instance hooks, plus `method_name`. `setup` is an exact
+synonym for `briefing`; it exists so the ecosystem composes, not as a second public API.
+`run_teardown` returns its error rather than raising, so a failing teardown can never mask
+the failure the developer is looking for.
+
+### A2. Rails support — `lib/constable/rails_support.rb`
+`RailsSupport::Integration` includes `ActionDispatch::IntegrationTest::Behavior` (request
+helpers, `response`, URL helpers). `RailsSupport::System` provides Capybara plus `driven_by`
+/`served_by`. Both load Rails lazily and raise `ConfigurationError` with an actionable
+message when the relevant piece is absent — **`require "constable"` must keep working in a
+process with no Rails at all**, which is the `:unit` tier's whole premise and is asserted by
+a subprocess test.
+
 ### B. Runtime DSL — `lib/constable/dsl.rb`
 Instance methods available inside `investigate`/`briefing`:
 - `freeze_time(time = Time.now, &blk)` — freezes `Time.now`/`Date.today`/`Time.current`.

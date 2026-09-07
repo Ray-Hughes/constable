@@ -77,14 +77,30 @@ class UnitCase < Constable::Case
 end
 
 class IntegrationCase < Constable::Case
+  include Constable::RailsSupport::Integration
   tier :integration
 end
 
 class SystemCase < Constable::Case
-  include Capybara::DSL
+  include Constable::RailsSupport::System if defined?(Capybara)
   tier :system
 end
 ```
+
+> **Correction against the original draft.** This section first showed `IntegrationCase` as
+> nothing but `tier :integration`, and `SystemCase` as `include Capybara::DSL`. Neither
+> works: with only a tier, a case has no `get`/`post`, no `response` and none of the app's
+> URL helpers, so the headline example at the top of this spec — `post users_path` then
+> `attest(response)` — could not run at all, and every scaffold-generated controller case
+> failed on an undefined URL helper.
+>
+> `Constable::RailsSupport::Integration` and `::System` carry that behavior. They exist
+> because Rails' own testing modules cannot be mixed into a plain class: they expect
+> minitest's contract — the `setup`/`teardown` class macros in both block and symbol form,
+> and the `before_setup`/`after_setup`/`before_teardown`/`after_teardown` instance hooks.
+> `Constable::Case` provides that contract, with `setup` as an exact synonym for `briefing`,
+> documented as a compatibility shim rather than a second way to write setup. `UnitCase`
+> takes neither module, which is what lets the `:unit` tier boot without the request stack.
 
 Real cases subclass whichever fits (`class UsersController::CreatesUserCase < IntegrationCase`). File-path convention (`test/cases/models/**` → `:unit`, etc.) is still used as a fallback/default when a case doesn't inherit from one of these, but explicit base classes are the recommended pattern since they're just ordinary Rails-idiomatic inheritance, no inference required.
 
