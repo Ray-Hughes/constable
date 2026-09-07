@@ -64,7 +64,7 @@ module Constable
       Constable.configuration.run_before_suite!
 
       started = monotonic
-      @reporter.start(total: ordered.size, seed: @seed, reason: @selection.reason)
+      @reporter.start(total: ordered.size, seed: @seed)
 
       # The "alone" half of the order audit has to happen before the suite has touched
       # anything, so it runs here rather than alongside the results it will be compared to.
@@ -341,8 +341,8 @@ module Constable
         duration: monotonic - started,
         failure: failure
       )
-      result.jail_reason  = entry[:reason]
-      result.times_jailed = entry[:times_jailed]
+      result.jail_reason  = entry.reason
+      result.times_jailed = entry.times_jailed
       result.seed = @seed
       result
     end
@@ -399,13 +399,25 @@ module Constable
     # failure is even real, then jail decides whether it blocks.
     def adjudicate(raw)
       raw.map do |result|
-        result = warrants.adjudicate(result) { |identity| rerun_in_isolation(identity) } if warrants.active?
-        jail.adjudicate(result, jail_mode: jail_mode?)
+        decided = warrants.adjudicate(
+          result,
+          requested: @warrants_requested,
+          subject: investigation_for(result.identity)
+        ) { |subject, _attempt| rerun_in_isolation(subject) }
+
+        jail.adjudicate(decided, jail_mode: jail_mode?)
       end
     end
 
-    def rerun_in_isolation(identity)
-      investigation = Constable.registry.investigations.find { |inv| inv.identity == identity }
+    def investigation_for(identity)
+      @investigation_index ||= Constable.registry.investigations.to_h { |inv| [inv.identity, inv] }
+      @investigation_index[identity]
+    end
+
+    # One test, run again from scratch, so a warrant's retries measure the test rather than
+    # whatever the rest of the suite left lying around.
+    def rerun_in_isolation(subject)
+      investigation = subject.is_a?(Investigation) ? subject : investigation_for(subject.to_s)
       return nil unless investigation
 
       execute_investigation(investigation)
@@ -416,7 +428,7 @@ module Constable
     end
 
     def warrants
-      @warrants ||= Warrants.new(config: @config, storage: @storage, requested: @warrants_requested)
+      @warrants ||= Warrants.new(config: @config, storage: @storage)
     end
 
     def order_audit

@@ -76,6 +76,11 @@ module Constable
     ].freeze
 
     def global_snapshot
+      # Reading a global by name needs eval, and Ruby deprecates a few of them ($= among
+      # them) loudly enough to bury a test run in warnings that say nothing about the app.
+      original_verbose = $VERBOSE
+      $VERBOSE = nil
+
       (global_variables - IGNORED_GLOBALS).each_with_object({}) do |name, out|
         value = begin
           eval(name.to_s) # rubocop:disable Security/Eval -- the only way to read a global by name
@@ -84,6 +89,8 @@ module Constable
         end
         out[name] = safe_identity(value)
       end
+    ensure
+      $VERBOSE = original_verbose
     end
 
     def class_variable_snapshot
