@@ -31,12 +31,12 @@ module Constable
 
     def test_a_new_global_is_reported_as_a_leak
       before = Isolation.snapshot
-      eval("$constable_leak_probe = 1", binding, __FILE__, __LINE__) # rubocop:disable Security/Eval
+      eval("$constable_leak_probe = 1", binding, __FILE__, __LINE__)
       leaks = Isolation.diff(before, Isolation.snapshot)
 
       assert(leaks.any? { |l| l.include?("constable_leak_probe") })
     ensure
-      eval("$constable_leak_probe = nil", binding, __FILE__, __LINE__) # rubocop:disable Security/Eval
+      eval("$constable_leak_probe = nil", binding, __FILE__, __LINE__)
     end
 
     # Regression: written as %i[], a literal backslash escaped the following space and
@@ -48,7 +48,10 @@ module Constable
       end
 
       assert_includes Isolation::IGNORED_GLOBALS, :$.
-      assert_includes Isolation::IGNORED_GLOBALS, :$ \
+      # rubocop:disable Lint/SymbolConversion -- the bare literal for this one is what the
+      # cop's autocorrect turns into a syntax error, which is the bug being tested.
+      assert_includes Isolation::IGNORED_GLOBALS, "$\\".to_sym
+      # rubocop:enable Lint/SymbolConversion
     end
 
     def test_interpreter_flag_globals_are_ignored
