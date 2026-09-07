@@ -40,17 +40,22 @@ Gem::Specification.new do |spec|
 
   spec.files = Dir[
     "lib/**/*.rb",
-    "lib/generators/constable/templates/**/*",
+    # Generator templates are .tt, not .rb, and each generator keeps its own templates
+    # directory -- so this has to be the whole tree, not one hard-coded path.
+    "lib/generators/**/*",
     "exe/*",
     "README.md",
     "CHANGELOG.md",
     "LICENSE.txt"
-  ]
+  ].uniq.select { |path| File.file?(path) }
 
   spec.bindir      = "exe"
   spec.executables = ["constable"]
   spec.require_paths = ["lib"]
 
+  # These are deliberately open-ended, and `gem build` will say so. A "~> 7.0" pin would
+  # lock out Rails 8, which this gem is tested against, and "~> 1.6" would lock out
+  # sqlite3 2.x, which is the current release. Lower bounds are what actually matter here.
   spec.add_dependency "activesupport", ">= 7.0"
   # The AST rewrite behind `constable modernize`.
   spec.add_dependency "parser",        ">= 3.1"
