@@ -175,13 +175,19 @@ module Constable
 
       # Runner entry point. Builds the fresh instance, runs every inherited briefing in
       # order, and executes the investigation body in that same instance.
+      #
+      # The instance is always of `investigation.case_class` -- a docket's investigation
+      # belongs to the docket subclass, and running it anywhere else would quietly skip
+      # that docket's witnesses and briefings. So `Constable::Case.run(inv)` is enough;
+      # the receiver doesn't have to be the right class.
       def run(investigation, instance: nil)
-        (instance || new).run_investigation(investigation)
+        (instance || constable_instance_for(investigation)).run_investigation(investigation)
       end
 
-      # A fresh instance, bound to nothing. One per investigation, always.
+      # A fresh instance, bound to nothing but this investigation. One per investigation,
+      # always.
       def constable_instance_for(investigation)
-        new.tap { |instance| instance.constable_investigation = investigation }
+        investigation.case_class.new.tap { |instance| instance.constable_investigation = investigation }
       end
 
       private

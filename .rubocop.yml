@@ -1,0 +1,39 @@
+AllCops:
+  TargetRubyVersion: 3.1
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - "vendor/**/*"
+    - "test/dummy/**/*"
+    - "rubocop-constable/**/*"
+    - "pkg/**/*"
+
+# The gem's own style: long, explanatory methods are fine where the alternative is
+# scattering one cohesive idea across five private helpers.
+Metrics:
+  Enabled: false
+
+Layout/LineLength:
+  Max: 120
+
+Style/Documentation:
+  Enabled: false
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+# Endless method definitions read well for the many one-line predicate readers here.
+Style/EndlessMethod:
+  Enabled: false
+
+Naming/PredicateName:
+  Enabled: false
+
+Naming/PredicateMethod:
+  Enabled: false
+
+Lint/SuppressedException:
+  Enabled: false
