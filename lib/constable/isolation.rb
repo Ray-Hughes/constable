@@ -6,17 +6,28 @@ module Constable
   # and the leak check that catches what the transaction can't (globals, ENV, class
   # variables -- the state a database rollback never touches).
   module Isolation
-    # Tiers below :integration are supposed to boot without a database at all, so wrapping
-    # them in a transaction would force the very connection the tier exists to avoid.
-    NON_TRANSACTIONAL_TIERS = %i[unit].freeze
-
     module_function
 
-    def transactional?(tier)
-      return false if NON_TRANSACTIONAL_TIERS.include?(tier)
+    # Whether a database is actually there, and nothing else.
+    #
+    # An earlier version of this skipped the transaction for the :unit tier, on the theory
+    # that a unit test has no database to roll back. That was wrong, and quietly so: the
+    # default tier config routes test/cases/models/** to :unit, and Rails model tests are
+    # precisely the ones that write rows. Records survived into the next investigation and
+    # isolation -- the one guarantee this framework refuses to compromise -- was gone.
+    #
+    # Not booting the database is the tier's business, decided in case_helper.rb. If a
+    # connection exists by the time a test runs, that test gets rolled back. Both things
+    # can be true, and only one of them is a promise to the developer.
+    def transactional?(_tier = nil)
       return false unless defined?(::ActiveRecord::Base)
 
-      ::ActiveRecord::Base.connected? || ::ActiveRecord::Base.respond_to?(:connection)
+      # `connection_pool.connected?` is false until something has actually checked a
+      # connection out, which on the first test of a run is nothing -- so asking it
+      # straight leaves the first investigation unwrapped. Checking one out settles the
+      # question honestly: it succeeds when there is a database and raises when there
+      # isn't.
+      ::ActiveRecord::Base.connection_pool.with_connection { true }
     rescue StandardError
       false
     end

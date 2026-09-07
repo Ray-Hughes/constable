@@ -82,7 +82,7 @@ module Constable
       duration_index
       known_before
 
-      raw = order_audit.audit(execute(ordered))
+      raw = order_audit.audit(execute(ordered)) + load_error_results
 
       @results = adjudicate(raw)
       duration = monotonic - started
@@ -126,6 +126,8 @@ module Constable
     # test/case_helper.rb is the app's own entry point -- it boots Rails, defines the tier
     # base classes and loads support files. Everything else depends on it having run.
     def load_suite!
+      add_suite_dirs_to_load_path!
+
       helper = %w[test/case_helper.rb spec/case_helper.rb].map { |p| File.join(Constable.root, p) }
                                                           .find { |p| File.exist?(p) }
       require helper if helper
@@ -134,11 +136,45 @@ module Constable
       helper
     end
 
+    # Case files open with `require "case_helper"`, the way an RSpec file opens with
+    # `require "rails_helper"`. That only resolves if the suite directory is on the load
+    # path, and nothing else puts it there.
+    def add_suite_dirs_to_load_path!
+      %w[test spec].each do |dir|
+        path = File.join(Constable.root, dir)
+        $LOAD_PATH.unshift(path) if File.directory?(path) && !$LOAD_PATH.include?(path)
+      end
+    end
+
     def load_case_file(path)
       require path
     rescue StandardError, ScriptError => e
+      load_errors << [path, e]
+    end
+
+    def load_errors
       @load_errors ||= []
-      @load_errors << [path, e]
+    end
+
+    # A case file that will not load is a failure, not a silence. Reporting it as a result
+    # puts it in the FAILURES section with its own error, instead of letting a whole file
+    # of tests quietly vanish from the run.
+    def load_error_results
+      load_errors.map do |path, error|
+        relative = path.to_s.delete_prefix("#{Constable.root}/")
+        result = Result.new(
+          identity: Identity.for_source("load-error:#{relative}"),
+          case_name: relative,
+          description: "could not be loaded",
+          file: relative,
+          line: 1,
+          kind: :native,
+          status: :errored,
+          failure: Failure.from_exception(error, context: "This file never ran. Nothing in it was tested.")
+        )
+        result.seed = @seed
+        result
+      end
     end
 
     def build_items
@@ -211,6 +247,10 @@ module Constable
 
       buckets.each do |bucket|
         reader, writer = IO.pipe
+        # Marshal payloads are binary. Left in text mode, the first byte that isn't valid
+        # UTF-8 takes the worker down with an encoding error.
+        reader.binmode
+        writer.binmode
         pid = fork do
           reader.close
           bucket.each do |item|
@@ -245,7 +285,7 @@ module Constable
     # arriving in one lump when the slowest worker finishes.
     def drain(readers)
       collected = []
-      buffers = Hash.new { |h, k| h[k] = +"" }
+      buffers = Hash.new { |h, k| h[k] = String.new(encoding: Encoding::BINARY) }
       open_readers = readers.dup
 
       until open_readers.empty?
@@ -288,7 +328,8 @@ module Constable
         break if buffer.bytesize < 4 + size
 
         payload = buffer.byteslice(4, size)
-        buffer.replace(buffer.byteslice(4 + size, buffer.bytesize - 4 - size) || +"")
+        rest = buffer.byteslice(4 + size, buffer.bytesize - 4 - size)
+        buffer.replace(rest || String.new(encoding: Encoding::BINARY))
         out << Marshal.load(payload) # rubocop:disable Security/MarshalLoad -- our own pipe
       end
       out
@@ -589,7 +630,6 @@ module Constable
 
     def exit_status(results, coverage_report)
       return 1 if results.any?(&:failed?)
-      return 1 if @load_errors&.any?
       return 1 if @config.fail_on_warnings? && new_warnings.any?
       return 1 if coverage_report && !coverage_report.meets_threshold?(@config)
 

@@ -27,6 +27,18 @@ require "constable"
 # destroy some. This costs one string comparison per run.
 abort("The Rails environment is running in production mode!") if Rails.env.production?
 
+# Loads db/schema.rb into the test database when it has drifted behind your
+# migrations -- the same thing `rails test` does before it runs anything. Without
+# it the first case to touch the database fails with "no such table", which tells
+# you nothing about the test you actually wrote.
+if defined?(ActiveRecord::Migration)
+  begin
+    ActiveRecord::Migration.maintain_test_schema!
+  rescue ActiveRecord::PendingMigrationError => e
+    abort("#{e.message}\n\nRun: bin/rails db:migrate RAILS_ENV=test")
+  end
+end
+
 # -----------------------------------------------------------------------------
 #  Tiers are base classes, not magic.
 #
