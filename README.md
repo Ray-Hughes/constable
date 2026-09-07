@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/logo.png" alt="Constable" width="160">
+<img src="docs/assets/logo.png" alt="Constable" width="200">
 
 # Constable
 

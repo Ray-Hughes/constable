@@ -1,8 +1,9 @@
 # Assets
 
-`logo.png` is a placeholder — a constable's badge, brass on charcoal, drawn on a
-transparent background so it reads on both GitHub themes.
+| File | What it is |
+|---|---|
+| `logo.png` | The badge, background removed, transparent. Used in the README header. |
+| `logo-square.png` | The same badge centred on a square canvas, for anywhere that wants a uniform tile — favicon, avatar, social card. |
 
-To swap in the real one, overwrite `logo.png` at roughly 640×640 with a transparent
-background. The README displays it at 160px, so it wants to stay legible when small.
-Nothing else needs changing; the header references this path directly.
+The badge is portrait, so it is padded rather than stretched when a square is needed.
+Both files are transparent PNGs and read correctly on GitHub's light and dark themes.
