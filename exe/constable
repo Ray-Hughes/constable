@@ -1,0 +1,7 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "constable"
+require "constable/cli"
+
+Constable::CLI.dispatch!(ARGV)
