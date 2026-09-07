@@ -47,6 +47,7 @@ linter instead of by CI, and an adoption path that never asks you to rewrite any
 ## Table of contents
 
 - [Why](#why)
+- [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick start](#quick-start)
 - [Documentation](#documentation)
@@ -64,7 +65,6 @@ linter instead of by CI, and an adoption path that never asks you to rewrite any
   - [Output](#output)
   - [The blotter](#the-blotter)
   - [Configuration](#configuration)
-- [Compatibility](#compatibility)
 - [Contributing](#contributing)
 - [Reporting a problem](#reporting-a-problem)
 - [License](#license)
@@ -83,6 +83,35 @@ linter instead of by CI, and an adoption path that never asks you to rewrite any
    are ever silent. They are reported every run until someone deals with them.
 5. **Fast is the default, not an opt-in.** Boot tiers, parallel workers and git-diff test
    selection all ship in the base gem.
+
+## Requirements
+
+| | Minimum | Notes |
+|---|---|---|
+| **Ruby** | **3.1** | Parallel workers use `fork`, so they are unavailable on Windows and JRuby; those platforms fall back to serial automatically. |
+| **Rails** | **7.0** | Tested against 7.1 and 8.1. |
+
+Constable pulls in five gems, all of them small and already present in most Rails apps:
+
+| Gem | Version | What needs it |
+|---|---|---|
+| `activesupport` | `>= 7.0` | `freeze_time` / `travel_to` delegate to it when it's there |
+| `railties` | `>= 7.0` | the generators and the railtie that registers Constable as your test framework |
+| `thor` | `>= 1.2` | the `constable` CLI |
+| `sqlite3` | `>= 1.6` | the blotter — flake history, the jail docket, warrants |
+| `parser` | `>= 3.1` | the AST rewrite behind `constable modernize` |
+
+Your app's own database is untouched by any of this: the blotter is a separate SQLite file
+Constable owns. See [The blotter](#the-blotter).
+
+Nothing else is required. These are all optional, and only if you want the feature:
+
+| Optional | For |
+|---|---|
+| `rubocop-constable` | the linter — the seven cops that catch nondeterminism at edit time |
+| `rspec-rails` / `minitest` | cold cases, if you are adopting an existing suite |
+| `capybara` + a driver | the `:system` tier |
+| `pg` / `mysql2` | pointing the blotter at Postgres or MySQL instead of SQLite |
 
 ## Installation
 
@@ -440,18 +469,6 @@ tiers:                           # fallback inference; base classes are primary
   integration: "test/cases/controllers/**/*"
   system: "test/cases/system/**/*"
 ```
-
-## Compatibility
-
-| | |
-|---|---|
-| Ruby | >= 3.1 |
-| Rails | >= 7.0 (tested against 7.1 and 8.1) |
-| Databases | Any ActiveRecord adapter for your app. The blotter is SQLite by default, with Postgres and MySQL adapters available |
-| Cold cases | RSpec and Minitest, via their own real engines |
-
-Parallel workers use `fork`, so they are unavailable on Windows and JRuby; those platforms
-fall back to serial execution automatically.
 
 ## Contributing
 
