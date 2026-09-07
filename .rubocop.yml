@@ -37,3 +37,8 @@ Naming/PredicateMethod:
 
 Lint/SuppressedException:
   Enabled: false
+
+# Positional tokens read better than annotated ones in the CLI's small fixed-width
+# table rows, where the format string and its arguments sit on the same line.
+Style/FormatStringToken:
+  Enabled: false

@@ -25,15 +25,15 @@ module Constable
 
       ENGINES = {
         rspec: {
-          glob:       "spec/**/*_spec.rb",
-          suffix:     "_spec.rb",
-          roots:      ["spec"],
+          glob: "spec/**/*_spec.rb",
+          suffix: "_spec.rb",
+          roots: ["spec"],
           superclass: "Constable::ColdCase::RSpec"
         },
         minitest: {
-          glob:       "test/**/*_test.rb",
-          suffix:     "_test.rb",
-          roots:      ["test"],
+          glob: "test/**/*_test.rb",
+          suffix: "_test.rb",
+          roots: ["test"],
           superclass: "Constable::ColdCase::Minitest"
         }
       }.freeze
@@ -57,7 +57,7 @@ module Constable
         # without needing a real diff algorithm.
         def diff
           added_head = @after.split(@before, 2).first.to_s
-          out = +"--- a/#{@relative_path}\n+++ b/#{@relative_path}\n"
+          out = "--- a/#{@relative_path}\n+++ b/#{@relative_path}\n"
           added_head.each_line { |line| out << "+#{line.chomp}\n" }
           out << "  #{@before.lines.size} unchanged line#{"s" unless @before.lines.size == 1} (byte for byte)\n"
           out << "+end\n"
@@ -120,7 +120,9 @@ module Constable
           unless @globs_added.empty?
             lines << "  config path match: added #{@globs_added.size} glob(s) to #{@config_path}"
             @globs_added.each { |glob| lines << "    - #{glob}   (#{covered_by(glob).size} files, 0 file changes)" }
-            lines << "  note: config.yml was rewritten from parsed YAML; comments were not preserved" unless comments_preserved?
+            unless comments_preserved?
+              lines << "  note: config.yml was rewritten from parsed YAML; comments were not preserved"
+            end
           end
           unless @changes.empty?
             lines << "  superclass swap: #{@changes.size} file(s) wrapped"
@@ -145,10 +147,16 @@ module Constable
 
       def initialize(from:, config: Constable.config, root: nil, paths: nil, strategy: :auto, dry_run: false)
         @from = from.to_s.downcase.to_sym
-        raise ArgumentError, "unknown import source #{from.inspect} (expected :rspec or :minitest)" unless ENGINES.key?(@from)
+        unless ENGINES.key?(@from)
+          raise ArgumentError,
+                "unknown import source #{from.inspect} (expected :rspec or :minitest)"
+        end
 
         @strategy = (strategy || :auto).to_sym
-        raise ArgumentError, "unknown strategy #{strategy.inspect} (expected #{STRATEGIES.join(", ")})" unless STRATEGIES.include?(@strategy)
+        unless STRATEGIES.include?(@strategy)
+          raise ArgumentError,
+                "unknown strategy #{strategy.inspect} (expected #{STRATEGIES.join(", ")})"
+        end
 
         @config = config
         @root = (root || config&.root || Constable.root).to_s
@@ -156,7 +164,7 @@ module Constable
         @dry_run = dry_run
       end
 
-      def engine  = ENGINES.fetch(@from)
+      def engine = ENGINES.fetch(@from)
       def dry_run? = @dry_run
 
       def call
@@ -244,7 +252,7 @@ module Constable
       private
 
       def expand_paths
-        return Dir.glob(File.join(@root, engine[:glob])).sort if @paths.nil? || Array(@paths).empty?
+        return Dir.glob(File.join(@root, engine[:glob])) if @paths.nil? || Array(@paths).empty?
 
         Array(@paths).flat_map do |entry|
           absolute = File.absolute_path?(entry.to_s) ? entry.to_s : File.join(@root, entry.to_s)
@@ -427,14 +435,14 @@ module Constable
         body += "\n" unless body.empty? || body.end_with?("\n")
         body += "\n" unless body.empty? || body.end_with?("\n\n")
         body + "# Added by `constable import` -- these run verbatim as cold cases.\n" \
-                "cold_cases:\n#{globs.map { |glob| "  - #{quote(glob)}\n" }.join}"
+               "cold_cases:\n#{globs.map { |glob| "  - #{quote(glob)}\n" }.join}"
       end
 
       # A sentinel the caller turns into the dump fallback -- returning invalid YAML on
       # purpose is clearer than raising through the happy path.
       def rewritten_via_dump_marker = " unparseable"
 
-      def quote(glob) = glob.match?(/\A[A-Za-z0-9_.\-\/*\[\]{}]+\z/) ? glob : glob.inspect
+      def quote(glob) = glob.match?(%r{\A[A-Za-z0-9_.\-/*\[\]{}]+\z}) ? glob : glob.inspect
 
       def apply_superclass_swaps(files, result)
         taken = []
@@ -458,4 +466,3 @@ module Constable
     end
   end
 end
-

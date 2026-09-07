@@ -172,7 +172,11 @@ module Constable
         basename = segments.pop
         return false if segments.any? { |segment| EXCLUDED_DIRS.include?(segment) }
         return false if EXCLUDED_BASENAMES.include?(basename) || EXCLUDED_BASENAME_PATTERN.match?(basename)
-        return false if extra_excludes(config).any? { |glob| File.fnmatch?(glob, relative, File::FNM_PATHNAME | File::FNM_EXTGLOB) }
+
+        excluded = extra_excludes(config).any? do |glob|
+          File.fnmatch?(glob, relative, File::FNM_PATHNAME | File::FNM_EXTGLOB)
+        end
+        return false if excluded
 
         true
       end
@@ -310,7 +314,7 @@ module Constable
       # 1-based line numbers whose hit count satisfies the block.
       def line_numbers
         numbers = []
-        @lines.each_with_index { |hits, index| numbers << index + 1 if yield(hits) }
+        @lines.each_with_index { |hits, index| numbers << (index + 1) if yield(hits) }
         numbers
       end
 
@@ -352,7 +356,7 @@ module Constable
     # The full picture for one run: overall numbers, per-file breakdown, the unpatrolled
     # list, and the diff-based gate.
     class Report
-      attr_reader :root, :config, :exempt
+      attr_reader :files, :root, :config, :exempt
 
       def initialize(files:, root: Constable.root, config: Constable.config,
                      changed_lines: nil, exempt: [], gate: true)
@@ -367,7 +371,6 @@ module Constable
 
       # --- overall -------------------------------------------------------------
 
-      def files = @files
       def empty? = @files.empty?
       def file(path) = @files.find { |f| f.relative_path == path.to_s || f.path == File.expand_path(path.to_s, @root) }
 
@@ -520,7 +523,7 @@ module Constable
       def synthesize_missing!
         return unless @changed_lines
 
-        known = @files.map(&:path).to_set
+        known = @files.to_set(&:path)
         @changed_lines.each_key do |path|
           next if known.include?(path)
           next unless File.file?(path)
@@ -651,7 +654,8 @@ module Constable
         return %(<span class="chip ok">no changed lines</span>) if @report.diff_relevant.zero?
 
         state = @report.meets_threshold? ? "ok" : "bad"
-        %(<span class="chip #{state}">diff #{@report.diff_percent.round}% of #{@report.diff_relevant} changed lines</span>)
+        %(<span class="chip #{state}">diff #{@report.diff_percent.round}% of ) +
+          %(#{@report.diff_relevant} changed lines</span>)
       end
 
       def diff_panel
@@ -666,7 +670,7 @@ module Constable
         end.join("\n")
 
         <<~HTML
-          <section class="panel #{@report.meets_threshold? ? "" : "bad"}">
+          <section class="panel #{@report.meets_threshold? ? "ok" : "bad"}">
             <h2>Changed lines not covered</h2>
             <p class="sub">Only these lines are held to the #{@report.threshold}% threshold. Legacy gaps below are visible, not blocking.</p>
             <ul class="uncovered">#{rows}</ul>
@@ -678,7 +682,11 @@ module Constable
         files = @report.unpatrolled
         return "" if files.empty?
 
-        items = files.map { |f| %(<li><a href="#" data-goto="#{e(f.relative_path)}">#{e(f.relative_path)}</a> <span class="sub">#{f.relevant} lines, none executed</span></li>) }.join("\n")
+        items = files.map do |f|
+          %(<li><a href="#" data-goto="#{e(f.relative_path)}">#{e(f.relative_path)}</a> ) +
+            %(<span class="sub">#{f.relevant} lines, none executed</span></li>)
+        end.join("\n")
+
         <<~HTML
           <section class="panel warn">
             <h2>Unpatrolled</h2>
@@ -888,6 +896,8 @@ module Constable
           });
         })();
       JS
+
+      private_constant :CSS, :JS
     end
   end
 end

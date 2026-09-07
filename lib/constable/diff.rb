@@ -167,7 +167,9 @@ module Constable
 
         if (match = NEW_FILE_HEADER.match(line))
           path = unquote(match[1])
-          current = path == "/dev/null" ? nil : path
+          # git spells a missing side of the diff "/dev/null" in its own output -- that
+          # is a marker in a text stream, not this platform's null device.
+          current = path == "/dev/null" ? nil : path # rubocop:disable Style/FileNull
         elsif current && (match = HUNK_HEADER.match(line))
           start = match[1].to_i
           count = match[2] ? match[2].to_i : 1

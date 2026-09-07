@@ -59,6 +59,10 @@ module Constable
       end
     RUBY
 
+    # Base classes a legacy Minitest file is likely to inherit from, used as a last-ditch
+    # content sniff when neither the filename nor an explicit ColdCase superclass says.
+    MINITEST_SUPERCLASSES = /<\s*(?:::)?(?:Minitest::|ActiveSupport::|ActionDispatch::|ActionController::)/
+
     # Raised when a cold case needs an engine the app no longer has installed.
     class EngineMissing < Constable::Error; end
 
@@ -93,10 +97,11 @@ module Constable
       # Absolute, de-duplicated, sorted so a run's file order is stable.
       def cold_case_files(config: Constable.config)
         root = config.root.to_s
-        config.cold_cases.flat_map do |glob|
+        matched = config.cold_cases.flat_map do |glob|
           pattern = File.absolute_path?(glob.to_s) ? glob.to_s : File.join(root, glob.to_s)
           Dir.glob(pattern, File::FNM_EXTGLOB)
-        end.select { |path| File.file?(path) }.uniq.sort
+        end
+        matched.select { |path| File.file?(path) }.uniq.sort
       end
 
       # :rspec, :minitest, or nil when we genuinely cannot tell.
@@ -116,8 +121,7 @@ module Constable
 
         if source
           return :rspec    if source.match?(/^\s*(?:RSpec\.)?(?:describe|feature|context)\b/)
-          return :minitest if source.match?(/<\s*(?:::)?(?:Minitest::|ActiveSupport::|ActionDispatch::|ActionController::)/) ||
-                              source.match?(/^\s*def\s+test_/)
+          return :minitest if source.match?(MINITEST_SUPERCLASSES) || source.match?(/^\s*def\s+test_/)
         end
 
         segments = path.split(File::SEPARATOR)
@@ -164,7 +168,7 @@ module Constable
         where = path ? " in #{relative_path(path)}" : ""
 
         <<~MESSAGE.strip
-          Cold cases#{where} need #{label}, but `require "#{ENGINE_REQUIRES.fetch(engine)}"` failed#{error ? " (#{error.message})" : ""}.
+          Cold cases#{where} need #{label}, but `require "#{ENGINE_REQUIRES.fetch(engine)}"` failed#{" (#{error.message})" if error}.
 
           #{label} is only needed while cold cases exist, so `rails generate constable:install`
           puts it in an optional Gemfile group. Add the group back and run `bundle install`:
@@ -218,7 +222,7 @@ module Constable
         @declared_classes = []
         yield
       ensure
-        @loading_file    = previous_file
+        @loading_file = previous_file
         @declared_classes = previous_classes
       end
 
@@ -228,7 +232,7 @@ module Constable
         @declared_classes&.map { |k| k.name if k.respond_to?(:name) }&.compact&.first
       end
 
-      def loading_file = @loading_file
+      attr_reader :loading_file
 
       private
 

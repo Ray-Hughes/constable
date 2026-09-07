@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "helper"
+require "English"
 
 module Constable
   # Cold cases are the adoption story, so these tests are deliberately end-to-end: real
@@ -117,7 +118,7 @@ module Constable
       assert_equal 2, files.size
       assert files.all? { |f| f.start_with?(tmp_root) }, "expected absolute paths, got #{files.inspect}"
       assert_equal files.sort, files, "expected a stable sorted order"
-      refute files.any? { |f| f.include?("models") }
+      refute(files.any? { |f| f.include?("models") })
     end
 
     def test_config_cold_case_predicate_and_files_agree
@@ -382,7 +383,7 @@ module Constable
       assert results.all?(&:cold?)
       assert_equal original, File.read(File.join(tmp_root, "spec/controllers/users_controller_spec.rb")),
                    "the zero-file-change path must not rewrite a single byte"
-      assert_equal 1, Constable.warnings.count { |w| w[:kind] == :cold_case }
+      assert_equal(1, Constable.warnings.count { |w| w[:kind] == :cold_case })
     end
 
     def test_mixed_engines_in_one_config_glob_set
@@ -396,7 +397,7 @@ module Constable
       results = ColdCase.run_files(ColdCase.cold_case_files(config: config), config: config)
 
       assert_equal 8, results.size
-      assert_equal 2, Constable.warnings.count { |w| w[:kind] == :cold_case }
+      assert_equal(2, Constable.warnings.count { |w| w[:kind] == :cold_case })
     end
 
     # ------------------------------------------------------------------ failure paths
@@ -418,7 +419,7 @@ module Constable
 
       error = assert_raises(Constable::Error) { ColdCase.run_file(path, config: Constable.config) }
 
-      assert_match(/lib\/mystery\.rb/, error.message)
+      assert_match(%r{lib/mystery\.rb}, error.message)
       assert_match(/Constable::ColdCase::RSpec/, error.message)
     end
 
@@ -432,7 +433,7 @@ module Constable
       end
 
       assert_match(/need RSpec/, error.message)
-      assert_match(/require "rspec\/core"/, error.message)
+      assert_match(%r{require "rspec/core"}, error.message)
       assert_match(/group :cold_case do/, error.message)
       assert_match(/gem "rspec-rails"/, error.message)
       assert_match(/gem "minitest"/, error.message)
@@ -470,17 +471,38 @@ module Constable
 
     # ------------------------------------------------------------------ engine isolation
 
-    def test_running_an_rspec_cold_case_restores_the_hosts_rspec_globals
+    def test_running_an_rspec_cold_case_leaves_no_rspec_globals_behind
       path = write_file("spec/arithmetic_spec.rb", RSPEC_PLAIN)
-      ColdCase.run_file(path, config: Constable.config) # force rspec to be loaded
-
-      before_world  = ::RSpec.instance_variable_get(:@world)
-      before_config = ::RSpec.instance_variable_get(:@configuration)
 
       ColdCase.run_file(path, config: Constable.config)
 
-      assert_same before_world, ::RSpec.instance_variable_get(:@world)
-      assert_same before_config, ::RSpec.instance_variable_get(:@configuration)
+      # A host with no RSpec state of its own -- Constable's own process, normally --
+      # must end the run exactly as it started: nothing built, nothing registered.
+      assert_nil ::RSpec.instance_variable_get(:@world)
+      assert_nil ::RSpec.instance_variable_get(:@configuration)
+    end
+
+    def test_running_an_rspec_cold_case_restores_a_hosts_own_rspec_globals
+      path = write_file("spec/arithmetic_spec.rb", RSPEC_PLAIN)
+      ColdCase.run_file(path, config: Constable.config) # force rspec-core to be loaded
+
+      host_config = ::RSpec::Core::Configuration.new
+      host_world  = ::RSpec::Core::World.new(host_config)
+      ::RSpec.instance_variable_set(:@configuration, host_config)
+      ::RSpec.instance_variable_set(:@world, host_world)
+
+      begin
+        results = ColdCase.run_file(path, config: Constable.config)
+
+        assert_equal 4, results.size
+        assert_same host_world, ::RSpec.instance_variable_get(:@world)
+        assert_same host_config, ::RSpec.instance_variable_get(:@configuration)
+        assert_empty host_world.example_groups,
+                     "a cold case must not register its groups in the host's world"
+      ensure
+        ::RSpec.instance_variable_set(:@world, nil)
+        ::RSpec.instance_variable_set(:@configuration, nil)
+      end
     end
 
     def test_rspec_groups_do_not_leak_from_one_cold_case_file_to_the_next
@@ -505,7 +527,7 @@ module Constable
 
       assert_equal before, ::Minitest::Runnable.runnables,
                    "a cold-case class must not stay in the registry -- it would run again at exit"
-      refute ::Minitest::Runnable.runnables.any? { |k| k.to_s == "ColdArithmeticTest" }
+      refute(::Minitest::Runnable.runnables.any? { |k| k.to_s == "ColdArithmeticTest" })
     end
 
     def test_minitest_autorun_is_neutralised_so_nothing_runs_twice
@@ -524,7 +546,7 @@ module Constable
       assert_equal 1, results.size
       assert ::Minitest.class_variable_get(:@@installed_at_exit),
              "the at_exit autorun hook must be claimed, or the docket runs again at process exit"
-      refute ::Minitest::Runnable.runnables.any? { |k| k.to_s == "AutorunColdTest" }
+      refute(::Minitest::Runnable.runnables.any? { |k| k.to_s == "AutorunColdTest" })
     end
 
     def test_the_outer_minitest_reporter_never_sees_inner_results
@@ -539,6 +561,60 @@ module Constable
       # against the inner instances, never against this one.
       assert_equal 0, leaked, "the inner Minitest run leaked #{leaked} assertions into the outer one"
       assert_equal 4, results.size
+    end
+
+    def test_neither_engine_writes_to_stdout
+      spec = write_file("spec/arithmetic_spec.rb", RSPEC_PLAIN)
+      test = write_file("test/arithmetic_test.rb", MINITEST_PLAIN)
+
+      output = capture_stdout { ColdCase.run_files([spec, test], config: Constable.config) }
+
+      assert_equal "", output,
+                   "stdout belongs to Constable's reporter -- the engines must not print into it"
+    end
+
+    # Our own suite runs *inside* Minitest.run, which quietly sets Minitest.seed and has
+    # already installed the autorun at_exit hook. A real `constable test` process has
+    # neither, and both of those globals bite there and only there -- so this one has to
+    # be a subprocess to mean anything.
+    def test_a_fresh_constable_process_runs_cold_cases_of_both_engines
+      write_file("spec/legacy_spec.rb", <<~SPEC)
+        describe "Legacy" do
+          it "passes" do
+            expect(1).to eq(1)
+          end
+        end
+      SPEC
+      write_file("test/legacy_test.rb", <<~TEST)
+        require "minitest/autorun"
+
+        class FreshProcessColdTest < Minitest::Test
+          def test_passes
+            assert true
+          end
+        end
+      TEST
+
+      script = <<~RUBY
+        $LOAD_PATH.unshift #{File.expand_path("../../lib", __dir__).inspect}
+        require "constable"
+        Constable.root = #{tmp_root.inspect}
+        files = %w[spec/legacy_spec.rb test/legacy_test.rb].map { |f| File.join(Constable.root, f) }
+        results = Constable::ColdCase.run_files(files, seed: 4242)
+        puts results.map { |r| [r.case_name, r.description, r.status].join("|") }
+        puts "warnings=" + Constable.warnings.size.to_s
+        at_exit { puts "at_exit_ran_once" }
+      RUBY
+      output = IO.popen([RbConfig.ruby, "-e", script], err: %i[child out], &:read)
+      status = $CHILD_STATUS
+
+      assert_predicate status, :success?, "subprocess failed:\n#{output}"
+      assert_includes output, "Legacy|Legacy passes|passed"
+      assert_includes output, "FreshProcessColdTest|test_passes|passed"
+      assert_includes output, "warnings=2"
+      assert_equal 1, output.scan("at_exit_ran_once").size,
+                   "Minitest's autorun hook must not fire a second run at process exit"
+      refute_match(/1 runs|Finished in/, output, "no engine may print its own summary")
     end
 
     def test_running_the_same_file_twice_is_stable

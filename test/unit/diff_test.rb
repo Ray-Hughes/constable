@@ -9,6 +9,15 @@ module Constable
   # decide what to gate, so these tests drive a real git repository rather than stubbing
   # the plumbing -- the interesting bugs here are all in what git actually prints.
   class DiffTest < TestCase
+    # Resolved once, at load: every test in here needs a real git binary and there is no
+    # point shelling out twenty times to ask the same question.
+    GIT_AVAILABLE = begin
+      _out, _err, status = Open3.capture3("git", "--version")
+      status.success?
+    rescue StandardError
+      false
+    end
+
     def setup
       super
       @repo = nil
@@ -282,20 +291,7 @@ module Constable
     end
 
     def skip_without_git
-      return if self.class.git_available?
-
-      skip("git is not available on this machine")
-    end
-
-    def self.git_available?
-      return @git_available if defined?(@git_available)
-
-      @git_available = begin
-        _out, _err, status = Open3.capture3("git", "--version")
-        status.success?
-      rescue StandardError
-        false
-      end
+      skip("git is not available on this machine") unless GIT_AVAILABLE
     end
   end
 end

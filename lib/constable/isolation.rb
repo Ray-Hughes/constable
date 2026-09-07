@@ -53,16 +53,16 @@ module Constable
       changed_globals = (after[:globals].keys & before[:globals].keys).reject do |key|
         after[:globals][key] == before[:globals][key]
       end
-      leaks << "set global #{added_globals.join(', ')}" if added_globals.any?
-      leaks << "mutated global #{changed_globals.join(', ')}" if changed_globals.any?
+      leaks << "set global #{added_globals.join(", ")}" if added_globals.any?
+      leaks << "mutated global #{changed_globals.join(", ")}" if changed_globals.any?
 
       added_env = after[:env].keys - before[:env].keys
       changed_env = (after[:env].keys & before[:env].keys).reject { |k| after[:env][k] == before[:env][k] }
-      leaks << "set ENV #{added_env.join(', ')}" if added_env.any?
-      leaks << "mutated ENV #{changed_env.join(', ')}" if changed_env.any?
+      leaks << "set ENV #{added_env.join(", ")}" if added_env.any?
+      leaks << "mutated ENV #{changed_env.join(", ")}" if changed_env.any?
 
       added_cvars = after[:class_variables] - before[:class_variables]
-      leaks << "set class variable #{added_cvars.join(', ')}" if added_cvars.any?
+      leaks << "set class variable #{added_cvars.join(", ")}" if added_cvars.any?
 
       leaks
     end
@@ -142,7 +142,7 @@ module Constable
       return false unless source.start_with?("#{Constable.root}/")
 
       !source.include?("/vendor/") && !source.include?("/gems/")
-    rescue StandardError, NameError
+    rescue StandardError
       false
     end
 

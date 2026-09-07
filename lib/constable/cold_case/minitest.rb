@@ -41,7 +41,7 @@ module Constable
         attr_reader :results
 
         def initialize
-          super()
+          super
           @results = []
         end
 
@@ -69,8 +69,10 @@ module Constable
           snapshot = registry.dup
 
           ColdCase.while_loading(path) do
-            load_error = capture_load(path)
-            run_runnables(discover_runnables(registry, snapshot, path), collector) unless load_error
+            without_rspecs_global_dsl do
+              load_error = capture_load(path)
+              run_runnables(discover_runnables(registry, snapshot, path), collector, seed: seed) unless load_error
+            end
 
             ColdCase.warn_for_file(path, base_class_name, collector.results.size, config: config)
           end
@@ -101,7 +103,7 @@ module Constable
         def disable_autorun!
           return unless ::Minitest.class_variable_defined?(:@@installed_at_exit)
 
-          ::Minitest.class_variable_set(:@@installed_at_exit, true)
+          ::Minitest.class_variable_set(:@@installed_at_exit, true) # rubocop:disable Style/ClassVars
         end
 
         def capture_load(path)
@@ -109,6 +111,47 @@ module Constable
           nil
         rescue ScriptError, StandardError => e
           e
+        end
+
+        # Both engines want the bare word `describe`, and in a mixed suite both are
+        # loaded at once. Minitest puts its version on Kernel; RSpec puts its version
+        # directly on the top-level `main` object's singleton, which wins every lookup.
+        # A Minitest::Spec cold case loaded in that state would silently register RSpec
+        # example groups and report zero tests.
+        #
+        # So for the duration of a Minitest file -- and only then -- RSpec's top-level
+        # aliases are lifted off `main` and put back exactly as they were, visibility and
+        # all. rspec-core's own remove_globally! is not usable here: it uses undef_method,
+        # which blocks Kernel#describe as well and leaves neither engine reachable.
+        def without_rspecs_global_dsl
+          singleton = rspec_top_level_singleton
+          return yield unless singleton
+
+          owned = rspec_global_dsl_methods.select { |m| singleton.method_defined?(m, false) }
+          return yield if owned.empty?
+
+          saved = owned.to_h { |m| [m, singleton.instance_method(m)] }
+          owned.each { |m| singleton.send(:remove_method, m) }
+          begin
+            yield
+          ensure
+            saved.each { |m, unbound| singleton.send(:define_method, m, unbound) }
+          end
+        end
+
+        def rspec_top_level_singleton
+          return nil unless defined?(::RSpec::Core::DSL) && ::RSpec::Core::DSL.respond_to?(:top_level)
+
+          top = ::RSpec::Core::DSL.top_level
+          top&.singleton_class
+        rescue StandardError
+          nil
+        end
+
+        def rspec_global_dsl_methods
+          dsl = ::RSpec::Core::DSL
+          aliases = dsl.respond_to?(:example_group_aliases) ? dsl.example_group_aliases : []
+          Array(aliases).map(&:to_sym) + %i[shared_examples shared_examples_for shared_context]
         end
 
         # Which runnable classes belong to the file we just loaded?
@@ -136,7 +179,6 @@ module Constable
           end
 
           found = newly + scanned
-          warn "DBG path=" + path.to_s + " newly=" + newly.inspect + " scanned=" + scanned.inspect + " snapshot=" + snapshot.inspect + " registry=" + registry.inspect if ENV["CC_DBG"]
           @known_runnables |= found
           found
         end
@@ -150,11 +192,11 @@ module Constable
             location = klass.instance_method(method_name).source_location
             location && File.expand_path(location.first) == path
           end
-        rescue StandardError, NameError
+        rescue StandardError
           false
         end
 
-        def run_runnables(runnables, collector)
+        def run_runnables(runnables, collector, seed: nil)
           reporter = ::Minitest::CompositeReporter.new
           reporter << collector
           reporter.start
@@ -162,13 +204,33 @@ module Constable
           # Constable never re-orders a cold case, so nothing here touches Minitest's
           # own ordering: classes run in declaration order and each class orders its
           # own methods however `test_order` says it should.
-          runnables.each do |klass|
-            next unless klass.respond_to?(:runnable_methods)
+          with_minitest_seed(seed) do
+            runnables.each do |klass|
+              next unless klass.respond_to?(:runnable_methods)
 
-            run_suite(klass, reporter)
+              run_suite(klass, reporter)
+            end
           end
 
           reporter.report
+        end
+
+        # Minitest::Test#runnable_methods shuffles with `srand Minitest.seed`, and
+        # Minitest.seed is only ever set by Minitest.run -- which we deliberately never
+        # call. Left nil it raises a TypeError before a single test runs.
+        #
+        # Feeding it Constable's own seed is not Constable imposing an order: Minitest
+        # was always going to randomize, and this just supplies the number it would
+        # otherwise have made up, which is what makes `constable test PATH --seed N`
+        # replay a cold case exactly. Both the seed and the global RNG go back afterwards.
+        def with_minitest_seed(seed)
+          previous_seed = ::Minitest.seed
+          ::Minitest.seed = (seed || previous_seed || (Random.new_seed % 0xFFFF)).to_i
+          previous_rand = srand(::Minitest.seed)
+          yield
+        ensure
+          ::Minitest.seed = previous_seed
+          srand(previous_rand) if previous_rand
         end
 
         # minitest 6 renamed the "run every method of this class" entry point from
@@ -186,30 +248,33 @@ module Constable
           class_name = ColdCase.declared_class_name
           tier       = config.tier_for(path)
 
-          results = minitest_results.map do |mt|
-            result_for(mt, path: path, relative: relative, class_name: class_name,
+          results = minitest_results.map do |outcome|
+            result_for(outcome, path: path, relative: relative, class_name: class_name,
                            config: config, tier: tier, seed: seed)
           end
 
-          results << load_failure_result(path, relative, load_error, config: config, tier: tier, seed: seed) if load_error
+          if load_error
+            results << load_failure_result(path, relative, load_error, config: config, tier: tier,
+                                                                       seed: seed)
+          end
           results
         end
 
-        def result_for(mt, path:, relative:, class_name:, config:, tier:, seed:)
-          description = description_for(mt)
-          file, line  = location_of(mt, relative, config: config)
+        def result_for(outcome, path:, relative:, class_name:, config:, tier:, seed:)
+          description = description_for(outcome)
+          file, line  = location_of(outcome, relative, config: config)
 
           result = Constable::Result.new(
             identity: Constable::Identity.for_cold_case(path, description, root: config.root),
-            case_name: mt.klass.to_s.empty? ? (class_name || relative) : mt.klass.to_s,
+            case_name: outcome.klass.to_s.empty? ? (class_name || relative) : outcome.klass.to_s,
             description: description,
             file: file,
             line: line,
             kind: :cold,
             tier: tier,
-            status: status_for(mt),
-            duration: mt.time.to_f,
-            failure: failure_for(mt)
+            status: status_for(outcome),
+            duration: outcome.time.to_f,
+            failure: failure_for(outcome)
           )
           result.seed = seed
           result
@@ -219,27 +284,27 @@ module Constable
         # test_0001_creates a user. The ordinal is positional -- adding an example above
         # renumbers everything below it -- so stripping it is what keeps a cold case's
         # flake history attached to the right test across an ordinary edit.
-        def description_for(mt)
-          mt.name.to_s.sub(/\Atest_\d{4}_/, "")
+        def description_for(outcome)
+          outcome.name.to_s.sub(/\Atest_\d{4}_/, "")
         end
 
-        def status_for(mt)
-          return :skipped if mt.skipped?
-          return :passed  if mt.failures.empty?
-          return :errored if mt.failures.any? { |f| f.is_a?(::Minitest::UnexpectedError) }
+        def status_for(outcome)
+          return :skipped if outcome.skipped?
+          return :passed  if outcome.failures.empty?
+          return :errored if outcome.failures.any?(::Minitest::UnexpectedError)
 
           :failed
         end
 
-        def failure_for(mt)
-          return nil if mt.failures.empty? || mt.skipped?
+        def failure_for(outcome)
+          return nil if outcome.failures.empty? || outcome.skipped?
 
-          failure = mt.failures.first
+          failure = outcome.failures.first
           # UnexpectedError is a wrapper Minitest puts around a raised exception; the
           # real one underneath is what a developer needs to see.
           failure = failure.error if failure.is_a?(::Minitest::UnexpectedError) && failure.respond_to?(:error)
 
-          message = mt.failures.size > 1 ? mt.failures.map(&:message).join("\n\n") : failure.message
+          message = outcome.failures.size > 1 ? outcome.failures.map(&:message).join("\n\n") : failure.message
           Constable::Failure.new(
             message: message.to_s,
             backtrace: Constable::Backtrace.clean(failure.backtrace),
@@ -265,8 +330,8 @@ module Constable
           result
         end
 
-        def location_of(mt, fallback_relative, config:)
-          file, line = mt.source_location if mt.respond_to?(:source_location)
+        def location_of(outcome, fallback_relative, config:)
+          file, line = outcome.source_location if outcome.respond_to?(:source_location)
           return [fallback_relative, 1] if file.nil? || file.to_s == "unknown"
 
           [ColdCase.relative_path(file, config: config), (line || 1).to_i]

@@ -78,17 +78,18 @@ module Constable
       jail = Jail.new(config: config, storage: storage)
       warrants = Warrants.new(config: config, storage: storage)
 
-      say_table("JAILED", jail.entries.reject { |e| e[:state].to_s == "parole" }) do |entry|
-        ["#{entry[:file]}:#{entry[:line]}", entry[:label], entry[:reason], jailed_on(entry)]
+      say_table("JAILED", jail.jailed) do |entry|
+        [entry.location, entry.label, entry.reason, jailed_on(entry)]
       end
 
-      say_table("ON PAROLE", jail.entries.select { |e| e[:state].to_s == "parole" }) do |entry|
-        clean = "#{entry[:parole_clean_runs].to_i}/#{config.parole_period} clean"
-        ["#{entry[:file]}:#{entry[:line]}", entry[:label], clean, jailed_on(entry)]
+      say_table("ON PAROLE", jail.paroled) do |entry|
+        ["#{entry.parole_day}/#{config.parole_period} clean"].then do |clean|
+          [entry.location, entry.label, clean.first, jailed_on(entry)]
+        end
       end
 
       say_table("WARRANTS", warrants.entries) do |entry|
-        ["#{entry[:file]}:#{entry[:line]}", entry[:label], "issued #{short_date(entry[:issued_at])}"]
+        [entry.location, entry.label, "issued #{short_date(entry.issued_at)}"]
       end
 
       exit(EXIT_CLEAN)
@@ -110,15 +111,29 @@ module Constable
     option :html, type: :boolean, default: false, desc: "Write a browsable HTML report"
     def beat
       config = load_config
-      report = Constable::Coverage.load_last(config: config)
+      LogRouter.route!(verbose: false)
+
+      # The beat is walked, not remembered: a stored snapshot carries percentages but not
+      # the per-line detail the breakdown and the HTML report are made of. So this runs
+      # the full suite with coverage on and reports on what it finds.
+      selection = Selection.new([], config: config, root: Constable.root, full: true)
+      runner = Runner.new(
+        selection: selection, config: config, reporter: reporter(config),
+        storage: Constable.storage, coverage: true
+      )
+      runner.call
+      report = runner.coverage_report
+
       unless report
-        say "No coverage recorded yet. Run: constable test --full --coverage"
+        say "No coverage was recorded. Is there anything to run?"
         exit(EXIT_FAILED)
       end
 
-      say report.to_s
+      say ""
+      say report.beat_report
+
       if options[:html] || config.coverage_html?
-        path = report.write_html
+        path = Constable::Coverage.write_html(report)
         say "\nHTML report: #{path}"
       end
       exit(EXIT_CLEAN)
@@ -126,40 +141,62 @@ module Constable
 
     desc "import", "Adopt an existing suite as cold cases -- verbatim, nothing rewritten"
     option :from, type: :string, required: true, enum: %w[rspec minitest], desc: "Source framework"
-    option :strategy, type: :string, default: "config", enum: %w[config superclass],
-                      desc: "config: no file changes at all. superclass: one line per file"
+    option :strategy, type: :string, default: "auto", enum: %w[auto config superclass],
+                      desc: "auto: widest clean glob, else a superclass swap. " \
+                            "config: no file changes at all. superclass: one line per file"
     option :"dry-run", type: :boolean, default: false, desc: "Show what would change"
     def import
-      config = load_config
       result = Importer.run(
         from: options[:from].to_sym,
-        config: config,
+        config: load_config,
         dry_run: options[:"dry-run"],
         strategy: options[:strategy].to_sym
       )
-      say result.to_s
+
+      say result.summary
+      say "\nNothing was rewritten -- cold cases run through their own engine, unchanged." if result.any_changes?
       exit(EXIT_CLEAN)
     end
 
-    desc "modernize PATH", "Opt-in AST rewrite of one file into the native DSL"
-    option :"dry-run", type: :boolean, default: false, desc: "Show the rewrite without writing it"
-    def modernize(path)
-      config = load_config
-      outcome = Importer::Modernizer.new(path, config: config).call
-
-      if options[:"dry-run"]
-        say outcome[:source]
-      else
-        File.write(path, outcome[:source])
-        say "Rewrote #{path}"
+    desc "modernize PATH [PATH...]", "Opt-in AST rewrite into the native DSL"
+    long_desc <<~DESC
+      Reports by default and writes nothing. --alongside writes a new *_case.rb next to the
+      original; --in-place overwrites it. Anything the rewrite cannot decide safely is
+      flagged for a human rather than guessed at, and never converted.
+    DESC
+    option :alongside, type: :boolean, default: false, desc: "Write PATH_case.rb beside the original"
+    option :"in-place", type: :boolean, default: false, desc: "Overwrite the file"
+    option :"show-source", type: :boolean, default: false, desc: "Print the rewritten source"
+    def modernize(*paths)
+      if paths.empty?
+        warn "modernize needs at least one path"
+        exit(EXIT_USAGE)
       end
 
-      if outcome[:flags].any?
-        say "\nFlagged for a human decision:"
-        outcome[:flags].each { |flag| say "  #{flag}" }
-        say "\nSee constable_modernize_report.md"
+      mode = if options[:"in-place"] then :in_place
+             elsif options[:alongside] then :alongside
+             else :none
+             end
+
+      run = Importer.modernize(paths, config: load_config, write: mode)
+
+      run.results.each do |result|
+        if result.error
+          say "#{result.relative_path}: #{result.error}"
+          next
+        end
+
+        counts = result.counts
+        say "#{result.relative_path} — #{describe_counts(counts)}"
+        say(result.source) if options[:"show-source"]
+
+        result.flags.each { |flag| say "    flagged #{flag[:location]}  #{flag[:reason]}" }
       end
-      exit(EXIT_CLEAN)
+
+      say "\nWrote #{run.written.size} file(s)." if run.written.any?
+      say "Report: #{run.report_path}" if run.report_path
+      say "\nNothing was written. Re-run with --alongside or --in-place." if mode == :none
+      exit(run.ok? ? EXIT_CLEAN : EXIT_FAILED)
     end
 
     desc "version", "Print the version"
@@ -190,11 +227,11 @@ module Constable
         end
 
         entries.each do |entry|
-          state = entry[:state].to_s == "parole" ? "on parole" : "jailed"
-          say format("%-8s %s:%s", state, entry[:file], entry[:line])
-          say "         #{entry[:label]}"
-          say "         #{entry[:reason]}"
-          say "         jailed #{entry[:jailed_at]}#{repeat_note(entry)}"
+          state = entry.paroled? ? "on parole" : "jailed"
+          say format("%-9s %s", state, entry.location)
+          say "          #{entry.label}"
+          say "          #{entry.reason}"
+          say "          jailed #{short_date(entry.jailed_at)}#{repeat_note(entry)}"
           say ""
         end
       end
@@ -210,7 +247,7 @@ module Constable
         config = Constable.config
         storage = Constable.storage
         jail = Jail.new(config: config, storage: storage)
-        targets = path ? [path] : jail.entries.map { |e| "#{e[:file]}:#{e[:line]}" }
+        targets = path ? [path] : jail.entries.map(&:location)
 
         if targets.empty?
           say "The docket is empty."
@@ -222,6 +259,9 @@ module Constable
           selection: selection,
           config: config,
           storage: storage,
+          jail_run: true,
+          # Sequential by default: one test at a time gives clean attribution for a
+          # docket nobody trusts yet. --full trades that for speed.
           workers: options[:full] ? nil : 1
         )
         status = runner.call
@@ -259,9 +299,11 @@ module Constable
         end
 
         def repeat_note(entry)
-          count = entry[:times_jailed].to_i
+          count = entry.times_jailed
           count > 1 ? " (this is its #{Reporter.ordinalize(count)} time in jail)" : ""
         end
+
+        def short_date(value) = value.to_s[0, 10]
       end
     end
 
@@ -283,9 +325,9 @@ module Constable
         end
 
         entries.each do |entry|
-          say format("%s:%s", entry[:file], entry[:line])
-          say "  #{entry[:label]}"
-          say "  issued #{entry[:issued_at]}, last seen #{entry[:last_seen_at]}"
+          say entry.location
+          say "  #{entry.label}"
+          say "  issued #{entry.issued_at.to_s[0, 10]}, last seen #{entry.last_seen_at.to_s[0, 10]}"
           say ""
         end
       end
@@ -358,17 +400,22 @@ module Constable
         if entries.empty?
           say "  (none)"
         else
-          entries.each { |entry| say "  #{yield(entry).compact.join('  ')}" }
+          entries.each { |entry| say "  #{yield(entry).compact.join("  ")}" }
         end
         say ""
       end
 
       def jailed_on(entry)
-        "jailed #{short_date(entry[:jailed_at])}"
+        "jailed #{short_date(entry.jailed_at)}"
       end
 
       def short_date(value)
         value.to_s[0, 10]
+      end
+
+      def describe_counts(counts)
+        parts = counts.filter_map { |kind, count| "#{count} #{kind}" if count.to_i.positive? }
+        parts.empty? ? "nothing to convert" : parts.join(", ")
       end
     end
   end

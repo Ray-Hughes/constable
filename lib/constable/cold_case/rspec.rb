@@ -61,11 +61,11 @@ module Constable
         # `it`, `let`, `before`, `subject`, `around`, `pending`, custom aliases a user
         # registered with RSpec.configure -- all of them, without us having to keep a
         # list in sync with rspec-core's.
-        def method_missing(method_name, *args, **kwargs, &block)
+        def method_missing(method_name, ...)
           ColdCase.require_engine!(:rspec)
           return super unless ::RSpec::Core::ExampleGroup.respond_to?(method_name)
 
-          cold_case_group.public_send(method_name, *args, **kwargs, &block)
+          cold_case_group.public_send(method_name, ...)
         end
 
         def respond_to_missing?(method_name, include_private = false)
@@ -124,7 +124,7 @@ module Constable
 
               ColdCase.warn_for_file(path, base_class_name, collector.examples.size, config: config)
               results = build_results(path, collector.examples, config: config, seed: seed,
-                                            load_error: load_error)
+                                                                load_error: load_error)
             end
           end
           results
@@ -226,7 +226,7 @@ module Constable
         end
 
         def build_results(path, examples, config:, seed:, load_error:)
-          relative  = ColdCase.relative_path(path, config: config)
+          relative = ColdCase.relative_path(path, config: config)
           class_name = ColdCase.declared_class_name
           tier      = config.tier_for(path)
 
@@ -235,7 +235,10 @@ module Constable
                                 config: config, tier: tier, seed: seed)
           end
 
-          results << load_failure_result(path, relative, load_error, config: config, tier: tier, seed: seed) if load_error
+          if load_error
+            results << load_failure_result(path, relative, load_error, config: config, tier: tier,
+                                                                       seed: seed)
+          end
           results
         end
 
@@ -271,10 +274,10 @@ module Constable
 
         def expectation_failure?(exception)
           return false unless exception
-          return true  if defined?(::RSpec::Expectations::ExpectationNotMetError) &&
-                          exception.is_a?(::RSpec::Expectations::ExpectationNotMetError)
-          return true  if defined?(::RSpec::Expectations::MultipleExpectationsNotMetError) &&
-                          exception.is_a?(::RSpec::Expectations::MultipleExpectationsNotMetError)
+          return true if defined?(::RSpec::Expectations::ExpectationNotMetError) &&
+                         exception.is_a?(::RSpec::Expectations::ExpectationNotMetError)
+          return true if defined?(::RSpec::Expectations::MultipleExpectationsNotMetError) &&
+                         exception.is_a?(::RSpec::Expectations::MultipleExpectationsNotMetError)
 
           false
         end

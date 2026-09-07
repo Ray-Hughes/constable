@@ -39,7 +39,7 @@ module Constable
       MOCK_ENTRY_POINTS   = %i[allow allow_any_instance_of expect_any_instance_of double instance_double
                                class_double spy stub_const].freeze
       HOOK_SCOPES_OK      = [nil, :each, :example].freeze
-      MINITEST_SUPERCLASS = /(?:Test|TestCase)\z/.freeze
+      MINITEST_SUPERCLASS = /(?:Test|TestCase)\z/
       SPEC_HELPERS        = %w[spec_helper rails_helper test_helper].freeze
 
       # One converted file. Responds to #[] and #to_h, so callers can treat it either as
@@ -54,7 +54,10 @@ module Constable
         def flagged?  = !Array(flags).empty?
         def partial?  = flagged? || !Array(untouched).empty?
         def written?  = !written_to.nil?
-        def counts    = { converted: Array(converted).size, flagged: Array(flags).size, untouched: Array(untouched).size }
+
+        def counts
+          { converted: Array(converted).size, flagged: Array(flags).size, untouched: Array(untouched).size }
+        end
       end
 
       # An aggregate over one `constable modernize` invocation.
@@ -106,7 +109,10 @@ module Constable
         def run(paths, config: Constable.config, root: nil, write: :none, report: true)
           root = (root || config&.root || Constable.root).to_s
           write = (write || :none).to_sym
-          raise ArgumentError, "unknown write mode #{write.inspect} (expected #{WRITE_MODES.join(", ")})" unless WRITE_MODES.include?(write)
+          unless WRITE_MODES.include?(write)
+            raise ArgumentError,
+                  "unknown write mode #{write.inspect} (expected #{WRITE_MODES.join(", ")})"
+          end
 
           results = expand(paths, root).map do |file|
             result = new(file, config: config, root: root).call
@@ -153,9 +159,9 @@ module Constable
           Array(paths).flat_map do |entry|
             absolute = File.absolute_path?(entry.to_s) ? entry.to_s : File.join(root, entry.to_s)
             if File.directory?(absolute)
-              Dir.glob(File.join(absolute, "**", "*{_spec,_test}.rb")).sort
+              Dir.glob(File.join(absolute, "**", "*{_spec,_test}.rb"))
             elsif absolute.include?("*")
-              Dir.glob(absolute).sort
+              Dir.glob(absolute)
             else
               [absolute]
             end
@@ -283,19 +289,31 @@ module Constable
 
       def visit_block(node, in_case:)
         send_node, block_args, _body = node.children
-        return visit_children(node, in_case: in_case) unless send_node.is_a?(::Parser::AST::Node) && send_node.type == :send
+        unless send_node.is_a?(::Parser::AST::Node) && send_node.type == :send
+          return visit_children(node,
+                                in_case: in_case)
+        end
 
         name = send_node.children[1]
 
         return handle_group(node, send_node, in_case: in_case)      if group_call?(send_node)
         return handle_shared_definition(node, send_node)            if SHARED_DEFINITIONS.include?(name)
         return handle_matcher_definition(node, send_node)           if matcher_definition?(send_node)
-        return handle_example(node, send_node, block_args)          if EXAMPLE_METHODS.include?(name) && send_node.children[0].nil?
-        return handle_skipped_example(node, send_node)              if SKIPPED_EXAMPLES.include?(name) && send_node.children[0].nil?
-        return handle_let(node, send_node)                          if %i[let let!].include?(name) && send_node.children[0].nil?
-        return handle_subject(node, send_node)                      if %i[subject subject!].include?(name) && send_node.children[0].nil?
-        return handle_hook(node, send_node)                         if %i[before after around append_after prepend_before].include?(name) && send_node.children[0].nil?
-        return handle_its(node, send_node)                          if name == :its && send_node.children[0].nil?
+        if EXAMPLE_METHODS.include?(name) && send_node.children[0].nil?
+          return handle_example(node, send_node,
+                                block_args)
+        end
+        if SKIPPED_EXAMPLES.include?(name) && send_node.children[0].nil?
+          return handle_skipped_example(node,
+                                        send_node)
+        end
+        return handle_let(node, send_node) if %i[let
+                                                 let!].include?(name) && send_node.children[0].nil?
+        return handle_subject(node, send_node) if %i[subject
+                                                     subject!].include?(name) && send_node.children[0].nil?
+        return handle_hook(node, send_node) if %i[before after around append_after
+                                                  prepend_before].include?(name) && send_node.children[0].nil?
+        return handle_its(node, send_node) if name == :its && send_node.children[0].nil?
 
         visit_children(node, in_case: in_case)
       end
@@ -320,7 +338,9 @@ module Constable
         return if args.size <= 1
 
         note_untouched(:describe_metadata, node,
-                       "extra arguments to `#{send_node.children[1]}` (#{args[1..].map { |a| source_of(a) }.join(", ")}) " \
+                       "extra arguments to `#{send_node.children[1]}` (#{args[1..].map do |a|
+                         source_of(a)
+                       end.join(", ")}) " \
                        "were dropped -- Constable has no example metadata")
       end
 
@@ -450,8 +470,9 @@ module Constable
       end
 
       def handle_its(node, send_node)
-        flag(:its, node, "`its(#{source_of(send_node.children[2])})` is an implicit-subject one-liner. " \
-                         "Write it as `investigate \"...\" do attest(subject.#{literal_value(send_node.children[2])}).to ... end`.")
+        attribute = literal_value(send_node.children[2])
+        flag(:its, node, "`its(#{source_of(send_node.children[2])})` is an implicit-subject one-liner. Write it " \
+                         "as `investigate \"...\" do attest(subject.#{attribute}).to ... end`.")
       end
 
       def handle_shared_definition(node, send_node)
@@ -504,14 +525,18 @@ module Constable
           replace(node.loc.selector, "attest") if receiver.nil?
           record_converted(:attest, node, "expect", "attest") if receiver.nil?
         when :is_expected
-          flag(:is_expected, node,
-               "`is_expected` needs RSpec's implicit subject. Use `attest(subject)` -- an anonymous " \
-               "`subject` block is converted to `witness(:subject)` for you.") if receiver.nil?
+          if receiver.nil?
+            flag(:is_expected, node,
+                 "`is_expected` needs RSpec's implicit subject. Use `attest(subject)` -- an anonymous " \
+                 "`subject` block is converted to `witness(:subject)` for you.")
+          end
         when :should, :should_not
           flag(:should_syntax, node, "`#{name}` is RSpec's monkey-patched expectation syntax. Use `attest(...).to`.")
         when :described_class
-          flag(:described_class, node,
-               "`described_class` has no meaning once `describe X` is a real class. Name the class directly.") if receiver.nil?
+          if receiver.nil?
+            flag(:described_class, node,
+                 "`described_class` has no meaning once `describe X` is a real class. Name the class directly.")
+          end
         when :to_not
           replace(node.loc.selector, "not_to")
           record_converted(:not_to, node, "to_not", "not_to")
@@ -544,9 +569,7 @@ module Constable
       def visit_class(node, in_case:)
         name_node, superclass, body = node.children
 
-        unless minitest_superclass?(superclass)
-          return visit_children(node, in_case: in_case)
-        end
+        return visit_children(node, in_case: in_case) unless minitest_superclass?(superclass)
 
         @class_name = minitest_class_name(name_node)
         replace(name_node.loc.expression, @class_name) if @class_name != source_of(name_node)
@@ -588,10 +611,18 @@ module Constable
 
       def convert_test_method(node, name, args, body)
         description = name.to_s.delete_prefix("test_").tr("_", " ").strip
-        return flag(:endless_def, node, "`def #{name} = ...` is an endless method; rewrite it as a block first.") if node.loc.end.nil?
-        return flag(:test_method_args, node, "`def #{name}` takes arguments; `investigate` yields nothing.") unless args.children.empty?
-        return flag(:super_in_test, node, "`def #{name}` calls `super`; inside an `investigate` block `super` " \
-                                          "would resolve against the block's enclosing scope, not the test.") if calls_super?(body)
+        if node.loc.end.nil?
+          return flag(:endless_def, node,
+                      "`def #{name} = ...` is an endless method; rewrite it as a block first.")
+        end
+        unless args.children.empty?
+          return flag(:test_method_args, node,
+                      "`def #{name}` takes arguments; `investigate` yields nothing.")
+        end
+        if calls_super?(body)
+          return flag(:super_in_test, node, "`def #{name}` calls `super`; inside an `investigate` block `super` " \
+                                            "would resolve against the block's enclosing scope, not the test.")
+        end
 
         replace(def_head(node), "investigate #{description.inspect} do")
         record_converted(:investigate, node, "def #{name}", "investigate #{description.inspect} do")
@@ -599,10 +630,18 @@ module Constable
       end
 
       def convert_setup_method(node, args, body)
-        return flag(:endless_def, node, "`def setup = ...` is an endless method; rewrite it as a block first.") if node.loc.end.nil?
-        return flag(:setup_args, node, "`def setup` takes arguments, which `briefing` cannot supply.") unless args.children.empty?
-        return flag(:super_in_setup, node, "`def setup` calls `super`; `briefing` blocks already chain from " \
-                                           "parent to child, so the `super` call must be removed by hand.") if calls_super?(body)
+        if node.loc.end.nil?
+          return flag(:endless_def, node,
+                      "`def setup = ...` is an endless method; rewrite it as a block first.")
+        end
+        unless args.children.empty?
+          return flag(:setup_args, node,
+                      "`def setup` takes arguments, which `briefing` cannot supply.")
+        end
+        if calls_super?(body)
+          return flag(:super_in_setup, node, "`def setup` calls `super`; `briefing` blocks already chain from " \
+                                             "parent to child, so the `super` call must be removed by hand.")
+        end
 
         replace(def_head(node), "briefing do")
         record_converted(:briefing, node, "def setup", "briefing do")
@@ -658,9 +697,8 @@ module Constable
       def case_class_name(arg)
         base =
           case arg&.type
-          when :const then source_of(arg)
-          when :str   then Reopener.camelize(arg.children[0].to_s)
-          when :sym   then Reopener.camelize(arg.children[0].to_s)
+          when :const     then source_of(arg)
+          when :str, :sym then Reopener.camelize(arg.children[0].to_s)
           else Reopener.camelize(File.basename(@relative_path, ".rb").sub(/_(?:spec|test)\z/, ""))
           end
         base = Reopener.camelize(File.basename(@relative_path, ".rb")) if base.to_s.empty?
@@ -770,7 +808,7 @@ module Constable
         end
 
         def file_section(result)
-          out = +"## `#{result.relative_path}`\n\n"
+          out = "## `#{result.relative_path}`\n\n"
 
           unless result.ok?
             out << "**Not converted.** #{result.error}\n\n"
@@ -783,9 +821,15 @@ module Constable
           out << "- written to: #{result.written_to ? "`#{result.written_to}`" : "nothing (dry run)"}\n"
           out << "- status: #{status_line(result)}\n\n"
 
-          out << list("Converted", result.converted) { |item| "`#{squish(item[:from])}` -> `#{squish(item[:to])}`#{" -- #{item[:note]}" if item[:note]}" }
-          out << list("Flagged -- NOT converted, still as written", result.flags) { |item| "**#{item[:kind]}** `#{squish(item[:source])}` -- #{item[:reason]}" }
-          out << list("Left untouched", result.untouched) { |item| "**#{item[:kind]}** `#{squish(item[:source])}` -- #{item[:reason]}" }
+          out << list("Converted", result.converted) do |item|
+            "`#{squish(item[:from])}` -> `#{squish(item[:to])}`#{" -- #{item[:note]}" if item[:note]}"
+          end
+          out << list("Flagged -- NOT converted, still as written", result.flags) do |item|
+            "**#{item[:kind]}** `#{squish(item[:source])}` -- #{item[:reason]}"
+          end
+          out << list("Left untouched", result.untouched) do |item|
+            "**#{item[:kind]}** `#{squish(item[:source])}` -- #{item[:reason]}"
+          end
           out
         end
 
@@ -800,7 +844,7 @@ module Constable
           items = Array(items)
           return "" if items.empty?
 
-          out = +"### #{title} (#{items.size})\n\n"
+          out = "### #{title} (#{items.size})\n\n"
           items.each { |item| out << "- `#{item[:location]}` #{yield(item)}\n" }
           out << "\n"
           out

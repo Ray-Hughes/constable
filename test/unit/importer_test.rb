@@ -36,7 +36,7 @@ module Constable
 
     def import(**kwargs)
       defaults = { from: :rspec, config: config_for, root: tmp_root }
-      Importer.run(**defaults.merge(kwargs))
+      Importer.run(**defaults, **kwargs)
     end
 
     def seed_rspec(*relative_paths)
@@ -156,7 +156,7 @@ module Constable
     end
 
     def test_class_name_widens_twice_when_the_parent_also_collides
-      taken = ["LegacyUserSpec", "LegacyModelsUserSpec"]
+      taken = %w[LegacyUserSpec LegacyModelsUserSpec]
 
       assert_equal "LegacyAdminModelsUserSpec",
                    Importer::Reopener.class_name_for("spec/admin/models/user_spec.rb", taken: taken)

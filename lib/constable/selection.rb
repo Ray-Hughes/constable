@@ -116,7 +116,7 @@ module Constable
         return all_targets
       end
 
-      @reason = "#{matched.size} #{matched.size == 1 ? 'case' : 'cases'} touched by the diff"
+      @reason = "#{matched.size} #{matched.size == 1 ? "case" : "cases"} touched by the diff"
       matched.map { |f| target_for(f, nil) }.compact
     end
 

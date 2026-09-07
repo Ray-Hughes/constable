@@ -57,7 +57,7 @@ module Constable
   autoload :Warrants,      "constable/warrants"
 
   class << self
-    attr_writer :root, :config
+    attr_writer :root, :config, :storage
 
     # The application root. Rails.root when Rails is booted, otherwise the nearest
     # directory that looks like a project (has .constable/, Gemfile, or .git).
@@ -87,10 +87,6 @@ module Constable
 
     def storage
       @storage ||= Storage::Adapter.build(config).tap(&:setup!)
-    end
-
-    def storage=(adapter)
-      @storage = adapter
     end
 
     def registry

@@ -28,16 +28,17 @@ module Constable
       def label = native? ? @investigation.display_label : @path.to_s
     end
 
-    attr_reader :config, :selection, :reporter, :storage, :seed, :results
+    attr_reader :config, :selection, :reporter, :storage, :seed, :results, :coverage_report
 
     def initialize(selection:, config: Constable.config, reporter: nil, storage: nil,
-                   seed: nil, jail_mode: false, warrants: nil, coverage: nil,
+                   seed: nil, jail_mode: false, jail_run: false, warrants: nil, coverage: nil,
                    workers: nil, verbose: false, io: $stdout)
       @selection  = selection
       @config     = config
       @storage    = storage || Constable.storage
       @seed       = (seed || ENV["CONSTABLE_SEED"] || SecureRandom.random_number(10_000)).to_i
       @jail_mode  = jail_mode
+      @jail_run   = jail_run
       @warrants_requested = warrants.nil? ? config.warrants? : warrants
       @coverage_requested = coverage.nil? ? config.coverage? : coverage
       @workers    = workers
@@ -49,6 +50,9 @@ module Constable
     end
 
     def jail_mode?  = @jail_mode
+
+    # `constable jail run` exists precisely to run the bodies the docket normally skips.
+    def jail_run?   = @jail_run
     def coverage?   = @coverage_requested
 
     # => Integer exit status (0 clean, 1 failures)
@@ -73,6 +77,7 @@ module Constable
       # Warm everything that reads the blotter while we are still single-process.
       docket_snapshot
       duration_index
+      known_before
 
       raw = order_audit.audit(execute(ordered))
 
@@ -80,25 +85,35 @@ module Constable
       duration = monotonic - started
 
       Constable.configuration.run_after_suite!
-      coverage_report = Constable::Coverage.stop! if coverage?
+      # Cold cases contribute their numbers but are never held to the diff gate, so a run
+      # carrying nothing else must not be gated at all.
+      @coverage_report =
+        if coverage?
+          Constable::Coverage.stop!(
+            config: @config,
+            root: Constable.root,
+            gate: !@selection.unsafe_only?
+          )
+        end
 
-      persist(run_id, @results, coverage_report)
+      persist(run_id, @results, @coverage_report)
       suggestions = rename_suggestions(@results)
 
       @reporter.finish(
         results: @results,
         duration: duration,
         seed: @seed,
-        coverage: coverage_report,
+        coverage: @coverage_report,
         suggestions: suggestions
       )
 
-      exit_status(@results, coverage_report)
+      exit_status(@results, @coverage_report)
     end
 
     private
 
     def mode_label
+      return "jail_run" if jail_run?
       return "jail" if jail_mode?
       return "unsafe" if @selection.unsafe_only?
 
@@ -324,7 +339,7 @@ module Constable
       investigation = item.investigation
       jail_entry = docket_snapshot[investigation.identity]
 
-      return run_jailed_setup(investigation, jail_entry) if jail_entry&.jailed?
+      return run_jailed_setup(investigation, jail_entry) if jail_entry&.jailed? && !jail_run?
 
       result = execute_investigation(investigation)
       result.seed = @seed
@@ -389,7 +404,7 @@ module Constable
         leaks = Isolation.diff(before, Isolation.snapshot)
         if leaks.any?
           Constable.warn!(
-            "state leaked out of this investigation: #{leaks.join('; ')}",
+            "state leaked out of this investigation: #{leaks.join("; ")}",
             location: investigation.location,
             kind: :leak
           )
@@ -425,7 +440,7 @@ module Constable
           subject: investigation_for(result.identity)
         ) { |subject, _attempt| rerun_in_isolation(subject) }
 
-        jail.adjudicate(decided, jail_mode: jail_mode?)
+        jail_run? ? decided : jail.adjudicate(decided, jail_mode: jail_mode?)
       end
     end
 
@@ -473,9 +488,7 @@ module Constable
         @storage.record_duration(result.identity, result.duration)
       end
 
-      if coverage_report
-        @storage.record_coverage(run_id, percent: coverage_report.percent, files: coverage_report.files)
-      end
+      Constable::Coverage.record!(coverage_report, run_id, storage: @storage) if coverage_report
 
       @storage.finish_run(run_id, totals: totals(results))
     rescue StandardError => e
@@ -492,38 +505,69 @@ module Constable
       }
     end
 
-    # A test whose body changed gets a new identity, so an old one vanishing the same run a
-    # similar new one appears is usually a rename plus a tweak, not two separate edits.
+    # The blotter's identities as they stood before this run wrote anything. Taken up
+    # front, because rename detection compares "what we used to know" against "what we
+    # just saw", and persisting first would make every test look familiar.
+    def known_before
+      @known_before ||= Array(@storage.known_identities).map(&:to_s)
+    rescue StandardError
+      []
+    end
+
+    # A test whose body changed gets a new identity, so an old one vanishing the same run
+    # a similar new one appears is usually a rename plus a tweak, not two separate edits.
+    # Confirming the relink also carries any jail or warrant entry across, which is what
+    # stops a fixed-but-still-jailed test from haunting the docket forever.
     def rename_suggestions(results)
       return [] unless @selection.full?
 
-      seen = results.map(&:identity)
-      known = @storage.known_identities
-      vanished = known.reject { |entry| seen.include?(entry[:identity]) }
-      fresh = results.reject { |r| known.any? { |k| k[:identity] == r.identity } }
+      seen     = results.map(&:identity)
+      vanished = known_before - seen
+      fresh    = results.reject { |r| known_before.include?(r.identity) }
       return [] if vanished.empty? || fresh.empty?
 
+      labels = vanished.to_h { |identity| [identity, label_for(identity)] }
+
       fresh.filter_map do |result|
-        match = vanished.max_by { |old| similarity(old[:description].to_s, result.description.to_s) }
-        score = similarity(match[:description].to_s, result.description.to_s)
+        match = vanished.max_by { |old| similarity(labels[old], result.description) }
+        next if match.nil?
+
+        score = similarity(labels[match], result.description)
         next if score < 0.5
 
+        suggestion = {
+          relinked: false, score: score,
+          old_identity: match, new_identity: result.identity,
+          old_label: labels[match], new_label: result.display_label
+        }
+
         if @config.auto_relink? && score >= 0.85
-          @storage.relink(match[:identity], result.identity)
-          next { relinked: true, from: match, to: result, score: score }
+          @storage.relink(match, result.identity)
+          suggestion[:relinked] = true
         end
 
-        { relinked: false, from: match, to: result, score: score }
+        suggestion
       end
     rescue StandardError
       []
     end
 
+    # The blotter keeps a display label alongside each identity purely so a vanished test
+    # can still be named in a suggestion.
+    def label_for(identity)
+      row = @storage.history_for(identity, limit: 1).first
+      return identity unless row
+
+      [row[:case_name], row[:description]].compact.join(" ").strip
+    rescue StandardError
+      identity
+    end
+
     # Cheap token overlap -- enough to spot "creates a user" vs "creates a user with valid
     # params" without pulling in a Levenshtein dependency for a hint that a human confirms.
     def similarity(left, right)
-      a = left.downcase.scan(/\w+/)
-      b = right.downcase.scan(/\w+/)
+      a = left.to_s.downcase.scan(/\w+/)
+      b = right.to_s.downcase.scan(/\w+/)
       return 0.0 if a.empty? || b.empty?
 
       (a & b).size.to_f / [a.size, b.size].max
