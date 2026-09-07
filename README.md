@@ -1,6 +1,23 @@
+<div align="center">
+
+<img src="docs/assets/logo.png" alt="Constable" width="160">
+
 # Constable
 
-**An opinionated, strict Rails testing framework where fast and non-flaky are structural, not disciplinary.**
+**A strict Rails testing framework where fast and non-flaky are structural, not disciplinary.**
+
+[![Gem Version](https://img.shields.io/gem/v/constable-rails?color=1f6feb&label=constable-rails)](https://rubygems.org/gems/constable-rails)
+[![Downloads](https://img.shields.io/gem/dt/constable-rails?color=1f6feb)](https://rubygems.org/gems/constable-rails)
+[![CI](https://github.com/Ray-Hughes/constable/actions/workflows/ci.yml/badge.svg)](https://github.com/Ray-Hughes/constable/actions/workflows/ci.yml)
+[![Ruby](https://img.shields.io/badge/ruby-%3E%3D%203.1-CC342D)](https://www.ruby-lang.org)
+[![Rails](https://img.shields.io/badge/rails-%3E%3D%207.0-D30001)](https://rubyonrails.org)
+[![License](https://img.shields.io/badge/license-MIT-black)](LICENSE.txt)
+
+[Install](#installation) · [Quick start](#quick-start) · [Documentation](#documentation) · [Contributing](#contributing)
+
+</div>
+
+---
 
 ```ruby
 class UsersController::CreatesUserCase < IntegrationCase
@@ -19,30 +36,56 @@ class UsersController::CreatesUserCase < IntegrationCase
 end
 ```
 
-> **Installed as `constable-rails`.** The name `constable` was claimed on RubyGems in 2011 by
-> an unrelated, long-abandoned gem. That's the *only* thing the suffix affects — everything
-> you actually type is `constable`: the module, the CLI, the config directory, the generator.
+Most suites are fast and reliable because a team keeps them that way by hand. Constable
+makes it structural instead — isolation you cannot opt out of, nondeterminism caught by a
+linter instead of by CI, and an adoption path that never asks you to rewrite anything.
 
----
+> **Installed as `constable-rails`.** The name `constable` was claimed on RubyGems in 2011
+> by an unrelated, long-abandoned gem. That is the only thing the suffix affects —
+> everything you actually type is `constable`: the module, the CLI, the config directory,
+> the generators.
+
+## Table of contents
+
+- [Why](#why)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Documentation](#documentation)
+  - [The DSL](#the-dsl)
+  - [Tiers](#tiers-are-base-classes-not-magic)
+  - [Matchers](#matchers)
+  - [Shared behavior](#shared-behavior-is-just-ruby)
+  - [Rails generators](#rails-generators)
+  - [Adopting an existing suite](#adopting-an-existing-suite)
+  - [Escape hatches](#escape-hatches-always-visible)
+  - [The linter](#the-linter)
+  - [Jail, parole and warrants](#jail-parole-and-warrants)
+  - [Identity survives renames](#identity-survives-renames)
+  - [Command reference](#command-reference)
+  - [Output](#output)
+  - [The blotter](#the-blotter)
+  - [Configuration](#configuration)
+- [Compatibility](#compatibility)
+- [Contributing](#contributing)
+- [Reporting a problem](#reporting-a-problem)
+- [License](#license)
 
 ## Why
 
-Most suites are fast and reliable because a team keeps them that way by hand. Constable
-makes it structural instead. Five ideas hold the whole thing up:
-
 1. **Isolation is non-negotiable in native code.** No class-level shared state, no
-   `before(:all)` equivalent. Every native test gets a clean transaction and a clean object graph.
-2. **Nondeterminism is caught by the linter, not discovered in CI.** Bare `sleep`, unfrozen
-   `Time.now`, and unstubbed network calls are lint errors before they're flakes.
+   `before(:all)` equivalent. Every native test gets a clean transaction and a clean
+   object graph.
+2. **Nondeterminism is caught by the linter, not discovered in CI.** Bare `sleep`,
+   unfrozen `Time.now`, and unstubbed network calls are lint errors before they are flakes.
 3. **Adoption never requires a rewrite.** A whole existing RSpec or Minitest file runs
-   completely untouched from day one. Strictness applies to new code — it isn't a
+   completely untouched from day one. Strictness applies to new code — it is not a
    precondition for installing the gem.
-4. **Every escape hatch is visible.** An `unsafe` block, a cold case, a jailed test — none of
-   them are ever silent. They're reported every run until someone deals with them.
+4. **Every escape hatch is visible.** An `unsafe` block, a cold case, a jailed test — none
+   are ever silent. They are reported every run until someone deals with them.
 5. **Fast is the default, not an opt-in.** Boot tiers, parallel workers and git-diff test
    selection all ship in the base gem.
 
-## Install
+## Installation
 
 ```ruby
 # Gemfile
@@ -57,25 +100,34 @@ $ bundle install
 $ rails generate constable:install
 ```
 
-That writes `test/case_helper.rb`, `test/support/`, and `.constable/config.yml`.
+That writes `test/case_helper.rb`, `test/support/`, `.constable/config.yml`, a `.rubocop.yml`
+snippet, and a worked example case so `constable test` does something immediately.
 
-## The DSL
+## Quick start
+
+```console
+$ constable test              # only what your current git diff touches
+$ constable test --full       # everything. this is what CI runs
+$ constable test path/to/case.rb:12
+```
+
+## Documentation
+
+### The DSL
 
 The vocabulary is the API, not decoration.
 
 | Constable | Replaces | Notes |
 |---|---|---|
 | `Constable::Case` | `describe` / `TestCase` | One file, roughly one subject under test |
-| `investigate "..." do` | `it` / `def test_` | A plain string description — punctuation and interpolation are fine |
+| `investigate "..." do` | `it` / `def test_` | A plain string — punctuation and interpolation are fine |
 | `witness(:name) { }` | `let` | Memoized **per test**, never per process |
 | `briefing do ... end` | `before` / `setup` | Runs before every investigation. There is no `before(:all)` |
-| `docket "..." do ... end` | nested `describe` | Grouping sugar that introduces no shared state |
-| `attest(x).to matcher` | `expect(x).to` | Sugar over `assert_*` primitives that are always available too |
+| `docket "..." do ... end` | nested `describe` | Grouping that introduces no shared state |
+| `attest(x).to matcher` | `expect(x).to` | Sugar over `assert_*` primitives, which are always available too |
 
 `investigate` is a **registration DSL, not a method definition.** Each block runs in its own
 fresh instance, fully isolated from every other one.
-
-### Dockets
 
 ```ruby
 class UsersController::CreatesUserCase < IntegrationCase
@@ -97,23 +149,7 @@ class UsersController::CreatesUserCase < IntegrationCase
 end
 ```
 
-### Shared behavior is just Ruby
-
-There is deliberately no shared-examples mechanism. Reuse across files is a module:
-
-```ruby
-# test/support/authenticatable.rb
-module Authenticatable
-  def sign_in(user)
-    post session_path, params: { email: user.email, password: "password" }
-  end
-end
-```
-
-`include Authenticatable` in any case. Ruby's own composition tools are more flexible than
-a parallel DSL that does the same job.
-
-### Tiering is base classes, not magic
+### Tiers are base classes, not magic
 
 ```ruby
 # test/case_helper.rb
@@ -134,7 +170,7 @@ end
 Subclass whichever fits. Path-based inference (`test/cases/models/**` → `:unit`) still works
 as a fallback, but ordinary inheritance is the recommended pattern — nothing to infer.
 
-### Custom matchers
+### Matchers
 
 ```ruby
 # test/support/matchers.rb
@@ -142,7 +178,48 @@ Constable::Matchers.define(:be_created) { |response| response.status == 201 }
 Constable::Matchers.define(:exist) { |model_class, attrs| model_class.exists?(attrs) }
 ```
 
-## Adopting an existing suite
+Built in: `eq`, `eql`, `include`, `match`, `raise_error`, `have_attributes`, `exist`,
+`be_created`, `redirect_to`, `have_http_status`, `change`, plus `be_a`, `be_nil`, `be_empty`,
+`be_truthy`, `be_falsey` and a `be_*` / `have_*` predicate fallback. Plain `assert_*` and
+`refute_*` primitives are always available alongside `attest`.
+
+### Shared behavior is just Ruby
+
+There is deliberately no shared-examples mechanism. Reuse across files is a module:
+
+```ruby
+# test/support/authenticatable.rb
+module Authenticatable
+  def sign_in(user)
+    post session_path, params: { email: user.email, password: "password" }
+  end
+end
+```
+
+`include Authenticatable` in any case. Ruby's own composition tools are more flexible than a
+parallel DSL that does the same job.
+
+### Rails generators
+
+`rails generate` asks whatever is registered as the app's test framework what a test file
+looks like. Constable registers itself, so scaffolds produce cases rather than Minitest
+files for a framework you replaced.
+
+```console
+$ rails generate scaffold Post title:string
+      create  test/cases/controllers/posts_controller_case.rb
+      create  test/cases/system/posts_case.rb
+```
+
+Every generator Rails hooks is covered — `model`, `controller`, `scaffold`, `integration_test`,
+`system_test`, `mailer`, `job`, `helper`, `channel`, `mailbox`, `generator`, `resource` — each
+writing a case that subclasses the right tier base class.
+
+No fixtures are generated, deliberately: a `witness` builds exactly what one investigation
+needs and throws it away with it. A factory gem registered as your `fixture_replacement`
+still gets its turn.
+
+### Adopting an existing suite
 
 Nothing gets rewritten. **Cold cases** run your original file through its own real engine —
 RSpec or Minitest — and feed pass/fail/timing into Constable's reporting, flake history and
@@ -164,24 +241,24 @@ end
 **Or nothing changes at all** — match the path in config:
 
 ```yaml
-# .constable/config.yml
 cold_cases:
   - spec/controllers/**/*_spec.rb
 ```
 
 ```console
-$ constable import --from=rspec     # reopen everything, verbatim
-$ constable modernize spec/controllers/users_controller_spec.rb   # opt-in AST rewrite
+$ constable import --from=rspec        # reopen everything, verbatim
+$ constable modernize spec/controllers/users_controller_spec.rb --alongside
 ```
 
 `modernize` converts `describe`/`it` → `Constable::Case`/`investigate`, `let` → `witness`,
-`before` → `briefing`, and `def test_foo` → `investigate "foo"`. It **flags `before(:all)`
-rather than converting it** — that needs a human decision — and leaves custom matchers and
-`shared_examples` alone, logging them to `constable_modernize_report.md`.
+`before` → `briefing`, `expect` → `attest`, and `def test_foo` → `investigate "foo"`. It
+**flags `before(:all)` and `let!` rather than converting them** — those need a human decision —
+and leaves custom matchers and `shared_examples` alone, logging everything to
+`constable_modernize_report.md`. It writes nothing unless you ask it to.
 
 Native and cold cases run side by side in one `constable test`. No big-bang cutover.
 
-## Escape hatches, always visible
+### Escape hatches, always visible
 
 ```ruby
 investigate "times out after thirty seconds" do
@@ -195,7 +272,7 @@ One warning per cold-case *file*, one per `unsafe` occurrence. Warnings never fa
 by default — `fail_on_warnings: true` opts CI into enforcing a downward trend — but they are
 never silent either.
 
-## The linter
+### The linter
 
 `rubocop-constable` is scoped to native cases only; cold cases are exempt by design.
 
@@ -209,7 +286,7 @@ never silent either.
 | `NoRetryHelpers` | any retry/eventually pattern |
 | `UnsafeBlockVisibility` | an `unsafe` block with no comment explaining why |
 
-## Jail, parole and warrants
+### Jail, parole and warrants
 
 A large red legacy suite has an on-ramp. Run once in jail mode for a clean baseline, then
 work the docket down.
@@ -222,40 +299,40 @@ $ constable jail parole PATH:LINE
 $ constable jail release PATH:LINE
 ```
 
-Jailing isn't hiding — it swaps "blocks the build" for "tracked and skipped," and jailed
-tests are always their own summary category, never folded into passed. Their `briefing` and
-`witness` setup still runs, so setup rot surfaces immediately.
+Jailing isn't hiding — it swaps "blocks the build" for "tracked and skipped." Jailed tests are
+always their own summary category, never folded into passed, and their `briefing`/`witness`
+setup still runs so setup rot surfaces immediately.
 
 **Parole** is "probably fixed, not fully trusted yet." A paroled test runs normally but is
-watched: one failure is an immediate violation straight back to jail, and
-`parole_period` consecutive clean runs (default 10) auto-releases it. `jail run` never
-auto-releases on a pass — a single green run doesn't prove anything.
+watched: one failure is an immediate violation straight back to jail, and `parole_period`
+consecutive clean runs (default 10) auto-releases it. `jail run` never auto-releases on a
+pass — a single green run doesn't prove anything.
 
 **Warrants** answer a different question — not "does this block the build" but "is this
-failure even real." With warrants on, a failing test is rerun in isolation
-`warrant_retries` times (default 5). Fails every retry, it's a genuine failure. Passes even
-once, it's flaky rather than broken: a warrant is written to the blotter, never to your
-source, and the result stops blocking the build while staying loudly visible.
+failure even real." With warrants on, a failing test is rerun in isolation `warrant_retries`
+times (default 5). Fails every retry, it's a genuine failure. Passes even once, it's flaky
+rather than broken: a warrant is written to the blotter, never to your source, and the result
+stops blocking the build while staying loudly visible.
 
 ```console
 $ constable warrants
 $ constable warrants release PATH:LINE
 $ constable watchlist    # everything under supervision: jailed, paroled, warranted
-$ constable status       # trend view: native-vs-cold %, flake trend, slowest 10
+$ constable status       # trend: native-vs-cold %, recent runs, slowest historically
 ```
 
-## Identity survives renames
+### Identity survives renames
 
 Each test's key is a **content hash of its `investigate` block body**, whitespace-normalized.
-The class name, description and file are stored alongside purely as a display label.
+Class name, description and file are stored alongside purely as a display label.
 
 - Rename the class, reword the description, move the file → hash untouched, history carries over.
 - Change what the test actually *does* → hash changes, history starts fresh. Correct, not a limitation.
-- Renamed *and* tweaked in the same commit? Constable notices an old test vanishing as a
-  similar new one appears and suggests `constable history relink OLD NEW`. Set
-  `auto_relink: true` to confirm high-confidence matches automatically.
+- Renamed *and* tweaked in one commit? Constable notices an old test vanishing as a similar
+  new one appears and suggests `constable history relink OLD NEW`. Set `auto_relink: true` to
+  confirm high-confidence matches automatically.
 
-## Running tests
+### Command reference
 
 | Command | Runs |
 |---|---|
@@ -264,13 +341,22 @@ The class name, description and file are stored alongside purely as a display la
 | `constable test PATH[:LINE]` | One file, or one investigation at that line |
 | `constable test --unsafe` | Cold cases only |
 | `constable test --jail` | The full run, in jail mode |
+| `constable jail [run\|parole\|release]` | The docket |
+| `constable warrants [release]` | Outstanding warrants |
+| `constable watchlist` | Everything under supervision right now |
+| `constable status` | How the suite is doing over time |
 | `constable beat [--html]` | Coverage: overall %, per-file, the unpatrolled list |
+| `constable history relink OLD NEW` | Carry history across a real body change |
+| `constable import --from=rspec` | Adopt an existing suite as cold cases |
+| `constable modernize PATH` | Opt-in AST rewrite into the native DSL |
+
+Flags: `--full --unsafe --jail --warrants --coverage --seed N --workers N --verbose --tier T --no-color`.
 
 Order is randomized every run for native cases, with the seed printed and replayable via
 `--seed`. Cold cases keep their own engine's order. Workers run in parallel by default,
 load-balanced by a cached per-test duration index.
 
-## Output
+### Output
 
 stdout is reserved for results. `Rails.logger`, SQL and request/response logging go to
 `log/test.log`; `--verbose` streams it back for active debugging.
@@ -296,20 +382,20 @@ stdout is reserved for results. `Rails.logger`, SQL and request/response logging
       constable test spec/cases/sessions_case.rb:12 --seed 8841
 ```
 
-Sections print worst-to-least-urgent: parole violations, then failures, then warnings, then
-the slowest list. Failures carry their own context and point at your `investigate` line, not
-at framework internals.
+Sections print worst-to-least-urgent: parole violations, failures, warnings, slowest.
+Failures carry their own context and point at your `investigate` line, not at framework
+internals.
 
-## The blotter
+### The blotter
 
 Flake history, the jail docket and warrants live in a store Constable owns entirely — by
 default a self-contained `.constable/constable.sqlite3` in WAL mode. Never your app's
-database, for three reasons: native cases roll back their transaction and would roll this
-data back with it; `:unit`-tier runs skip booting the DB stack for speed; and the workload
-is a handful of tables that doesn't need a client-server database.
+database: native cases roll back their transaction and would roll this data back with it,
+`:unit`-tier runs skip booting the DB stack for speed, and the workload is a handful of
+tables that doesn't need a client-server database.
 
-Teams who genuinely need one queryable store across many CI machines can point it elsewhere —
-always a separate connection from the app's own:
+Teams who need one queryable store across many CI machines can point it elsewhere — always a
+separate connection from the app's own:
 
 ```yaml
 storage:
@@ -317,7 +403,7 @@ storage:
   url: postgres://user:pass@host/constable_metadata
 ```
 
-## Configuration
+### Configuration
 
 ```yaml
 # .constable/config.yml
@@ -347,14 +433,58 @@ tiers:                           # fallback inference; base classes are primary
   system: "test/cases/system/**/*"
 ```
 
-## Development
+## Compatibility
+
+| | |
+|---|---|
+| Ruby | >= 3.1 |
+| Rails | >= 7.0 (tested against 7.1 and 8.1) |
+| Databases | Any ActiveRecord adapter for your app. The blotter is SQLite by default, with Postgres and MySQL adapters available |
+| Cold cases | RSpec and Minitest, via their own real engines |
+
+Parallel workers use `fork`, so they are unavailable on Windows and JRuby; those platforms
+fall back to serial execution automatically.
+
+## Contributing
+
+Bug reports and pull requests are welcome at
+<https://github.com/Ray-Hughes/constable>.
 
 ```console
+$ git clone git@github.com:Ray-Hughes/constable.git
+$ cd constable
 $ bin/setup
-$ bundle exec rake test      # Constable's own suite (Minitest — it can't test itself yet)
-$ bundle exec rake cops      # the rubocop-constable extension's suite
+$ bundle exec rake test      # the framework's own suite
+$ bundle exec rake cops      # the RuboCop extension's suite
+$ bundle exec rubocop        # lint
 ```
+
+The repo holds two gems: `constable-rails` at the root, and `rubocop-constable` in its own
+directory with its own gemspec and suite. `docs/ARCHITECTURE.md` is the interface contract
+between components and is worth reading before a substantial change; `docs/SPEC.md` is the
+product spec.
+
+A few house rules, so a change lands cleanly:
+
+- **Constable's own suite is Minitest**, not Constable — it cannot test itself before it
+  works. Add tests under `test/unit/` or `test/integration/`.
+- **New behavior needs a test that would fail without it.** Several of the nastiest bugs in
+  this gem were invisible to unit tests and only appeared when the real binary ran against a
+  real Rails app; an integration test is often the honest one.
+- **Keep `rake test` and `rubocop` green.** CI runs both on Ruby 3.1, 3.2 and 3.3.
+- Comments explain *why*, not *what*.
+
+## Reporting a problem
+
+Please open a [GitHub issue](https://github.com/Ray-Hughes/constable/issues). Include:
+
+- what you ran, and the full summary block it printed
+- the seed, so the order is replayable (`constable test --seed N`)
+- your Ruby and Rails versions, and whether the case is native or a cold case
+
+If a test behaves differently alone than in a full run, say so explicitly — that is an
+order-dependency bug and Constable has machinery specifically for it.
 
 ## License
 
-MIT. See [LICENSE.txt](LICENSE.txt).
+[MIT](LICENSE.txt).

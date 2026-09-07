@@ -118,6 +118,69 @@ end
 
 Every `Constable::Case` subclass can `include Authenticatable` directly — no shared-examples DSL needed.
 
+## Rails generator integration
+
+`rails generate scaffold Post title:string` does not know what a test file looks like. It
+asks whatever generator is registered as the app's **test framework**, and unless something
+says otherwise that is always `test_unit`. Without this, an app could install Constable,
+write its whole suite in cases, and still have every `rails generate` quietly drop Minitest
+files into `test/` — for the one framework the app deliberately replaced.
+
+A railtie closes the gap, the same way `rspec-rails` does:
+
+```ruby
+config.app_generators do |g|
+  g.test_framework :constable, fixture: false
+  g.integration_tool :constable
+  g.system_tests     :constable
+end
+```
+
+Rails resolves `integration_tool` and `system_tests` separately from `test_framework` — its
+own `test_unit` railtie claims all three — so claiming only the first would leave
+`rails generate integration_test` and `rails generate system_test` still writing Minitest.
+
+**`fixture: false` is not an oversight.** Constable has no fixtures: a `witness` builds
+exactly what one investigation needs and throws it away with it, which is the same reason
+there is no `before(:all)`. Generating a `fixtures.yml` alongside a case would hand the
+suite the shared mutable state the framework exists to prevent. A factory gem registered as
+the `fixture_replacement` still gets its turn, via `hook_for` — factories are a witness's
+business, not a fixture's.
+
+The railtie is **loaded conditionally**, never unconditionally: `require "constable"` has to
+keep working in a process with no Rails app at all, which is the whole premise of the
+`:unit` tier.
+
+### The generators
+
+Every generator Rails hooks is implemented, so no `rails generate` command silently falls
+back to Minitest. Each writes a case that subclasses the appropriate **tier base class**
+from `case_helper.rb` and uses the real DSL — `investigate`, `witness`, `briefing`, `attest`
+— never `it`/`let`/`before`/`expect`.
+
+| Command | Namespace | Writes |
+|---|---|---|
+| `rails g model Post` | `constable:model` | `test/cases/models/post_case.rb` |
+| `rails g controller Posts index` | `constable:controller` | `test/cases/controllers/posts_controller_case.rb` |
+| `rails g scaffold Post` | `constable:scaffold` | a controller case + a system case |
+| `rails g integration_test Checkout` | `constable:integration` | `test/cases/controllers/checkout_case.rb` |
+| `rails g system_test Posts` | `constable:system` | `test/cases/system/posts_case.rb` |
+| `rails g mailer User welcome` | `constable:mailer` | `test/cases/mailers/user_mailer_case.rb` + a preview |
+| `rails g job Cleanup` | `constable:job` | `test/cases/jobs/cleanup_job_case.rb` |
+| `rails g helper Posts` | `constable:helper` | `test/cases/helpers/posts_helper_case.rb` |
+| `rails g channel Chat` | `constable:channel` | `test/cases/channels/chat_channel_case.rb` |
+| `rails g mailbox Inbound` | `constable:mailbox` | `test/cases/mailboxes/inbound_mailbox_case.rb` |
+| `rails g generator Awesome` | `constable:generator` | `test/cases/generators/awesome_generator_case.rb` |
+| `rails g resource Post` | `constable:resource` | delegates, like Rails' own |
+
+Scaffold generates an API-only controller case when the app is `--api`, and skips the
+system case when there are no views to drive.
+
+Generated cases are honest starting points, in the spirit of Rails' own scaffolded tests.
+Where Rails would emit an empty or pending test, Constable emits an `investigate` with a
+real body or an explicit comment naming what to assert — never something that passes
+vacuously while looking like a test.
+
 ## The unsafe escape hatch (two tiers)
 
 **Tier 1 — cold cases (the import story).** A whole file keeps its original RSpec or Minitest syntax completely untouched — reopened as-is. Change one line (the superclass) or add a config path match:
@@ -423,9 +486,14 @@ lib/constable/
   importer/
     reopener.rb              # default: superclass swap / config path match
     modernizer.rb             # opt-in: AST rewrite to native DSL
+lib/constable/railtie.rb    # registers Constable as the app's test framework
 lib/generators/constable/
   install_generator.rb      # writes case_helper.rb, support/, .constable/config.yml
   import_generator.rb
+  base.rb                   # shared tier/superclass/path resolution
+  model/ controller/ scaffold/ integration/ system/ mailer/ job/
+  helper/ channel/ mailbox/ generator/ resource/
+                            # one per generator Rails hooks, each with its templates
 ```
 
 ## Suggested build phasing
@@ -434,3 +502,7 @@ lib/generators/constable/
 2. **Phase 1**: `modernize` AST rewrite tool, flake history, jail (including parole), watchlist command.
 3. **Phase 2**: Warrants, boot tiers, parallel execution, git-diff test selection.
 4. **Phase 3**: Coverage ("the beat"), `constable status` trend dashboard, pluggable Postgres/MySQL storage adapters, editor plugin hooks.
+
+Rails generator integration belongs in Phase 0 alongside the install generator: without it
+a freshly installed Constable app still gets Minitest files from `rails generate`, which
+undercuts the install before the developer has written a line.
