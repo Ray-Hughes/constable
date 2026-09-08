@@ -121,6 +121,10 @@ module Constable
       # else writes to the log.
       def console = @console_out || $stdout
 
+      # The same, for the stream errors belong on. Convention puts them on stderr, and a
+      # run has pointed the real one at the log.
+      def console_err = @console_err || $stderr
+
       # Rails loggers are not the only thing that writes to a terminal. A gem warning --
       # Faraday's "install the faraday-retry gem", say -- goes straight to $stderr, once
       # per file that triggers it, and lands in the middle of the live stream:
@@ -132,19 +136,74 @@ module Constable
       # terminal it captured beforehand. `--verbose` tees both back, which is the whole
       # point of that flag.
       def capture_console!(file, tee_to)
-        @console_out = $stdout
-        @console_err = $stderr
+        # Reassigning the $stdout *object* is not enough. A gem that writes through the
+        # STDERR constant, a C extension, or anything that already holds file descriptor 2
+        # goes straight past it -- and in a terminal both streams land in the same place,
+        # so "it was only on stderr" is no comfort at all when it lands mid-glyph.
+        #
+        # So the descriptors themselves are pointed at the log, and the reporter is handed
+        # a dup of the real terminal taken beforehand. #reopen changes where fd 1 and 2
+        # write for the whole process, which is the only thing that catches every writer.
+        @console_out = $stdout.dup
+        @console_err = $stderr.dup
+        @reopened    = false
 
-        replacement = tee_to ? Tee.new(file, tee_to) : file
-        $stdout = replacement
-        $stderr = replacement
+        # --verbose means "show me everything", so nothing is redirected; the object swap
+        # is enough to tee. The same fallback covers anything that is not a real IO on
+        # both sides -- a StringIO standing in for the terminal in a test, most obviously,
+        # where IO#reopen has nothing to reopen onto.
+        if tee_to || !redirectable?(file)
+          @swapped_out = $stdout
+          @swapped_err = $stderr
+          replacement  = tee_to ? Tee.new(file, tee_to) : file
+          $stdout = replacement
+          $stderr = replacement
+          return
+        end
+
+        $stdout.reopen(file)
+        $stderr.reopen(file)
+        $stdout.sync = true
+        $stderr.sync = true
+        @reopened = true
+
+        # Whatever happens next -- a clean exit, a raise, an interrupt -- the descriptors
+        # go back. Without this an uncaught exception prints its backtrace into
+        # log/test.log and the terminal shows nothing at all, which is a far worse bug
+        # than the one being fixed.
+        install_exit_guard!
+      end
+
+      def install_exit_guard!
+        return if @exit_guard_installed
+
+        @exit_guard_installed = true
+        at_exit { restore_console! }
+      end
+
+      # Every party has to be a real IO: the log we are redirecting to, and the two streams
+      # we are redirecting away from and will later have to put back.
+      def redirectable?(file)
+        [file, $stdout, $stderr].all? { |io| io.is_a?(::IO) && io.respond_to?(:fileno) }
+      rescue StandardError
+        false
       end
 
       def restore_console!
-        $stdout = @console_out if @console_out
-        $stderr = @console_err if @console_err
+        if @reopened
+          $stdout.reopen(@console_out)
+          $stderr.reopen(@console_err)
+        elsif @swapped_out
+          $stdout = @swapped_out
+          $stderr = @swapped_err
+        end
+
+        [@console_out, @console_err].each { |io| io&.close unless io&.closed? } if @reopened
         @console_out = nil
         @console_err = nil
+        @swapped_out = nil
+        @swapped_err = nil
+        @reopened = false
       end
 
       # Puts back whatever the app had before route!. Only useful in-process (our own

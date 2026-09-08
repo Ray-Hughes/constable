@@ -21,11 +21,27 @@ module Constable
     # tier, an unreadable config. Both are the user's mistake rather than a crash, and
     # both deserve one sentence and a usage status instead of a backtrace.
     rescue Thor::Error, Constable::Error => e
-      warn e.message
+      complain(e.message)
       exit(EXIT_USAGE)
     rescue Interrupt
-      warn "\ninterrupted"
+      complain("\ninterrupted")
       exit(EXIT_FAILED)
+    end
+
+    # Anything the user has to see, written where they will see it.
+    #
+    # Not Kernel#warn. A run points stdout and stderr at log/test.log, so an error has to
+    # go to the console the reporter kept -- and `warn` would not reach it even without
+    # that: Rails apps routinely override Warning.warn to funnel Ruby warnings into
+    # Rails.logger, and a real one did. The message arrived in log/test.log tagged
+    # "[RUBY WARNING]" while the terminal showed nothing at all.
+    def self.complain(message)
+      LogRouter.restore!
+      io = LogRouter.console_err
+      io.puts(message)
+      io.flush if io.respond_to?(:flush)
+    rescue StandardError
+      $stderr.puts(message) # rubocop:disable Style/StderrPuts
     end
 
     class_option :"no-color", type: :boolean, default: false, desc: "Disable ANSI color"
@@ -184,7 +200,7 @@ module Constable
     option :"show-source", type: :boolean, default: false, desc: "Print the rewritten source"
     def modernize(*paths)
       if paths.empty?
-        warn "modernize needs at least one path"
+        CLI.complain("modernize needs at least one path")
         exit(EXIT_USAGE)
       end
 
@@ -309,7 +325,7 @@ module Constable
 
           identity = jail.resolve(locator)
           unless identity
-            warn "Nothing on the docket at #{locator}"
+            CLI.complain("Nothing on the docket at #{locator}")
             exit(EXIT_USAGE)
           end
           yield jail, identity
@@ -320,9 +336,9 @@ module Constable
         def refuse_ambiguous(locator, candidates, noun)
           return if candidates.size <= 1
 
-          warn "#{locator} matches #{candidates.size} tests #{noun}. Name one:"
+          CLI.complain("#{locator} matches #{candidates.size} tests #{noun}. Name one:")
           candidates.sort_by { |entry| entry.line.to_i }.each do |entry|
-            warn "  #{entry.location}  #{entry.label}"
+            CLI.complain("  #{entry.location}  #{entry.label}")
           end
           exit(EXIT_USAGE)
         end
@@ -368,7 +384,7 @@ module Constable
 
         identity = warrants.resolve(locator)
         unless identity
-          warn "No warrant at #{locator}"
+          CLI.complain("No warrant at #{locator}")
           exit(EXIT_USAGE)
         end
         warrants.release(identity)
@@ -413,7 +429,7 @@ module Constable
     def prepare
       config = load_config
       unless WorkerDatabases.shardable?
-        warn "This app has no ActiveRecord test databases to prepare."
+        CLI.complain("This app has no ActiveRecord test databases to prepare.")
         exit(EXIT_USAGE)
       end
 
@@ -429,7 +445,7 @@ module Constable
           "rebuilding them."
       0
     rescue Constable::Error => e
-      warn e.message
+      CLI.complain(e.message)
       exit(EXIT_FAILED)
     end
 

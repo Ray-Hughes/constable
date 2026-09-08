@@ -27,8 +27,24 @@ noise is emitted *by* booting it. And colour detection was asking `$stdout.tty?`
 by then is a file, and a file is never a tty, so colour would have silently switched off
 for everybody.
 
-Not intercepted: a write straight to file descriptor 2. Capturing that would also swallow
-a real crash and break `binding.pry`, so `2>/dev/null` stays the user's decision.
+Reassigning the `$stdout` *object* turned out not to be enough — a gem writing through
+the `STDERR` constant, or anything already holding the descriptor, goes straight past it,
+and in a terminal both streams land in the same place. So the **descriptors** are
+redirected with `IO#reopen`, which is the only thing that catches every writer, and the
+reporter is handed a dup of the real terminal taken beforehand. An `at_exit` guard puts
+them back, so an uncaught exception still prints its backtrace where you can see it.
+
+Two things that fell out of doing it properly:
+
+- **CLI errors no longer use `Kernel#warn`.** With the descriptors redirected an error
+  would have gone into the log — and `warn` would not have reached the terminal even
+  without that, because Rails apps routinely override `Warning.warn` to funnel Ruby
+  warnings into `Rails.logger`. A real one did: `no tests matched ...` arrived in
+  `log/test.log` tagged `[RUBY WARNING]` while the terminal showed nothing at all. Errors
+  now go to the console the reporter kept, on stderr.
+- **Colour detection was asking the wrong stream.** `$stdout.tty?`, when `$stdout` is by
+  then a log file and a file is never a tty — colour would have silently switched off for
+  everybody.
 
 
 ## [1.3.1]

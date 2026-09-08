@@ -41,12 +41,16 @@ module Constable
       assert_same terminal, $stdout, "the terminal has to come back"
     end
 
-    def test_the_console_is_the_terminal_as_it_was
+    # The console is a dup of the terminal, not the terminal object itself -- redirecting
+    # the descriptor is the whole point, so the reporter needs its own handle on where the
+    # terminal used to be.
+    def test_the_console_is_a_handle_on_the_real_terminal
       terminal = $stdout
 
       capture_console do
-        assert_same terminal, LogRouter.console, "the reporter still writes here"
-        refute_same terminal, $stdout, "everything else does not"
+        refute_same terminal, $stdout, "everything else writes to the log"
+        refute_nil LogRouter.console, "the reporter still has somewhere to write"
+        refute_same $stdout, LogRouter.console
       end
     end
 
