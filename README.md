@@ -582,6 +582,11 @@ Constable.configure do |c|
 end
 ```
 
+Not `config/initializers/`, which is where a runtime gem like Devise goes. Initializers
+run on **every** boot including production, where a test-only gem is not in the bundle, so
+an initializer calling `Constable.configure` takes the app down. It is the same reason
+RSpec, SimpleCov, WebMock and Capybara all configure from the test helper.
+
 `config.yml` is optional, and one setting is the reason it exists: **`storage` can only be
 set there.** The blotter is opened before `case_helper.rb` loads, so that `constable jail`,
 `warrants`, `watchlist` and `status` can read the docket without booting the app — a

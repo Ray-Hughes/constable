@@ -52,9 +52,14 @@ docket. Setting it in Ruby would have been silently ignored, which is the exact 
 this release exists to stop, so it raises and explains why.
 
 The docs now lead with Ruby. The generated `case_helper.rb` lists **every** setting at its
-default, commented out and ready to uncomment, so it can be the only place you configure
-Constable — with a test asserting the list stays complete, and that it never offers
-`storage`.
+default in one compact block — a test asserts the list stays complete, and that it never
+offers `storage`. The long-form explanation of each stays in `config.yml`, so the two files
+are a reference and a place to write code rather than two competing references.
+
+Neither is `config/initializers/`, and the reason is concrete: initializers run on every
+boot including production, where a test-only gem is not in the bundle, so an initializer
+calling `Constable.configure` takes the app down with a NoMethodError. Same reason RSpec,
+SimpleCov, WebMock and Capybara all configure from the test helper.
 
 ### `.constable/config.yml` is now genuinely optional
 
