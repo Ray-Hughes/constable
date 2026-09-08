@@ -144,5 +144,66 @@ module Constable
 
       refute WorkerDatabases.before_fork!
     end
+
+    # --- when the app cannot be sharded at all ----------------------------------------
+    #
+    # Not every app can. One whose schema.rb cannot rebuild the database on its own --
+    # Postgres custom types, functions and triggers are the usual reason, and are exactly
+    # why such apps keep a structure.sql -- fails here every time. Rails' own
+    # `parallelize` fails the same way. The difference has to be that Constable says so
+    # in a sentence and runs the suite anyway, rather than printing one stack trace per
+    # worker and reporting a run that never happened.
+
+    def run_suite(workers:)
+      write_config("storage:\n  adapter: sqlite\n  path: .constable/constable.sqlite3\n")
+      write_file("test/cases/models/probe_case.rb", <<~CASE)
+        class ProbeCase < Constable::Case
+          investigate("first") { assert(true) }
+          investigate("second") { assert(true) }
+        end
+      CASE
+
+      selection = Selection.new([], config: Constable.config, root: tmp_root, full: true)
+      runner = Runner.new(selection: selection, config: Constable.config,
+                          reporter: Reporter.new(io: StringIO.new, config: Constable.config,
+                                                 color: false),
+                          storage: Constable.storage, workers: workers)
+      [runner.call, runner]
+    ensure
+      Object.send(:remove_const, :ProbeCase) if Object.const_defined?(:ProbeCase)
+    end
+
+    def with_unshardable_app
+      stub_active_record
+      ::ActiveRecord::TestDatabases.define_singleton_method(:create_and_load_schema) do |_i, env_name:|
+        raise ActiveRecordStub, "PG::UndefinedObject: type \"assign_record\" does not exist (#{env_name})"
+      end
+      yield
+    end
+
+    class ActiveRecordStub < StandardError
+    end
+
+    def test_the_suite_still_runs_when_no_worker_can_build_a_database
+      skip "fork is unavailable" unless Process.respond_to?(:fork)
+
+      status, runner = with_unshardable_app { run_suite(workers: 2) }
+
+      assert_equal 0, status, "the suite should have run and passed, serially"
+      assert_equal 2, runner.results.size, "every test should still have run"
+      assert(runner.results.all?(&:passed?))
+    end
+
+    def test_it_says_why_it_fell_back
+      skip "fork is unavailable" unless Process.respond_to?(:fork)
+
+      with_unshardable_app { run_suite(workers: 2) }
+
+      warning = Constable.warnings.find { |w| w[:kind] == :parallel }
+      refute_nil warning, "a silent fallback is the failure mode this exists to prevent"
+      assert_match(/ran serially/, warning[:message])
+      assert_match(/parallel_workers: 1/, warning[:message], "it should say how to skip the attempt")
+      assert_match(/assign_record/, warning[:message], "and pass the real error through")
+    end
   end
 end

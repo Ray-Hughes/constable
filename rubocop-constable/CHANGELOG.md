@@ -3,6 +3,10 @@
 All notable changes to `rubocop-constable` are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0]
+
+Version bumped to track `constable-rails` 1.2.0. No cop changes.
+
 ## [1.1.0]
 
 Version bumped to track `constable-rails` 1.1.0. No cop changes.

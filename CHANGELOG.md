@@ -5,6 +5,56 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.2.0]
+
+Two bugs found installing 1.1.0 into a large real Postgres app (~3,000-line schema,
+custom types, a factory directory). Both are the same shape as the ones 1.0.0 fixed:
+Constable was confidently wrong and said nothing useful about it.
+
+### A factory named `*_case.rb` was loaded as a test
+
+`spec/**/*_case.rb` is a generous net, and a real app has things in it that merely share
+the suffix. Caseflow has a FactoryBot factory at `spec/factories/distributed_case.rb`.
+Constable loaded it as a case file, FactoryBot raised `DuplicateDefinitionError` because
+the factory was already registered, and the run reported a failing test in a file that
+contains no tests:
+
+```
+✗ spec/factories/distributed_case.rb
+  "could not be loaded"
+  FactoryBot::DuplicateDefinitionError: Factory already registered: distributed_case
+```
+
+A filename is not evidence. A file outside the conventional `test/cases/` and
+`spec/cases/` directories now has to look like a case before it is loaded — a class
+declaration, or the DSL. Files under those directories are still taken at their word,
+since that is what they are for and an empty one there is a case somebody is part-way
+through writing.
+
+### An app that cannot be sharded now runs anyway
+
+Per-worker databases (1.0.0) are built by loading `schema.rb` into `<database>_<index>`.
+Not every app can do that: one with Postgres custom types, functions or triggers cannot
+rebuild itself from `schema.rb` at all, which is exactly why such apps keep a
+`structure.sql`. Rails' own `parallelize` fails the same way.
+
+Constable handled it about as badly as possible. Each worker raised, printing a full
+stack trace — four workers, four traces, several hundred lines — and the parent then
+reported a run that had never happened:
+
+```
+CONSTABLE            1 test · 1 case · 10.8s
+✓ 0 passed   ✗ 1 failed
+```
+
+A worker that cannot build its database now reports that home rather than raising. If no
+worker got started, nothing has run yet, so the parent simply runs the suite serially and
+says why in one sentence — including the real error and how to skip the attempt
+(`parallel_workers: 1`). The rule from 1.0.0 is unchanged: a worker never falls back to
+sharing the parent's database, because that is the corruption this whole mechanism
+exists to prevent.
+
+
 ## [1.1.0]
 
 Three things that were documented and did not work, plus the command for a docket
@@ -358,7 +408,8 @@ Initial release.
 - Diff-based coverage gate — only lines changed in the current diff are held to the
   threshold. `constable beat` for the full picture, `--html` for a browsable report.
 
-[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Ray-Hughes/constable/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Ray-Hughes/constable/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Ray-Hughes/constable/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/Ray-Hughes/constable/releases/tag/v0.1.0

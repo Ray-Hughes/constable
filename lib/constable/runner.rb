@@ -337,9 +337,17 @@ module Constable
           reader.close
 
           # Before a single test runs: build this worker's own database and point the
-          # process at it. Raises rather than falling back to the shared one, because a
-          # silent fallback is the bug we are here to prevent.
-          WorkerDatabases.after_fork!(worker_index)
+          # process at it. Never falls back to the shared one -- that is the bug this
+          # exists to prevent -- but the failure is reported home rather than raised.
+          # A raise here dumps a full stack trace per worker and leaves the parent
+          # reporting a run that never happened.
+          begin
+            WorkerDatabases.after_fork!(worker_index)
+          rescue Constable::Error => e
+            write_message(writer, :worker_error, e.message)
+            writer.close
+            exit!(0)
+          end
 
           bucket.each do |item|
             run_item(item).each { |result| write_message(writer, :result, result.to_h) }
@@ -365,11 +373,41 @@ module Constable
       collected = drain(readers)
       pids.each { |pid| Process.waitpid(pid) rescue nil } # rubocop:disable Style/RescueModifier
 
+      # No worker could build itself a database, so no test ran. Not every app can be
+      # sharded: an app whose schema.rb cannot rebuild the database on its own -- Postgres
+      # custom types, functions and triggers are the usual reason, and are exactly why
+      # such apps use structure.sql -- will fail here every time. Rails' own `parallelize`
+      # fails the same way; the difference is that this is not the user's fault and they
+      # should not have to read four stack traces to find that out.
+      #
+      # Nothing has run yet, so falling back to a serial run costs a restart, not
+      # correctness.
+      return run_serially_after_worker_failure(items) if collected.empty? && worker_errors.any?
+
       # A warning raised inside a worker only ever reached that worker's memory, so the
       # results carry them home. Nothing that bends the rules is allowed to go missing
       # just because it happened in a subprocess.
       collected.each { |result| Constable.warnings.concat(Array(result.warnings)) }
       collected
+    end
+
+    def worker_errors = (@worker_errors ||= [])
+
+    def run_serially_after_worker_failure(items)
+      reason = worker_errors.first.to_s
+
+      Constable.warn!(
+        "no parallel worker could build its own test database, so the suite ran serially " \
+        "instead. This usually means the app's schema cannot rebuild the database by " \
+        "itself -- Postgres custom types, functions and triggers are the common reason, " \
+        "and `rails test` parallelization fails the same way. Set `parallel_workers: 1` " \
+        "to skip the attempt. The first worker said: #{reason}",
+        kind: :parallel
+      )
+
+      # The blotter handle was closed before forking, and the pool was cleared. Both come
+      # back on their next use, so there is nothing to reopen by hand.
+      run_serial(items)
     end
 
     # Every message on the pipe is tagged, because results are not the only thing a worker
@@ -416,6 +454,10 @@ module Constable
               @reporter.record(result)
             when :coverage
               @worker_coverage = Constable::Coverage.merge_raw(@worker_coverage, body)
+            when :worker_error
+              # A worker that could not start. Collected rather than raised, so the parent
+              # decides what to do once it knows whether any worker got going at all.
+              worker_errors << body
             end
           end
         end

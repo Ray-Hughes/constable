@@ -17,6 +17,22 @@ module Constable
       def to_s    = line ? "#{path}:#{line}" : path.to_s
     end
 
+    # A filename is not evidence. `spec/**/*_case.rb` is a generous net, and in a real app
+    # it catches things that merely share the suffix -- a FactoryBot factory named
+    # spec/factories/distributed_case.rb, say. Loading one of those runs somebody's code
+    # twice and reports the resulting explosion as a failing test in a file that contains
+    # no tests.
+    #
+    # So the file has to look like a case before we load it: a class declaration, or the
+    # DSL. Deliberately a cheap read rather than a parse -- this runs over every candidate
+    # on every run, and anything a parse would catch that this misses would also have to
+    # be a file that defines a case without mentioning one.
+    NATIVE_MARKERS = /
+      <\s*(?:Constable::Case|\w*Case)\b   # class FooCase < UnitCase
+      | ^\s*investigate\s*[("]             # or the DSL, for a reopened class
+      | ^\s*tier\s+:
+    /x
+
     NATIVE_GLOBS = [
       "test/cases/**/*.rb",
       "spec/cases/**/*.rb",
@@ -183,6 +199,17 @@ module Constable
 
     def native_files
       @native_files ||= glob(NATIVE_GLOBS).reject { |f| @config.cold_case?(f) }
+                                          .select { |f| native_by_content?(f) }
+    end
+
+    def native_by_content?(path)
+      # Files under the conventional case directories are taken at their word: that is
+      # what the directory is for, and an empty one there is a case file being written.
+      return true if path.match?(%r{/(?:test|spec)/cases/})
+
+      File.read(path).match?(NATIVE_MARKERS)
+    rescue StandardError
+      false
     end
 
     def cold_files
