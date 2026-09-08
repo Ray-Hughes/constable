@@ -242,6 +242,7 @@ module Constable
           ───────────────
           ⛓ UsersController::CreatesUserCase
             "creates a user with valid params"
+            spec/cases/users_controller/creates_user_case.rb:8
             Failed on day 3 of a 10-run parole — back to jail. This is its 2nd time in jail.
 
           → Somebody trusted this test again and it let them down,
@@ -290,6 +291,7 @@ module Constable
           ─────────
           ◑ SessionsCase
             "signs a user in"
+            spec/cases/sessions_case.rb:12
             Day 4 of 10 — 6 clean runs to go.
 
           → A paroled test runs for real and is watched: one failure
@@ -299,10 +301,12 @@ module Constable
           WARNINGS
           ────────
           ⚠ spec/legacy/old_users_spec.rb
-            running as a cold case (Constable::ColdCase::RSpec) — 12 tests not yet under native rules
+            running as a cold case (Constable::ColdCase::RSpec) — 12
+            tests not yet under native rules
 
           ⚠ spec/controllers/sessions_case.rb:44
-            unsafe { sleep(0.1) } — "testing an actual timeout path, not a code smell"
+            unsafe { sleep(0.1) } — "testing an actual timeout path,
+            not a code smell"
 
           SLOWEST
           ────────
@@ -566,6 +570,7 @@ module Constable
       assert_includes output, indent(<<~BLOCK, 2)
         ⛓ UsersController::CreatesUserCase
           "creates a user with valid params"
+          spec/cases/sessions_case.rb:12
           Failed on day 3 of a 10-run parole — back to jail. This is its 2nd time in jail.
       BLOCK
     end
@@ -608,9 +613,12 @@ module Constable
 
       reporter.finish(results: passing(1), duration: 1.0)
 
+      # Wrapped to the frame; the assertion carries the break so a regression in the
+      # wrapping shows up here rather than only in somebody's terminal.
       assert_includes output, indent(<<~BLOCK, 2)
         ⚠ spec/legacy/old_users_spec.rb
-          running as a cold case (Constable::ColdCase::RSpec) — 12 tests not yet under native rules
+          running as a cold case (Constable::ColdCase::RSpec) — 12
+          tests not yet under native rules
       BLOCK
     end
 

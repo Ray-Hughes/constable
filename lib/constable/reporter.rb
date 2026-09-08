@@ -450,6 +450,7 @@ module Constable
       each_entry(violations) do |result|
         writeln(INDENT + paint("#{GLYPHS[:parole_violation]} #{result.case_name}", COLORS[:parole_violation]))
         writeln(ENTRY_INDENT + paint(%("#{result.description}"), :dim))
+        writeln(ENTRY_INDENT + paint(result.location, :dim))
         writeln(ENTRY_INDENT + parole_violation_sentence(result))
       end
       hint("Somebody trusted this test again and it let them down, so it is back on the " \
@@ -536,6 +537,7 @@ module Constable
       each_entry(paroled) do |result|
         writeln(INDENT + paint("#{GLYPHS[:parole]} #{result.case_name}", COLORS[:parole]))
         writeln(ENTRY_INDENT + paint(%("#{result.description}"), :dim))
+        writeln(ENTRY_INDENT + paint(result.location, :dim))
         writeln(ENTRY_INDENT + parole_progress_sentence(result))
       end
       hint("A paroled test runs for real and is watched: one failure sends it straight " \
@@ -614,8 +616,18 @@ module Constable
           writeln(INDENT + paint("#{GLYPHS[:warning]} #{message}", COLORS[:warning]))
         else
           writeln(INDENT + paint("#{GLYPHS[:warning]} #{location}", COLORS[:warning]))
-          message.each_line { |line| writeln(ENTRY_INDENT + line.chomp) }
+          warning_message_lines(message).each { |line| writeln(ENTRY_INDENT + line) }
         end
+      end
+    end
+
+    # A warning carries the author's own words -- an unsafe block's reason, a cold case's
+    # count -- and those are easily ninety columns. Wrapped to the frame, but respecting
+    # any line breaks the message already chose.
+    def warning_message_lines(message)
+      message.to_s.lines.flat_map do |line|
+        text = line.chomp
+        text.empty? ? [""] : wrap(text, width: RULE_WIDTH - ENTRY_INDENT.length, indent: "")
       end
     end
 
