@@ -57,6 +57,15 @@ fail_on_warnings: false  # CI: fail the build when the warning count doesn't tre
 
 parallel_workers: auto   # or an explicit integer
 
+# How much the live stream says while the suite is running. The summary is identical
+# either way -- this only changes what you watch on the way there.
+#
+#   concise   one glyph per test, grouped into a run per case. A thousand tests stay
+#             inside one screen, and a wall of green is the point.
+#   expanded  a line per test: glyph, name, duration. Slower to read in bulk, but you
+#             can see which test is hanging while it hangs, rather than after.
+output: concise          # concise | expanded
+
 # Fallback path-based tier inference, used only when a case doesn't inherit from
 # a tiered base class. The base classes in test/case_helper.rb are the primary
 # mechanism and always win -- this is here so an un-migrated file still lands in

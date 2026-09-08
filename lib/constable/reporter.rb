@@ -46,6 +46,11 @@ module Constable
 
     DEFAULT_SLOWEST = 5
 
+    # Column the expanded stream right-aligns durations into. Descriptions are never
+    # truncated to fit it -- a clipped test name is not something you can grep for --
+    # so a long one simply pushes its own stamp out past the column.
+    EXPANDED_STAMP_COLUMN = 56
+
     # Result::GLYPHS covers statuses. These four are summary vocabulary, not statuses:
     # supervision and coverage are properties of a test, not outcomes of one.
     GLYPHS = Result::GLYPHS.merge(
@@ -95,13 +100,14 @@ module Constable
       0x1F900..0x1F9FF, 0x20000..0x3FFFD
     ].freeze
 
-    attr_reader :io, :config, :seed, :total
+    attr_reader :io, :config, :seed, :total, :mode
 
-    def initialize(io: $stdout, config: nil, color: nil, slowest: DEFAULT_SLOWEST)
+    def initialize(io: $stdout, config: nil, color: nil, slowest: DEFAULT_SLOWEST, mode: nil)
       @io      = io
       @config  = config || Constable.config
       @color   = resolve_color(color)
       @slowest = slowest.to_i
+      @mode    = resolve_mode(mode)
       @io.set_encoding(Encoding::UTF_8) if @io.respond_to?(:set_encoding)
 
       reset_stream!
@@ -141,6 +147,14 @@ module Constable
     def flush!
       return self unless streaming?
 
+      # The expanded stream never buffers -- every line was written as it happened, so
+      # there is nothing left to emit, only a blank line before the summary.
+      if expanded?
+        reset_stream!
+        writeln
+        return self
+      end
+
       close_stream_line
       pending_case_names.each { |name| open_stream_line(name) && close_stream_line }
       writeln
@@ -169,6 +183,9 @@ module Constable
 
       section_parole_violations(results)
       section_failures(results)
+      section_warrants(results)
+      section_jailed(results)
+      section_parole(results)
       section_warnings(warnings)
       section_slowest(results)
       rename_suggestions(suggestions)
@@ -193,6 +210,7 @@ module Constable
     def failed?  = !success?
     def color?   = @color
     def finished? = @finished
+    def expanded? = @mode == :expanded
 
     private
 
@@ -211,6 +229,8 @@ module Constable
     end
 
     def stream(result)
+      return stream_expanded(result) if expanded?
+
       name = result.case_name.to_s
       name = "(anonymous)" if name.empty?
       glyph = paint(result.glyph, COLORS[result.status])
@@ -262,6 +282,77 @@ module Constable
 
     # Glyphs may carry escape codes; count only the visible ones.
     def count_glyphs(string) = strip_ansi(string).length
+
+    # --- expanded stream -----------------------------------------------------------
+    #
+    # One line per test instead of one glyph. The trade is deliberate: concise keeps a
+    # thousand-test suite on one screen, expanded tells you which test is hanging while
+    # it hangs, without waiting for the summary.
+    #
+    # Workers interleave, so a case can come back after another has spoken. It gets a
+    # second header rather than having its later tests silently appended under the
+    # wrong one -- the same honesty rule the concise stream follows.
+    def stream_expanded(result)
+      name = result.case_name.to_s
+      name = "(anonymous)" if name.empty?
+
+      if @stream_case != name
+        writeln if @stream_case
+        writeln(INDENT + paint(name, :bold))
+        @stream_case = name
+        @stream_open = true
+      end
+
+      writeln(expanded_line(result))
+    end
+
+    def expanded_line(result)
+      glyph = paint(result.glyph, COLORS[result.status])
+      line  = "#{ENTRY_INDENT}#{glyph} #{expanded_description(result)}"
+
+      stamp = expanded_duration(result)
+      return line if stamp.nil?
+
+      # Pad to a column so the durations line up, but never truncate a description --
+      # a clipped test name is not something you can grep for.
+      visible = strip_ansi(line).length
+      gap = [EXPANDED_STAMP_COLUMN - visible, 1].max
+      "#{line}#{" " * gap}#{paint(stamp, :dim)}"
+    end
+
+    def expanded_description(result)
+      description = result.description.to_s
+      description = "(no description)" if description.empty?
+      # A jailed test never ran its body, so say why rather than implying it passed.
+      return "#{description} #{paint("— #{result.jail_reason}", :dim)}" if jail_reason_worth_showing?(result)
+
+      description
+    end
+
+    def jail_reason_worth_showing?(result)
+      result.status == :jailed && !result.jail_reason.to_s.strip.empty?
+    end
+
+    # Only real, measured time. A jailed test never ran, and "0ms" would be a claim
+    # about a body that was skipped.
+    def expanded_duration(result)
+      return nil if result.status == :jailed
+      return nil unless result.duration.to_f.positive?
+
+      format_test_duration(result.duration)
+    end
+
+    # The summary's durations are run-scale, where "12.4s" is the useful unit. One test
+    # is usually sub-second, and "0.0s" against every line says nothing at all -- so the
+    # expanded stream counts milliseconds until a test is slow enough for seconds to mean
+    # something.
+    def format_test_duration(seconds)
+      seconds = seconds.to_f
+      return format_duration(seconds) if seconds >= 1
+
+      milliseconds = (seconds * 1000).round
+      milliseconds.zero? ? "<1ms" : "#{milliseconds}ms"
+    end
 
     # --- header and headline -------------------------------------------------------
 
@@ -361,12 +452,103 @@ module Constable
         writeln(ENTRY_INDENT + paint(%("#{result.description}"), :dim))
         writeln(ENTRY_INDENT + parole_violation_sentence(result))
       end
+      hint("Somebody trusted this test again and it let them down, so it is back on the " \
+           "docket. Fix it before the next constable jail parole — a second violation " \
+           "is the signal that the test, not the flake, is the problem.")
     end
 
     def parole_violation_sentence(result)
       sentence = "Failed on day #{result.parole_day} of a #{@config.parole_period}-run parole — back to jail."
       sentence << " This is its #{ordinalize(result.times_jailed)} time in jail." if result.times_jailed
       sentence
+    end
+
+    # A section says what happened; a hint says what to do about it. One dim sentence,
+    # and only where there is a real next step -- a tip printed on every run stops being
+    # read on the second one.
+    def hint(text)
+      writeln
+      lines = wrap(text, width: RULE_WIDTH - INDENT.length - 2, indent: "  ")
+      writeln(INDENT + paint("→ #{lines.first}", :dim))
+      lines.drop(1).each { |line| writeln(INDENT + paint(line, :dim)) }
+    end
+
+    # Every test currently under a warrant: it failed, then passed when rerun in
+    # isolation, so it is flaky rather than broken. Loud, but not build-blocking.
+    def section_warrants(results)
+      warranted = results.select(&:warranted?)
+      return if warranted.empty?
+
+      section("WARRANTS")
+      each_entry(warranted) do |result|
+        writeln(INDENT + paint("#{GLYPHS[:warrant]} #{result.case_name}", COLORS[:warranted]))
+        writeln(ENTRY_INDENT + paint(%("#{result.description}"), :dim))
+        writeln(ENTRY_INDENT + paint(result.location, :dim))
+        writeln(ENTRY_INDENT + warrant_sentence(result))
+      end
+      hint("A warrant is \"not reproducible\", not \"not a problem\" — it stops blocking the " \
+           "build and stays visible until someone deals with it. " \
+           "Fixed the flake? constable warrants release PATH:LINE")
+    end
+
+    def warrant_sentence(result)
+      statuses = Array(result.retries).map(&:to_sym)
+      return "Failed once, then passed on retry." if statuses.empty?
+
+      passed = statuses.count(:passed)
+      "Failed, then passed #{passed} of #{statuses.size} #{pluralize(statuses.size, "retry")} " \
+        "run in isolation."
+    end
+
+    # The docket. These never ran their bodies, so they are neither passing nor failing --
+    # which is exactly why they get their own category rather than being folded into
+    # either one.
+    def section_jailed(results)
+      jailed = results.select { |result| result.status == :jailed }
+      return if jailed.empty?
+
+      section("JAILED")
+      each_entry(jailed) do |result|
+        writeln(INDENT + paint("#{GLYPHS[:jailed]} #{result.case_name}", COLORS[:jailed]))
+        writeln(ENTRY_INDENT + paint(%("#{result.description}"), :dim))
+        writeln(ENTRY_INDENT + paint(result.location, :dim))
+        writeln(ENTRY_INDENT + jailed_sentence(result))
+      end
+      hint("Jailed means skipped and tracked, not passing. Think one is fixed? " \
+           "constable jail parole PATH:LINE runs it for real again — " \
+           "#{@config.parole_period} clean runs and it releases itself.")
+    end
+
+    def jailed_sentence(result)
+      reason   = result.jail_reason.to_s.strip
+      sentence = reason.empty? ? "Body skipped; setup still ran." : "#{reason.capitalize}."
+      sentence += " Its #{ordinalize(result.times_jailed)} time in jail." if result.times_jailed.to_i > 1
+      sentence
+    end
+
+    # Out on parole and behaving. Worth naming every run, because the count only means
+    # something if you can see it moving.
+    def section_parole(results)
+      paroled = results.select { |result| result.parole_day && !result.parole_violation? }
+      return if paroled.empty?
+
+      section("ON PAROLE")
+      each_entry(paroled) do |result|
+        writeln(INDENT + paint("#{GLYPHS[:parole]} #{result.case_name}", COLORS[:parole]))
+        writeln(ENTRY_INDENT + paint(%("#{result.description}"), :dim))
+        writeln(ENTRY_INDENT + parole_progress_sentence(result))
+      end
+      hint("A paroled test runs for real and is watched: one failure sends it straight " \
+           "back to jail. constable watchlist shows everything under supervision.")
+    end
+
+    def parole_progress_sentence(result)
+      day       = result.parole_day.to_i
+      period    = @config.parole_period
+      remaining = [period - day, 0].max
+      return "Day #{day} of #{period} — releases after this run." if remaining.zero?
+
+      "Day #{day} of #{period} — #{remaining} #{pluralize(remaining, "clean run")} to go."
     end
 
     def section_failures(results)
@@ -551,7 +733,28 @@ module Constable
     end
 
     def pluralize(count, word)
-      count.to_i == 1 ? word : "#{word}s"
+      return word if count.to_i == 1
+      # "retry" -> "retries". Only the consonant-y rule earns a special case; every other
+      # word this reporter pluralizes takes a plain "s".
+      return "#{word[0..-2]}ies" if word.end_with?("y") && !"aeiou".include?(word[-2].to_s)
+
+      "#{word}s"
+    end
+
+    # Hints are prose, and prose that runs past the frame reads as a mistake. Wrapped to
+    # the same 60 columns the rules use, with continuation lines aligned under the arrow.
+    def wrap(text, width:, indent:)
+      words = text.split
+      lines = [+""]
+      words.each do |word|
+        candidate = lines.last.empty? ? word : "#{lines.last} #{word}"
+        if candidate.length <= width || lines.last.empty?
+          lines[-1] = candidate
+        else
+          lines << +word
+        end
+      end
+      lines.each_with_index.map { |line, i| i.zero? ? line : indent + line }
     end
 
     def format_duration(seconds)
@@ -571,6 +774,17 @@ module Constable
 
     # Colour is a nicety; correctness is not. NO_COLOR, a pipe, a dumb terminal or an
     # explicit --no-color all fall back to plain text with identical layout.
+    # An explicit argument (the --expanded / --concise flags) beats the config file, which
+    # beats the default. An unrecognized value falls back rather than raising: a typo in
+    # config.yml should not stop a suite from running.
+    def resolve_mode(mode)
+      configured = @config.respond_to?(:output_mode) ? @config.output_mode : :concise
+      return configured if mode.nil?
+
+      mode = mode.to_s.strip.downcase.to_sym
+      Config::OUTPUT_MODES.include?(mode) ? mode : configured
+    end
+
     def resolve_color(color)
       return !!color unless color.nil?
       return false if ENV["NO_COLOR"] && !ENV["NO_COLOR"].empty?

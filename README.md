@@ -387,7 +387,7 @@ Class name, description and file are stored alongside purely as a display label.
 | `constable import --from=rspec` | Adopt an existing suite as cold cases |
 | `constable modernize PATH` | Opt-in AST rewrite into the native DSL |
 
-Flags: `--full --unsafe --jail --warrants --coverage --seed N --workers N --verbose --tier T --no-color`.
+Flags: `--full --unsafe --jail --warrants --coverage --seed N --workers N --verbose --tier T\n--expanded --concise --output MODE --no-color`.
 
 Order is randomized every run for native cases, with the seed printed and replayable via
 `--seed`. Cold cases keep their own engine's order. Workers run in parallel by default,
@@ -398,11 +398,51 @@ load-balanced by a cached per-test duration index.
 stdout is reserved for results. `Rails.logger`, SQL and request/response logging go to
 `log/test.log`; `--verbose` streams it back for active debugging.
 
+**While it runs**, the live stream has two modes. `concise` is the default: one glyph per
+test, grouped into a run per case, so a thousand-test suite stays inside one screen and a
+wall of green is the point.
+
+```
+  ProjectCase                       ✓✓✓✓✓✓✓✓✓✓✓✓
+  BillingCase                       ✓✓⚖⛓✓
+```
+
+`expanded` trades that for a line per test — glyph, name, duration — so you can see which
+test is hanging while it hangs, rather than after.
+
+```
+  ProjectCase
+    ✓ validations rejects a colour outside the palette  2ms
+    ✓ validations rejects a duplicate name for the same owner 12ms
+    ✗ #completion_ratio is the fraction of done tasks   8ms
+
+  BillingCase
+    ⚖ charges a card                                    310ms
+    ⛓ refunds a charge — assertion failed on the amount
+    ✓ issues a receipt                                  1.4s
+```
+
+Set it in `.constable/config.yml` (`output: concise` or `expanded`), or per run with
+`--expanded` / `--concise`. A jailed test never ran its body, so it is given no duration
+rather than a dishonest `0ms`. **The summary below is identical in both modes** — the mode
+only changes what you watch on the way there.
+
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  CONSTABLE            482 tests · 3 cases · 12.4s
+  CONSTABLE            6 tests · 3 cases · 12.4s
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✓ 478 passed   ✗ 2 failed   ⛓ 2 jailed (1 parole violation)   ◑ 1 on parole   ⚖ 1 warrant issued   ⚠ 3 warnings   ◐ 92% covered
+  ✓ 2 passed   ✗ 1 failed   ⛓ 2 jailed (1 parole violation)   ◑ 1 on parole   ⚖ 1 warrant issued   ⚠ 2 warnings   ◐ 92% covered (3 files unpatrolled)
+
+  PAROLE VIOLATED
+  ───────────────
+  ⛓ UsersController::CreatesUserCase
+    "creates a user with valid params"
+    Failed on day 3 of a 10-run parole — back to jail. This is its 2nd time in jail.
+
+  → Somebody trusted this test again and it let them down,
+    so it is back on the docket. Fix it before the next
+    constable jail parole — a second violation is the signal
+    that the test, not the flake, is the problem.
 
   FAILURES
   ────────
@@ -417,11 +457,61 @@ stdout is reserved for results. `Rails.logger`, SQL and request/response logging
 
     Rerun just this test:
       constable test spec/cases/sessions_case.rb:12 --seed 8841
+
+  WARRANTS
+  ────────
+  ⚖ BillingCase
+    "charges a card"
+    spec/cases/sessions_case.rb:12
+    Failed, then passed 4 of 5 retries run in isolation.
+
+  → A warrant is "not reproducible", not "not a problem" —
+    it stops blocking the build and stays visible until
+    someone deals with it. Fixed the flake? constable
+    warrants release PATH:LINE
+
+  JAILED
+  ──────
+  ⛓ BillingCase
+    "refunds a charge"
+    spec/cases/sessions_case.rb:12
+    Assertion failed on the amount.
+
+  → Jailed means skipped and tracked, not passing. Think one
+    is fixed? constable jail parole PATH:LINE runs it for
+    real again — 10 clean runs and it releases itself.
+
+  ON PAROLE
+  ─────────
+  ◑ SessionsCase
+    "signs a user in"
+    Day 4 of 10 — 6 clean runs to go.
+
+  → A paroled test runs for real and is watched: one failure
+    sends it straight back to jail. constable watchlist
+    shows everything under supervision.
+
+  WARNINGS
+  ────────
+  ⚠ spec/legacy/old_users_spec.rb
+    running as a cold case (Constable::ColdCase::RSpec) — 12 tests not yet under native rules
+
+  ⚠ spec/controllers/sessions_case.rb:44
+    unsafe { sleep(0.1) } — "testing an actual timeout path, not a code smell"
+
+  SLOWEST
+  ────────
+  3.2s  UsersController::CreatesUserCase "creates a user with valid params"
+  1.1s  SessionsCase "times out after thirty seconds"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-Sections print worst-to-least-urgent: parole violations, failures, warnings, slowest.
-Failures carry their own context and point at your `investigate` line, not at framework
-internals.
+Sections print worst-to-least-urgent: parole violations, failures, warrants, jailed, on
+parole, warnings, slowest. A section only appears when it has something to say.
+
+Each supervision section ends with one line saying what to do next, because "2 jailed" is
+a fact and `constable jail parole PATH:LINE` is an action. Failures don't get a hint —
+they already end with the exact command to rerun them.
 
 ### The blotter
 
@@ -462,6 +552,7 @@ coverage_threshold: 90           # diff-based — only lines changed in the curr
 coverage_html: false
 
 fail_on_warnings: false
+output: concise                  # live stream detail: concise | expanded
 parallel_workers: auto
 
 tiers:                           # fallback inference; base classes are primary

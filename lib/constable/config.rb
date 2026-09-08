@@ -19,6 +19,7 @@ module Constable
       "coverage_threshold" => 90,
       "coverage_html" => false,
       "fail_on_warnings" => false,
+      "output" => "concise",
       "parallel_workers" => "auto",
       "tiers" => {
         "unit" => "test/cases/models/**/*",
@@ -53,6 +54,23 @@ module Constable
     def coverage_html?     = truthy(@raw["coverage_html"])
     def fail_on_warnings?  = truthy(@raw["fail_on_warnings"])
     def tiers              = @raw["tiers"] || {}
+
+    # How much the live stream says while the suite runs.
+    #
+    #   concise   one glyph per test, grouped into a run per case. The default: a
+    #             1,000-test suite stays inside one screen.
+    #   expanded  a line per test -- glyph, name, duration. Slower to read in bulk,
+    #             but you can see which test is hanging without waiting for the summary.
+    #
+    # The summary itself is identical either way. This only affects the live stream.
+    OUTPUT_MODES = %i[concise expanded].freeze
+
+    def output_mode
+      mode = @raw["output"].to_s.strip.downcase.to_sym
+      OUTPUT_MODES.include?(mode) ? mode : :concise
+    end
+
+    def expanded_output? = output_mode == :expanded
     def storage            = @raw["storage"] || {}
 
     def storage_adapter = (storage["adapter"] || "sqlite").to_s

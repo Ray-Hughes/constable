@@ -42,6 +42,9 @@ module Constable
     option :workers,  type: :numeric, desc: "Parallel workers (default: config, or auto)"
     option :verbose,  type: :boolean, default: false, desc: "Stream log/test.log to stdout"
     option :tier,     type: :string,  desc: "Run one tier only: unit, integration or system"
+    option :output,   type: :string,  desc: "Live stream detail: concise (default) or expanded"
+    option :expanded, type: :boolean, default: false, desc: "Shorthand for --output=expanded"
+    option :concise,  type: :boolean, default: false, desc: "Shorthand for --output=concise"
     def test(*paths)
       config = load_config
       LogRouter.route!(verbose: options[:verbose])
@@ -400,7 +403,18 @@ module Constable
       end
 
       def reporter(config)
-        Reporter.new(io: $stdout, config: config, color: color?)
+        Reporter.new(io: $stdout, config: config, color: color?, mode: output_mode)
+      end
+
+      # nil means "the config file decides". The explicit --output wins over the two
+      # shorthands, and --concise wins over --expanded if somebody passes both -- the
+      # quieter of two contradictory instructions is the safer one to obey.
+      def output_mode
+        return options[:output] if options[:output]
+        return :concise if options[:concise]
+        return :expanded if options[:expanded]
+
+        nil
       end
 
       def say_table(heading, entries)
