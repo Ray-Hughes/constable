@@ -828,5 +828,48 @@ module Constable
     def test_no_runs_means_no_rows
       assert_empty @storage.kind_totals(limit: 5)
     end
+
+    # --- an unusable blotter -----------------------------------------------------------
+    #
+    # The blotter is the one file Constable owns outright, and it is disposable: flake
+    # history, the docket and warrants, never a test. When it cannot be opened the message
+    # has to say that, because the raw driver error --
+    # "file is not a database: PRAGMA journal_mode = WAL" -- tells a reader nothing about
+    # what to do next. A blotter committed to git and then merged is exactly how one ends
+    # up unreadable.
+
+    def test_a_corrupt_blotter_explains_that_deleting_it_is_safe
+      path = File.join(tmp_root, ".constable/constable.sqlite3")
+      Constable.storage.close
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, "this is not a database")
+      Constable.reset!
+
+      error = assert_raises(Constable::Error) { Constable.storage.warrants }
+
+      assert_match(/not a readable database/, error.message)
+      assert_match(/deleting it is safe/, error.message)
+      assert_match(/never your tests/, error.message)
+    end
+
+    def test_an_unwritable_blotter_path_names_the_setting_to_change
+      Constable.reset!
+      write_config("storage:\n  adapter: sqlite\n  path: /nope/cannot/write.sqlite3\n")
+
+      error = assert_raises(Constable::Error) { Constable.storage.warrants }
+
+      assert_match(%r{cannot open its blotter at /nope/cannot/write\.sqlite3}, error.message)
+      assert_match(/storage\.path/, error.message)
+    end
+
+    def test_an_unknown_adapter_names_the_ones_that_exist
+      Constable.reset!
+      write_config("storage:\n  adapter: mongodb\n")
+
+      error = assert_raises(StandardError) { Constable.storage.warrants }
+
+      assert_match(/unknown storage adapter/, error.message)
+      assert_match(/sqlite, postgres, mysql/, error.message)
+    end
   end
 end
