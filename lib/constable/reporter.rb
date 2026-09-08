@@ -50,6 +50,10 @@ module Constable
     # thousand lines that say the same thing.
     COLD_CASE_LIST_LIMIT = 10
 
+    # How many rename suggestions are listed before the rest are counted instead. A real
+    # suite produced two hundred, several hundred lines of output, unlabelled.
+    RENAME_LIST_LIMIT = 8
+
     DEFAULT_SLOWEST = 5
 
     # Column the expanded stream right-aligns durations into. Descriptions are never
@@ -679,27 +683,58 @@ module Constable
 
     # Rename detection is the Runner's job; the reporter only says it out loud. Never
     # its own section -- it is a suggestion, not a finding.
+    # Renames get a section of their own, a cap, and one line each.
+    #
+    # They used to be dumped unlabelled after SLOWEST, one long line per suggestion,
+    # every line carrying both full test descriptions and two hashes. A real suite
+    # produced two hundred of them and several hundred lines of output -- read as a wall
+    # of text with no heading, and buried the sections above it. A suggestion nobody can
+    # read is not a suggestion.
     def rename_suggestions(suggestions)
-      suggestions = Array(suggestions).map { |s| suggestion_line(s) }.compact
+      suggestions = Array(suggestions).map { |s| suggestion(s) }.compact
       return if suggestions.empty?
 
-      writeln
-      suggestions.each { |line| writeln(INDENT + paint(line, :dim)) }
+      section("RENAMED?")
+      shown = suggestions.first(RENAME_LIST_LIMIT)
+
+      each_entry(shown) do |item|
+        writeln(INDENT + paint(item[:from].to_s, :dim))
+        writeln(ENTRY_INDENT + paint("→ #{item[:to]}", :dim))
+        writeln(ENTRY_INDENT + paint("constable history relink #{item[:old_hash]} #{item[:new_hash]}", :dim))
+      end
+
+      remaining = suggestions.size - shown.size
+      hint(if remaining.positive?
+             "...and #{remaining} more. A test's history is keyed on its body, so a test " \
+               "that was reworded and edited in one commit looks like a new one. Relink the " \
+               "ones you recognise; ignore the rest and they age out."
+           else
+             "A test's history is keyed on its body, so one that was reworded and edited " \
+               "in the same commit looks like a new test. Relink it to carry the history over."
+           end)
     end
 
-    def suggestion_line(suggestion)
-      return suggestion.to_s if suggestion.is_a?(String)
-      return nil unless suggestion.respond_to?(:to_h)
+    def suggestion(raw)
+      return { from: raw.to_s, to: nil, old_hash: nil, new_hash: nil } if raw.is_a?(String)
+      return nil unless raw.respond_to?(:to_h)
 
-      s = suggestion.to_h.transform_keys(&:to_sym)
+      s = raw.to_h.transform_keys(&:to_sym)
       from = s[:old_label] || s[:from] || label_for(s[:old_case], s[:old_description])
       to   = s[:new_label] || s[:to]   || label_for(s[:new_case], s[:new_description])
-      old_hash = s[:old_hash] || s[:old_identity]
-      new_hash = s[:new_hash] || s[:new_identity]
       return nil if from.nil? || to.nil?
 
-      "possible rename: #{from} → #{to}, " \
-        "run constable history relink #{old_hash} #{new_hash} to confirm"
+      { from: truncate_label(from), to: truncate_label(to),
+        old_hash: s[:old_hash] || s[:old_identity], new_hash: s[:new_hash] || s[:new_identity] }
+    end
+
+    # A description built by RSpec from a matcher carries the whole inspected object --
+    # ids, timestamps, every column of a record. Printed in full it is unreadable, and it
+    # is the same test either way.
+    def truncate_label(label)
+      text = label.to_s.tr("\n", " ").squeeze(" ")
+      return text if text.length <= RULE_WIDTH - INDENT.length
+
+      "#{text[0, RULE_WIDTH - INDENT.length - 1]}…"
     end
 
     def label_for(case_name, description)

@@ -750,8 +750,10 @@ module Constable
 
       reporter.finish(results: passing(1), duration: 1.0, warnings: [], suggestions: suggestions)
 
-      assert_includes output, "  possible rename: OldCase#old description → NewCase#new description, " \
-                              "run constable history relink abc123 def456 to confirm\n"
+      assert_includes output, "RENAMED?"
+      assert_includes output, "OldCase#old description"
+      assert_includes output, "→ NewCase#new description"
+      assert_includes output, "constable history relink abc123 def456"
     end
 
     def test_rename_suggestions_can_be_built_from_case_and_description_parts
@@ -761,13 +763,41 @@ module Constable
 
       reporter.finish(results: passing(1), duration: 1.0, warnings: [], suggestions: suggestions)
 
-      assert_includes output, "possible rename: OldCase#old description → NewCase#new description"
+      assert_includes output, "OldCase#old description"
+      assert_includes output, "→ NewCase#new description"
     end
 
     def test_no_suggestions_means_no_extra_output
       reporter.finish(results: passing(1), duration: 1.0, warnings: [], suggestions: [])
 
-      refute_includes output, "possible rename"
+      refute_includes output, "RENAMED?"
+    end
+
+    # A real suite produced two hundred suggestions and several hundred lines of output --
+    # unlabelled, after SLOWEST, one long line each carrying two full descriptions and two
+    # hashes. It read as a wall of text and buried every section above it.
+    def test_many_suggestions_are_capped
+      suggestions = Array.new(200) do |i|
+        { old_label: "OldCase#thing #{i}", new_label: "NewCase#thing #{i}",
+          old_hash: "abc#{i}", new_hash: "def#{i}" }
+      end
+
+      reporter.finish(results: passing(1), warnings: [], suggestions: suggestions)
+
+      assert_operator output.scan("constable history relink").size, :<=, 8
+      assert_match(/and 192 more/, output)
+    end
+
+    # An RSpec description built from a matcher carries the whole inspected object -- every
+    # column of a record, ids and timestamps included. Printed in full it is unreadable.
+    def test_a_very_long_description_is_truncated
+      suggestions = [{ old_label: "OldCase#{"x" * 400}", new_label: "NewCase#short",
+                       old_hash: "abc", new_hash: "def" }]
+
+      reporter.finish(results: passing(1), warnings: [], suggestions: suggestions)
+
+      lines.each { |line| assert_operator line.length, :<=, RULE.length, "ran past the frame" }
+      assert_includes output, "…"
     end
 
     # --- exit status -----------------------------------------------------------------------

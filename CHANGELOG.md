@@ -5,6 +5,55 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.3.3]
+
+**1.3.2 was tagged twice.** The console fix in it was rebuilt after the gem had already
+been pushed, and RubyGems will not accept a second push of the same version — so the
+published 1.3.2 does not contain it. That fix is here, along with two more found on a
+1,277-file suite.
+
+### Shared examples survive across cold-case files
+
+A suite that keeps shared examples in a plain file beside its specs —
+`require_relative "appeal_shared_examples"` at the top of `appeal_spec.rb` — registers
+them the first time that file loads. `require` never fires again, so every later file
+that shares them died on load:
+
+```
+✗ spec/models/legacy_appeal_spec.rb  "failed to load"
+  ArgumentError: Could not find shared examples "toggle overtime"
+```
+
+Twelve files in one run, every one of which passes in isolation. RSpec never hits this
+because it loads every spec file and *then* runs them; Constable loads one at a time,
+which is what makes a cold case cheap, so the registry has to be carried across by hand.
+
+Same two files, before and after: 12 files failing to load → `458 passed, 0 failed`.
+
+### Rename suggestions are a section, not a wall
+
+They were printed unlabelled after SLOWEST, one long line per suggestion, each carrying
+two full test descriptions and two hashes. A real suite produced two hundred of them —
+several hundred lines with no heading, burying every section above.
+
+Now a `RENAMED?` section: eight at a time, three short lines each, with the rest counted.
+Descriptions are truncated to the frame, because an RSpec description built from a matcher
+carries the entire inspected object — every column of a record, ids and timestamps
+included.
+
+### The app's stdout, again (from 1.3.2, unpublished)
+
+Reassigning the `$stdout` object was not enough: a gem writing through the `STDERR`
+constant, or anything already holding the descriptor, goes straight past it, and in a
+terminal both streams land in the same place. The descriptors are now redirected with
+`IO#reopen`, with an `at_exit` guard so a crash still prints where it can be seen.
+
+CLI errors no longer use `Kernel#warn`. Rails apps routinely override `Warning.warn` to
+funnel Ruby warnings into `Rails.logger`, and a real one did: `no tests matched ...`
+arrived in `log/test.log` tagged `[RUBY WARNING]` while the terminal showed nothing at
+all, so the command looked like it had silently done nothing.
+
+
 ## [1.3.2]
 
 ### stdout is results only — the app's stdout too, not just Constable's
@@ -570,7 +619,8 @@ Initial release.
 - Diff-based coverage gate — only lines changed in the current diff are held to the
   threshold. `constable beat` for the full picture, `--html` for a browsable report.
 
-[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/Ray-Hughes/constable/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/Ray-Hughes/constable/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Ray-Hughes/constable/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Ray-Hughes/constable/compare/v1.2.0...v1.3.0

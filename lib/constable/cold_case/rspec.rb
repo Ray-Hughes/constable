@@ -149,6 +149,7 @@ module Constable
           @session_configuration = nil
           @session_prepared = false
           @ran_before_suite_hooks = nil
+          @shared_examples = nil
           nil
         end
 
@@ -252,9 +253,11 @@ module Constable
           ::RSpec.instance_variable_set(:@configuration, @session_configuration)
           prepare_session_configuration(::RSpec.configuration)
           clear_examples
+          restore_shared_examples!
 
           yield
         ensure
+          remember_shared_examples!
           @session_world         = ::RSpec.instance_variable_get(:@world)
           @session_configuration = ::RSpec.instance_variable_get(:@configuration)
           clear_examples
@@ -323,6 +326,38 @@ module Constable
           Array(options[:requires])
         rescue StandardError
           []
+        end
+
+        # Shared examples are registered on the world, by `require`, once per process.
+        #
+        # A suite that keeps them in a plain file next to its specs -- `require_relative
+        # "appeal_shared_examples"` at the top of appeal_spec.rb -- registers them while
+        # the first file runs. `require` never fires again, so if the registry does not
+        # survive into the next file, every later file that shares them dies on load with
+        # `Could not find shared examples "toggle overtime"`.
+        #
+        # Under RSpec that never happens: it loads every spec file first, then runs them.
+        # Constable loads one file at a time, which is what makes a cold case cheap, so
+        # the registry has to be carried across by hand. Observed on a real suite: twelve
+        # files failing to load, all of which pass in isolation.
+        def remember_shared_examples!
+          world = ::RSpec.instance_variable_get(:@world)
+          return unless world.respond_to?(:shared_example_group_registry)
+
+          @shared_examples = world.shared_example_group_registry
+        rescue StandardError
+          nil
+        end
+
+        def restore_shared_examples!
+          return if @shared_examples.nil?
+
+          world = ::RSpec.world
+          return unless world.respond_to?(:shared_example_group_registry)
+
+          world.instance_variable_set(:@shared_example_group_registry, @shared_examples)
+        rescue StandardError
+          nil
         end
 
         def clear_examples
