@@ -42,6 +42,17 @@ module Constable
       @cases.find { |klass| klass.constable_display_name == name.to_s || klass.name == name.to_s }
     end
 
+    # Re-keys any investigations that share a body with another, so the blotter never
+    # treats two tests as one. Runs once, after the whole suite is loaded -- a collision
+    # is invisible until every case file has been seen.
+    #
+    # Returns the groups it re-keyed, so a caller can report them if it wants to.
+    def disambiguate_identities!
+      collisions = investigations.group_by(&:identity).select { |_key, group| group.size > 1 }
+      collisions.each_value { |group| group.each(&:disambiguate!) }
+      collisions.values
+    end
+
     def each(&) = @cases.each(&)
 
     def size    = @cases.size

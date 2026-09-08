@@ -38,6 +38,15 @@ module Constable
       @identity ||= Identity.for_block(@block)
     end
 
+    # Re-keys this investigation because another one has the same body. Called by the
+    # registry once the whole suite is loaded, which is the first moment a collision can
+    # be seen. See Identity.disambiguate.
+    def disambiguate!
+      @identity = Identity.disambiguate(identity, case_name: case_name,
+                                                  description: full_description)
+      self
+    end
+
     def location
       "#{relative_file}:#{@line}"
     end

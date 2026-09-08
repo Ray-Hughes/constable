@@ -302,12 +302,26 @@ module Constable
       no_commands do
         def act(locator)
           jail = Jail.new(config: Constable.config, storage: Constable.storage)
+          refuse_ambiguous(locator, jail.candidates(locator), "on the docket")
+
           identity = jail.resolve(locator)
           unless identity
             warn "Nothing on the docket at #{locator}"
             exit(EXIT_USAGE)
           end
           yield jail, identity
+        end
+
+        # A bare path naming several tests is a question. Answer it with the list rather
+        # than acting on whichever row the database happened to return first.
+        def refuse_ambiguous(locator, candidates, noun)
+          return if candidates.size <= 1
+
+          warn "#{locator} matches #{candidates.size} tests #{noun}. Name one:"
+          candidates.sort_by { |entry| entry.line.to_i }.each do |entry|
+            warn "  #{entry.location}  #{entry.label}"
+          end
+          exit(EXIT_USAGE)
         end
 
         def repeat_note(entry)
@@ -347,6 +361,8 @@ module Constable
       desc "release PATH:LINE", "Clear a warrant by hand"
       def release(locator)
         warrants = Warrants.new(config: Constable.config, storage: Constable.storage)
+        JailCommand.new.send(:refuse_ambiguous, locator, warrants.candidates(locator), "under warrant")
+
         identity = warrants.resolve(locator)
         unless identity
           warn "No warrant at #{locator}"

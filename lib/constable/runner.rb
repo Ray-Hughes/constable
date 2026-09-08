@@ -73,6 +73,9 @@ module Constable
       Constable::Coverage.start!(config: @config, force: true) if coverage?
 
       load_suite!
+      # Before anything is keyed on an identity -- selection, the docket, flake history --
+      # settle any two tests that happen to share a body.
+      Constable.registry.disambiguate_identities!
       items = build_items
       ordered = order(items)
 

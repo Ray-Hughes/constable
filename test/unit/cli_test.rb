@@ -72,6 +72,76 @@ module Constable
       assert_equal CLI::EXIT_USAGE, error.status
     end
 
+    # --- ambiguous targets ------------------------------------------------------
+    #
+    # A bare path naming several docket rows used to act on whichever row storage
+    # returned first -- not even the first by line. Paroling a test the user never
+    # named is worse than refusing.
+
+    def three_jailed_in_one_file(file: "test/cases/reports_case.rb")
+      %w[first second third].each_with_index do |name, index|
+        @jail.jail_identity(Identity.digest(name), label: "ReportsCase \"#{name}\"",
+                                                   file: file, line: (index + 1) * 10,
+                                                   reason: :jail_mode)
+      end
+      file
+    end
+
+    def test_a_bare_path_matching_several_tests_is_refused
+      file = three_jailed_in_one_file
+
+      error = assert_raises(SystemExit) { capture { CLI::JailCommand.new.parole(file) } }
+
+      assert_equal CLI::EXIT_USAGE, error.status
+    end
+
+    def test_nothing_is_paroled_when_the_target_is_ambiguous
+      file = three_jailed_in_one_file
+
+      assert_raises(SystemExit) { capture { CLI::JailCommand.new.parole(file) } }
+
+      assert_empty @jail.paroled, "an ambiguous target must not parole anything"
+      assert_equal 3, @jail.jailed.size
+    end
+
+    def test_an_ambiguous_target_lists_the_candidates_in_line_order
+      file = three_jailed_in_one_file
+
+      message = capture_stderr do
+        assert_raises(SystemExit) { capture { CLI::JailCommand.new.parole(file) } }
+      end
+
+      assert_match(/matches 3 tests on the docket/, message)
+      assert_equal [10, 20, 30], message.scan(/reports_case\.rb:(\d+)/).flatten.map(&:to_i)
+    end
+
+    def test_a_path_with_a_line_is_never_ambiguous
+      file = three_jailed_in_one_file
+
+      capture { CLI::JailCommand.new.parole("#{file}:20") }
+
+      assert_equal 1, @jail.paroled.size
+      assert_equal 20, @jail.paroled.first.line
+    end
+
+    def test_a_file_with_one_jailed_test_still_works_without_a_line
+      identity, = jail_a_test(file: "test/cases/only_case.rb", line: 5)
+
+      capture { CLI::JailCommand.new.parole("test/cases/only_case.rb") }
+
+      assert_predicate @jail.entry(identity), :paroled?
+    end
+
+    def capture_stderr
+      out = StringIO.new
+      original = $stderr
+      $stderr = out
+      yield
+      out.string
+    ensure
+      $stderr = original
+    end
+
     # --- warrants release -------------------------------------------------------
 
     def test_warrants_release_clears_a_standing_warrant

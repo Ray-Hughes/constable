@@ -33,6 +33,23 @@ module Constable
       digest("cold:#{relative}:#{description}")
     end
 
+    # Two investigations with byte-identical bodies hash to the same key, which would
+    # make them one test as far as the blotter is concerned: jail one and the other goes
+    # with it, and their flake histories merge into a single misleading record.
+    #
+    # Bodies repeat more often than the "content hash" idea suggests --
+    # `attest(build(:thing, name: nil)).not_to be_valid` is the same handful of tokens in
+    # every model case, and the model generator writes an identical first investigation
+    # into every file it touches. So the collision is routine, not theoretical.
+    #
+    # When it happens, the colliding tests are re-keyed on the body *plus* their class
+    # and description. The rename-survival promise is weaker for exactly those tests --
+    # rewording one of them starts its history over -- which is the right trade: a
+    # history that belongs to two tests at once is worse than one that resets.
+    def disambiguate(base, case_name:, description:)
+      digest("#{base}:#{case_name}:#{description}")
+    end
+
     def digest(string)
       Digest::SHA256.hexdigest(string)[0, LENGTH]
     end
