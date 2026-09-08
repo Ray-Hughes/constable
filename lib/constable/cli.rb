@@ -302,7 +302,7 @@ module Constable
       no_commands do
         def act(locator)
           jail = Jail.new(config: Constable.config, storage: Constable.storage)
-          identity = jail.identity_for(locator)
+          identity = jail.resolve(locator)
           unless identity
             warn "Nothing on the docket at #{locator}"
             exit(EXIT_USAGE)
@@ -347,12 +347,12 @@ module Constable
       desc "release PATH:LINE", "Clear a warrant by hand"
       def release(locator)
         warrants = Warrants.new(config: Constable.config, storage: Constable.storage)
-        identity = warrants.identity_for(locator)
+        identity = warrants.resolve(locator)
         unless identity
           warn "No warrant at #{locator}"
           exit(EXIT_USAGE)
         end
-        warrants.clear(identity)
+        warrants.release(identity)
         say "Warrant cleared."
       end
     end
