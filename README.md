@@ -1,8 +1,9 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/Ray-Hughes/constable/main/docs/assets/logo.png" alt="Constable" width="200">
-
-# Constable
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Ray-Hughes/constable/main/docs/assets/logo-dark.png">
+  <img src="https://raw.githubusercontent.com/Ray-Hughes/constable/main/docs/assets/logo.png" alt="Constable" width="340">
+</picture>
 
 **A strict Rails testing framework where fast and non-flaky are structural, not disciplinary.**
 
