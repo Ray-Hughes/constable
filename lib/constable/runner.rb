@@ -91,6 +91,10 @@ module Constable
       @results = adjudicate(raw)
       duration = monotonic - started
 
+      # Cold-case engines hold a live session -- for RSpec that is a configuration
+      # carrying `after(:suite)` hooks that have not fired yet. Tear it down before our
+      # own after_suite so the engine's cleanup runs inside the suite, not after it.
+      ColdCase.reset_engines!
       Constable.configuration.run_after_suite!
       @coverage_report = build_coverage_report if coverage?
 
@@ -251,6 +255,11 @@ module Constable
           bucket.each do |item|
             run_item(item).each { |result| write_message(writer, :result, result.to_h) }
           end
+
+          # A worker owns its own cold-case session, and it dies here. Fire the engine's
+          # after(:suite) hooks in the process that ran the before(:suite) half, before
+          # coverage is read -- the parent has no hooks to run on its behalf.
+          ColdCase.reset_engines!
 
           # Ruby's Coverage counts lines in the process that executed them, so a worker's
           # hits would die with it. They ride home on the same pipe as the results.

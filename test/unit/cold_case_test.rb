@@ -58,14 +58,100 @@ module Constable
       end
     TEST
 
+    # A cold case that installs suite hooks the way webmock/rspec, VCR, DatabaseCleaner
+    # and SimpleCov all do. Constable drives example groups directly rather than through
+    # RSpec's Runner, so these hooks are the ones easiest to skip by accident -- and
+    # skipping them fails open, which is how a stubbed spec ends up opening a real socket.
+    RSPEC_SUITE_HOOKS = <<~SPEC
+      RSpec.configure do |config|
+        config.before(:suite) { Constable::ColdCaseTest.suite_events << :before_suite }
+        config.after(:suite)  { Constable::ColdCaseTest.suite_events << :after_suite }
+      end
+
+      describe "Suite hooks" do
+        it "runs with before(:suite) already fired" do
+          expect(Constable::ColdCaseTest.suite_events).to include(:before_suite)
+        end
+      end
+    SPEC
+
+    RSPEC_SUITE_HOOKS_SECOND_FILE = <<~SPEC
+      describe "A second file in the same session" do
+        it "does not re-fire before(:suite)" do
+          expect(Constable::ColdCaseTest.suite_events.count(:before_suite)).to eq(1)
+        end
+      end
+    SPEC
+
+    # The fixture specs below are loaded into a separate RSpec world, so they need a
+    # named channel to report back through. A class-level array is that channel -- a
+    # global would do the same job and trip the suite's own linter.
+    class << self
+      def suite_events = (@suite_events ||= [])
+    end
+
     def setup
       super
+      self.class.suite_events.clear
       ColdCase.reset_engines!
     end
 
     def teardown
       ColdCase.reset_engines!
       super
+    end
+
+    # ------------------------------------------------------------------ suite hooks
+
+    def test_rspec_cold_case_fires_before_suite_hooks
+      path = write_file("spec/suite_hooks_spec.rb", RSPEC_SUITE_HOOKS)
+
+      results = ColdCase.run_file(path, config: Constable.config)
+
+      assert_equal [:passed], results.map(&:status),
+                   "before(:suite) never ran, so the example could not see its effect"
+      assert_includes Constable::ColdCaseTest.suite_events, :before_suite
+    ensure
+      self.class.suite_events.clear
+    end
+
+    # "Suite" means the run, not the file. Firing them per file would re-run setup that
+    # is meant to happen once, and tear it down while later files still need it.
+    def test_rspec_cold_case_fires_before_suite_hooks_once_per_session
+      first  = write_file("spec/suite_hooks_spec.rb", RSPEC_SUITE_HOOKS)
+      second = write_file("spec/second_spec.rb", RSPEC_SUITE_HOOKS_SECOND_FILE)
+
+      results = ColdCase.run_files([first, second], config: Constable.config)
+
+      assert_equal %i[passed passed], results.map(&:status)
+      assert_equal 1, Constable::ColdCaseTest.suite_events.count(:before_suite)
+    ensure
+      self.class.suite_events.clear
+    end
+
+    # after(:suite) belongs at the end of the session, not the end of a file -- otherwise
+    # file one's teardown pulls the rug out from under file two.
+    def test_rspec_cold_case_defers_after_suite_hooks_to_engine_reset
+      path = write_file("spec/suite_hooks_spec.rb", RSPEC_SUITE_HOOKS)
+
+      ColdCase.run_file(path, config: Constable.config)
+      refute_includes Constable::ColdCaseTest.suite_events, :after_suite,
+                      "after(:suite) must not fire while more files could still run"
+
+      ColdCase.reset_engines!
+      assert_equal 1, Constable::ColdCaseTest.suite_events.count(:after_suite)
+    ensure
+      self.class.suite_events.clear
+    end
+
+    # Nothing was set up, so there is nothing to tear down. A reset with no session must
+    # not invent an after(:suite) run.
+    def test_rspec_engine_reset_without_a_session_runs_no_after_suite_hooks
+      ColdCase.reset_engines!
+
+      assert_empty Constable::ColdCaseTest.suite_events
+    ensure
+      self.class.suite_events.clear
     end
 
     # ------------------------------------------------------------------ engine_for
