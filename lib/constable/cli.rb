@@ -17,7 +17,10 @@ module Constable
     # wrong", and CI needs to. Commands return a status; this turns it into one.
     def self.dispatch!(argv)
       start(argv)
-    rescue Thor::Error => e
+    # Thor::Error is a malformed command; Constable::Error is a wrong path, an unknown
+    # tier, an unreadable config. Both are the user's mistake rather than a crash, and
+    # both deserve one sentence and a usage status instead of a backtrace.
+    rescue Thor::Error, Constable::Error => e
       warn e.message
       exit(EXIT_USAGE)
     rescue Interrupt

@@ -33,9 +33,12 @@ module Constable
       @root        = root.to_s
       @full        = full
       @unsafe_only = unsafe_only
-      @tier        = tier&.to_sym
+      # Downcased: `--tier UNIT` used to match nothing at all and report a clean run.
+      @tier        = tier.to_s.strip.downcase.to_sym unless tier.to_s.strip.empty?
       @reason      = nil
     end
+
+    TIERS = %w[unit integration system].freeze
 
     def full?        = @full
     def unsafe_only? = @unsafe_only
@@ -58,6 +61,25 @@ module Constable
         list = list.select { |t| tier_matches?(t) } if @tier
         list.uniq { |t| [t.path, t.line] }
       end
+    end
+
+    # Did the user ask for something in particular? If so, finding nothing is an error
+    # rather than a clean run -- see Runner#refuse_empty_selection!.
+    def explicit? = @args.any? { |arg| !arg.to_s.strip.empty? } || !@tier.nil?
+
+    # Says which part of the request came up empty, because "0 tests" on its own does not
+    # tell you whether the path was wrong, the tier was, or both.
+    def empty_selection_message
+      if @tier && !TIERS.include?(@tier.to_s)
+        return "unknown tier #{@tier.inspect} -- expected one of #{TIERS.join(", ")}."
+      end
+
+      described = @args.reject { |arg| arg.to_s.strip.empty? }
+      subject   = described.empty? ? "this run" : described.join(", ")
+      suffix    = @tier ? " in the #{@tier} tier" : ""
+
+      "no tests matched #{subject}#{suffix}. Check the path, the line number, and " \
+        "whether the file is a case or a cold case."
     end
 
     def native_targets = targets.select(&:native?)

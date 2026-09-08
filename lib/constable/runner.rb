@@ -77,6 +77,7 @@ module Constable
       # settle any two tests that happen to share a body.
       Constable.registry.disambiguate_identities!
       items = build_items
+      refuse_empty_selection!(items)
       ordered = order(items)
 
       run_id = @storage.start_run(seed: @seed, mode: mode_label, full: @selection.full?)
@@ -187,6 +188,17 @@ module Constable
       end
     end
 
+    # A run that was *asked* for something specific and found nothing is a usage error, not
+    # a pass. `constable test test/cases/typo_case.rb` used to print "0 passed, 0 failed"
+    # and exit 0, so a mistyped path in a CI script produced a green build that ran no
+    # tests at all. A full run with an empty suite is a different thing and stays quiet.
+    def refuse_empty_selection!(items)
+      return unless items.empty?
+      return unless @selection.explicit?
+
+      raise Constable::Error, @selection.empty_selection_message
+    end
+
     def build_items
       native = native_items
       cold = @selection.cold_targets_selected.map { |t| Item.new(path: t.path, kind: :cold) }
@@ -203,12 +215,27 @@ module Constable
 
     # PATH:LINE means "the investigation at that line" -- but developers point at any line
     # inside the block, so pick the investigation whose declaration is nearest above it.
+    #
+    # Bounded by the end of the file. Unbounded, `:999` on a twenty-line file quietly ran
+    # the last investigation in it: not the test the user asked for, not an error, and
+    # green either way. A line past the end is a typo, and no answer beats a wrong one.
     def narrow_to_line(investigations, line)
       exact = investigations.select { |inv| inv.line == line }
       return exact if exact.any?
+      return [] unless line_within_file?(investigations.first, line)
 
       nearest = investigations.select { |inv| inv.line <= line }.max_by(&:line)
       nearest ? [nearest] : []
+    end
+
+    def line_within_file?(investigation, line)
+      path = investigation&.file
+      return false if path.nil?
+
+      path = File.join(@config.root, path) unless File.exist?(path)
+      return false unless File.exist?(path)
+
+      line <= File.foreach(path).count
     end
 
     def order(items)
