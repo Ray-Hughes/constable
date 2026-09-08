@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "constable/version"
+require "constable/worker_databases"
 
 # Constable -- an opinionated, strict Rails testing framework.
 #

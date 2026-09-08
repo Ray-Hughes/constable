@@ -267,13 +267,20 @@ module Constable
     # Call it *before* writing the result to flake history (the flip check reads the
     # previous status) and *after* Warrants has had its say (a warranted result is not a
     # failure, so it never reaches the docket).
-    def adjudicate(result, jail_mode: false)
+    # `systemic:` says this run failed for a reason that has nothing to do with any
+    # individual test -- see Runner#systemic_failure. The failures still stand and the
+    # build still goes red, but they are not *evidence*: nothing moves through the state
+    # machine, because "the database was locked for the whole run" is not a fact about a
+    # test and must not put one on the docket.
+    def adjudicate(result, jail_mode: false, systemic: false)
       return result if result.nil?
 
       docket = entry(result.identity)
 
+      return mark_jailed(result) if docket&.jailed?
+      return result if systemic
+
       return record_result(result) if docket&.paroled?
-      return mark_jailed(result)   if docket&.jailed?
       return result unless result.failed?
 
       if jail_mode
