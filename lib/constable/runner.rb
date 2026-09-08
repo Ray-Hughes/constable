@@ -11,6 +11,14 @@ module Constable
   # chose, since reordering someone's untouched legacy file is exactly the kind of surprise
   # the cold-case story exists to avoid.
   class Runner
+    # Thresholds for "this run is broken, not these tests" -- see #systemic_failure.
+    SYSTEMIC_MINIMUM   = 5    # below this it is cheaper to believe the tests
+    SYSTEMIC_SHARE     = 0.25 # of the whole run
+    SYSTEMIC_AGREEMENT = 0.8  # of the failures, failing identically
+
+    # `failed` rather than `count` or `tally`, both of which override an Enumerable method.
+    Systemic = Struct.new(:exception_class, :failed, :total, keyword_init: true)
+
     # One unit of work. Native items are a single investigation; cold items are a whole
     # file, because their engine owns the granularity inside it.
     class Item
@@ -65,7 +73,11 @@ module Constable
       Constable::Coverage.start!(config: @config, force: true) if coverage?
 
       load_suite!
+      # Before anything is keyed on an identity -- selection, the docket, flake history --
+      # settle any two tests that happen to share a body.
+      Constable.registry.disambiguate_identities!
       items = build_items
+      refuse_empty_selection!(items)
       ordered = order(items)
 
       run_id = @storage.start_run(seed: @seed, mode: mode_label, full: @selection.full?)
@@ -91,6 +103,10 @@ module Constable
       @results = adjudicate(raw)
       duration = monotonic - started
 
+      # Cold-case engines hold a live session -- for RSpec that is a configuration
+      # carrying `after(:suite)` hooks that have not fired yet. Tear it down before our
+      # own after_suite so the engine's cleanup runs inside the suite, not after it.
+      ColdCase.reset_engines!
       Constable.configuration.run_after_suite!
       @coverage_report = build_coverage_report if coverage?
 
@@ -172,6 +188,17 @@ module Constable
       end
     end
 
+    # A run that was *asked* for something specific and found nothing is a usage error, not
+    # a pass. `constable test test/cases/typo_case.rb` used to print "0 passed, 0 failed"
+    # and exit 0, so a mistyped path in a CI script produced a green build that ran no
+    # tests at all. A full run with an empty suite is a different thing and stays quiet.
+    def refuse_empty_selection!(items)
+      return unless items.empty?
+      return unless @selection.explicit?
+
+      raise Constable::Error, @selection.empty_selection_message
+    end
+
     def build_items
       native = native_items
       cold = @selection.cold_targets_selected.map { |t| Item.new(path: t.path, kind: :cold) }
@@ -188,12 +215,27 @@ module Constable
 
     # PATH:LINE means "the investigation at that line" -- but developers point at any line
     # inside the block, so pick the investigation whose declaration is nearest above it.
+    #
+    # Bounded by the end of the file. Unbounded, `:999` on a twenty-line file quietly ran
+    # the last investigation in it: not the test the user asked for, not an error, and
+    # green either way. A line past the end is a typo, and no answer beats a wrong one.
     def narrow_to_line(investigations, line)
       exact = investigations.select { |inv| inv.line == line }
       return exact if exact.any?
+      return [] unless line_within_file?(investigations.first, line)
 
       nearest = investigations.select { |inv| inv.line <= line }.max_by(&:line)
       nearest ? [nearest] : []
+    end
+
+    def line_within_file?(investigation, line)
+      path = investigation&.file
+      return false if path.nil?
+
+      path = File.join(@config.root, path) unless File.exist?(path)
+      return false unless File.exist?(path)
+
+      line <= File.foreach(path).count
     end
 
     def order(items)
@@ -205,11 +247,30 @@ module Constable
       return [] if items.empty?
 
       count = worker_count(items)
-      if count > 1 && forkable?
+      if count > 1 && forkable? && parallel_safe?
         run_parallel(items, count)
       else
         run_serial(items)
       end
+    end
+
+    # Forking is only safe once each worker has a database of its own. Without that,
+    # every worker opens the same one: on SQLite the run dissolves into "database is
+    # locked", and on a client/server database the tests quietly see each other's rows,
+    # which is worse. An app with no ActiveRecord has nothing to shard and is always safe.
+    #
+    # When we cannot shard, we run serially and say why. Slow is a trade-off; wrong is not.
+    def parallel_safe?
+      return true unless WorkerDatabases.active_record?
+      return true if WorkerDatabases.shardable?
+
+      Constable.warn!(
+        "parallel workers need one database per worker, and this app's ActiveRecord " \
+        "cannot provide them (active_record/test_databases did not load). Running " \
+        "serially instead -- pass --workers N once that is available.",
+        kind: :parallel
+      )
+      false
     end
 
     def worker_count(items)
@@ -240,7 +301,11 @@ module Constable
       # driver rightly complains about it.
       @storage.close
 
-      buckets.each do |bucket|
+      # Same reasoning for the app's own connections: a child that inherits a live
+      # handle can corrupt it. Rails does exactly this before its own fork.
+      WorkerDatabases.before_fork!
+
+      buckets.each_with_index do |bucket, worker_index|
         reader, writer = IO.pipe
         # Marshal payloads are binary. Left in text mode, the first byte that isn't valid
         # UTF-8 takes the worker down with an encoding error.
@@ -248,9 +313,20 @@ module Constable
         writer.binmode
         pid = fork do
           reader.close
+
+          # Before a single test runs: build this worker's own database and point the
+          # process at it. Raises rather than falling back to the shared one, because a
+          # silent fallback is the bug we are here to prevent.
+          WorkerDatabases.after_fork!(worker_index)
+
           bucket.each do |item|
             run_item(item).each { |result| write_message(writer, :result, result.to_h) }
           end
+
+          # A worker owns its own cold-case session, and it dies here. Fire the engine's
+          # after(:suite) hooks in the process that ran the before(:suite) half, before
+          # coverage is read -- the parent has no hooks to run on its behalf.
+          ColdCase.reset_engines!
 
           # Ruby's Coverage counts lines in the process that executed them, so a worker's
           # hits would die with it. They ride home on the same pipe as the results.
@@ -513,6 +589,9 @@ module Constable
     # Turns raw pass/fail into the verdict the build acts on: warrants decide whether a
     # failure is even real, then jail decides whether it blocks.
     def adjudicate(raw)
+      @systemic = systemic_failure(raw)
+      announce_systemic_failure(@systemic) if @systemic
+
       raw.map do |result|
         decided = warrants.adjudicate(
           result,
@@ -520,8 +599,52 @@ module Constable
           subject: investigation_for(result.identity)
         ) { |subject, _attempt| rerun_in_isolation(subject) }
 
-        jail_run? ? decided : jail.adjudicate(decided, jail_mode: jail_mode?)
+        next decided if jail_run?
+
+        jail.adjudicate(decided, jail_mode: jail_mode?, systemic: systemic?(decided))
       end
+    end
+
+    # A run is "systemically broken" when a large share of it failed the same way: the
+    # database was down, a worker could not start, a shared fixture never loaded. Thirty
+    # tests did not each independently go bad in the same second.
+    #
+    # This matters because flake history reads "passed last run, failed this run" as
+    # evidence about a *test*, and jails it. One bad afternoon on CI could therefore
+    # quarantine a third of a healthy suite, and the docket -- which is supposed to be a
+    # record of tests worth distrusting -- fills up with tests that were never at fault.
+    def systemic_failure(results)
+      failures = results.select(&:failed?)
+      return nil if failures.size < SYSTEMIC_MINIMUM
+      return nil if failures.size < results.size * SYSTEMIC_SHARE
+
+      grouped = failures.group_by { |result| result.failure&.exception_class.to_s }
+      grouped.delete("")
+      return nil if grouped.empty?
+
+      exception_class, sharing = grouped.max_by { |_klass, group| group.size }
+      return nil if sharing.size < failures.size * SYSTEMIC_AGREEMENT
+
+      Systemic.new(exception_class: exception_class, failed: sharing.size, total: results.size)
+    end
+
+    # Only the failures that look like the outage are exempt. A genuine failure that
+    # happened to land in the same run is still a genuine failure.
+    def systemic?(result)
+      return false unless @systemic
+      return false unless result.failed?
+
+      result.failure&.exception_class.to_s == @systemic.exception_class
+    end
+
+    def announce_systemic_failure(systemic)
+      Constable.warn!(
+        "#{systemic.failed} of #{systemic.total} tests failed with the same error " \
+        "(#{systemic.exception_class}). That reads as one broken run rather than " \
+        "#{systemic.failed} newly flaky tests, so flake history and the jail docket were " \
+        "left alone. Fix the cause and run again.",
+        kind: :systemic
+      )
     end
 
     def investigation_for(identity)
@@ -564,6 +687,11 @@ module Constable
 
     def persist(run_id, results, coverage_report)
       results.each do |result|
+        # The blotter is the evidence file. A result produced by an outage is not
+        # evidence about the test, so it is not filed -- otherwise the next run reads
+        # "failed, then passed" and draws a conclusion from a power cut.
+        next if systemic?(result)
+
         @storage.record_result(run_id, result)
         @storage.record_duration(result.identity, result.duration)
       end

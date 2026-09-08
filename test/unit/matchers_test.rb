@@ -581,6 +581,192 @@ module Constable
       assert_equal({ "Response body" => '{"id":1}' }, error.context)
     end
 
+    # --- contain_exactly / match_array ------------------------------------------------
+    #
+    # `modernize` converts these verbatim from RSpec. Before they were registered, every
+    # converted spec that used one died with NoMethodError.
+
+    def test_contain_exactly_ignores_order
+      in_case { attest([3, 1, 2]).to contain_exactly(1, 2, 3) }
+    end
+
+    def test_contain_exactly_rejects_a_missing_item
+      error = assert_fails { in_case { attest([1, 2]).to contain_exactly(1, 2, 3) } }
+      assert_match(/missing/, error.message)
+    end
+
+    def test_contain_exactly_rejects_an_extra_item
+      error = assert_fails { in_case { attest([1, 2, 3]).to contain_exactly(1, 2) } }
+      assert_match(/unexpected/, error.message)
+    end
+
+    # The distinction from set equality: [1, 1] is not the same collection as [1].
+    def test_contain_exactly_counts_duplicates
+      in_case { attest([1, 1]).to contain_exactly(1, 1) }
+      assert_fails { in_case { attest([1, 1]).to contain_exactly(1) } }
+    end
+
+    def test_contain_exactly_matches_two_empty_collections
+      in_case { attest([]).to contain_exactly }
+    end
+
+    def test_contain_exactly_accepts_anything_that_converts_to_an_array
+      in_case { attest({ a: 1 }).to contain_exactly([:a, 1]) }
+    end
+
+    def test_contain_exactly_says_so_when_the_subject_is_not_a_collection
+      error = assert_fails { in_case { attest(42).to contain_exactly(42) } }
+      assert_match(/does not respond to #to_a/, error.message)
+    end
+
+    def test_match_array_is_the_same_matcher
+      in_case { attest([2, 1]).to match_array([1, 2]) }
+    end
+
+    def test_contain_exactly_negates
+      in_case { attest([1, 2]).not_to contain_exactly(1) }
+    end
+
+    def test_contain_exactly_reports_both_sides_at_once
+      error = assert_fails { in_case { attest([1, 4]).to contain_exactly(1, 2) } }
+      assert_match(/missing/, error.message)
+      assert_match(/unexpected/, error.message)
+    end
+
+    # --- be_within(delta).of(expected) ------------------------------------------------
+
+    def test_be_within_passes_inside_the_delta
+      in_case { attest(10.4).to be_within(0.5).of(10) }
+    end
+
+    def test_be_within_is_inclusive_at_the_boundary
+      in_case { attest(10.5).to be_within(0.5).of(10) }
+    end
+
+    def test_be_within_fails_outside_the_delta
+      error = assert_fails { in_case { attest(11).to be_within(0.5).of(10) } }
+      assert_match(/differed by/, error.message)
+    end
+
+    def test_be_within_works_in_both_directions
+      in_case { attest(9.6).to be_within(0.5).of(10) }
+    end
+
+    def test_be_within_negates
+      in_case { attest(20).not_to be_within(0.5).of(10) }
+    end
+
+    def test_be_within_without_of_says_what_is_missing
+      error = assert_fails { in_case { attest(10).to be_within(0.5) } }
+      assert_match(/needs \.of/, error.message)
+    end
+
+    # The bug this guards: unregistered, `be_within` fell through to the be_* predicate
+    # fallback and the NoMethodError named PredicateDeferred, not the matcher.
+    def test_be_within_does_not_fall_through_to_the_predicate_fallback
+      in_case do
+        deferred = be_within(1)
+        raise "expected a WithinDeferred, got #{deferred.class}" unless
+          deferred.is_a?(Constable::Matchers::WithinDeferred)
+      end
+    end
+
+    def test_be_within_handles_a_subject_it_cannot_subtract
+      error = assert_fails { in_case { attest("ten").to be_within(0.5).of(10) } }
+      assert_match(/cannot be subtracted/, error.message)
+    end
+
+    def test_be_within_works_on_times
+      now = Time.now
+      in_case { attest(now + 2).to be_within(5).of(now) }
+    end
+
+    # --- be ---------------------------------------------------------------------------
+
+    def test_be_with_an_argument_is_identity
+      value = "shared"
+      in_case { attest(value).to be(value) }
+    end
+
+    # The whole reason to reach for `be` over `eq`, so the message has to say it.
+    def test_be_rejects_an_equal_but_different_object
+      error = assert_fails { in_case { attest(+"a").to be(+"a") } }
+      assert_match(/same object/, error.message)
+      assert_match(/they are equal/, error.message)
+    end
+
+    def test_be_matches_true_and_nil_by_identity
+      in_case { attest(true).to be(true) }
+      in_case { attest(nil).to be(nil) }
+      assert_fails { in_case { attest(false).to be(true) } }
+    end
+
+    def test_bare_be_is_truthiness
+      in_case { attest("anything").to be }
+      assert_fails { in_case { attest(nil).to be } }
+    end
+
+    def test_be_supports_operator_comparisons
+      # `be > 0` is the syntax under test, so the predicate suggestion does not apply.
+      # rubocop:disable-next Style/NumericPredicate
+      in_case { attest(5).to be > 0 }
+      in_case { attest(5).to be >= 5 }
+      in_case { attest(5).to be < 10 }
+      in_case { attest(5).to be <= 5 }
+    end
+
+    def test_be_operator_failure_names_the_operator
+      error = assert_fails { in_case { attest(0).to be > 5 } }
+      assert_match(/to be > 5/, error.message)
+    end
+
+    def test_be_operator_negates
+      in_case { attest(0).not_to be > 5 }
+    end
+
+    def test_be_operator_on_something_incomparable_explains_itself
+      error = assert_fails { in_case { attest(nil).to be > 5 } }
+      assert_match(/cannot be compared/, error.message)
+    end
+
+    def test_be_compares_strings_too
+      in_case { attest("b").to be > "a" }
+    end
+
+    # --- start_with / end_with / be_between / satisfy ----------------------------------
+
+    def test_start_with_and_end_with_on_strings
+      in_case { attest("constable").to start_with("con") }
+      in_case { attest("constable").to end_with("ble") }
+      assert_fails { in_case { attest("constable").to start_with("ble") } }
+    end
+
+    def test_start_with_and_end_with_on_arrays
+      in_case { attest([1, 2, 3]).to start_with(1) }
+      in_case { attest([1, 2, 3]).to end_with(3) }
+    end
+
+    def test_be_between_is_inclusive
+      in_case { attest(5).to be_between(1, 5) }
+      in_case { attest(1).to be_between(1, 5) }
+      assert_fails { in_case { attest(6).to be_between(1, 5) } }
+    end
+
+    def test_satisfy_takes_a_block
+      in_case { attest(4).to(satisfy(&:even?)) }
+      assert_fails { in_case { attest(3).to(satisfy(&:even?)) } }
+    end
+
+    # --- http status names --------------------------------------------------------------
+
+    def test_have_http_status_knows_the_current_rack_name_for_unprocessable
+      in_case { attest(FakeResponse.new(status: 422)).to have_http_status(:unprocessable_content) }
+    end
+
+    def test_have_http_status_still_knows_the_deprecated_name_for_unprocessable
+      in_case { attest(FakeResponse.new(status: 422)).to have_http_status(:unprocessable_entity) }
+    end
+
     private
 
     # Runs the block with `self` set to the bare Expectations host, so the assertions read

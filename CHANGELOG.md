@@ -5,6 +5,163 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.0.0]
+
+The first release anybody should install.
+
+0.1.0 shipped the ideas; running it against a real Rails app for the first time found
+that several of them did not survive contact. Four bugs made the documented adoption
+path impossible to follow, three commands raised `NoMethodError` the moment they were
+run, and three separate ways of mistyping a command produced a **green build that ran no
+tests at all**. Those are all fixed, with tests, and the suite has grown from 738 runs to
+888.
+
+The API has not changed. Every 0.1.0 case file, config key and command still works.
+
+### The adoption path now actually works
+
+These four were found by installing 0.1.0 into a Rails app with a 188-example RSpec
+suite and following the README from the top.
+
+- **`rails generate constable:install` no longer breaks the Gemfile.** It appended a
+  `:cold_case` group declaring `rspec-rails` without checking whether the app already
+  had it. Any app adopting Constable *from RSpec* — which is the entire target audience
+  — was left with a Gemfile Bundler refused to parse: *"You cannot specify the same gem
+  twice with different version requirements."* The installer now adds only the engines
+  the repo has files for, and only ones the Gemfile does not already declare.
+
+- **Cold cases run `before(:suite)` and `after(:suite)` hooks.** `ColdCase::RSpec` drove
+  example groups directly and skipped RSpec's `with_suite_hooks`, so the hooks never
+  fired. That is where `webmock/rspec` calls `WebMock.enable!`, where VCR and
+  DatabaseCleaner install themselves, and where SimpleCov starts. It failed *open*: a
+  spec that stubbed HTTP opened a real socket instead of erroring. Each hook now runs
+  exactly once per run — after a file has loaded, since a legacy file's own
+  `require "rails_helper"` is what registers them.
+
+- **Parallel workers get their own database.** Constable forks its own workers and so
+  never picked up the per-worker databases Rails builds for `rails test`. Every worker
+  opened the same one. On SQLite a suite that passed 188/0 serially collapsed into 130
+  `database is locked` failures. On a client/server database it would have been quieter
+  and worse. A worker that cannot build its own database now raises rather than falling
+  back to the shared one, and an app that cannot shard runs serially with a warning.
+
+- **An outage no longer jails healthy tests.** Flake history reads "passed last run,
+  failed this run" as evidence about a test, so that one broken parallel run put 29
+  healthy tests on the docket marked *"passed, then failed with no code change"*. A run
+  where a quarter of the suite fails with the identical error is now recognised as one
+  broken run: the failures still stand and the build still goes red, but nothing moves
+  through the jail or parole state machine and nothing is written to flake history.
+
+- **`constable:install` writes the blotter into `.gitignore`.** It is this machine's
+  flake history and docket. Committing it hands CI somebody else's docket and conflicts
+  on every run.
+
+- **FactoryBot is wired into the tier base classes,** and `test/support/**` loads
+  *before* them. `create(:user)` is what a converted spec is full of, and the generated
+  `case_helper.rb` both omitted the include and told you to `include Authenticatable` in
+  a class defined thirty lines above the file that defines it.
+
+### Commands that had never been run
+
+There was no test file for the CLI at all. All three of these are in the published
+command reference and all three raised `NoMethodError` on their first line:
+
+- `constable jail parole PATH:LINE`
+- `constable jail release PATH:LINE`
+- `constable warrants release PATH:LINE` — twice over: after fixing the first bug it
+  went on to call a second method that does not exist either.
+
+Ambiguous targets are also refused rather than guessed at. `constable jail parole
+test/cases/reports_case.rb`, with three tests from that file on the docket, paroled one
+of them — not the first by line, whichever row the database happened to return. It now
+prints the candidates and exits.
+
+### Three ways to get a green build that ran nothing
+
+Each of these printed `0 passed, 0 failed` and exited **0**, so a typo in a CI script
+went green having tested nothing. The most expensive kind of bug a test runner can have,
+because it stays invisible for months.
+
+- `constable test test/cases/typo_case.rb` — no such file.
+- `constable test users_case.rb:999` — worse than nothing. `PATH:LINE` picks the
+  investigation declared nearest above the line so you can point anywhere inside a
+  block; unbounded, a line past the end of the file ran the **last** investigation in
+  it. Not the test you asked for, not an error, green either way.
+- `constable test --tier nonsense` — and `--tier UNIT`, which matched nothing because
+  tiers were case-sensitive.
+
+### Correctness
+
+- **Two tests no longer share one identity.** A test's key is a content hash of its
+  body, which is what lets history survive a rename — but two tests with byte-identical
+  bodies got the same key, in different classes, with different descriptions. The
+  blotter treated them as one test: jail either and both went, and their flake histories
+  merged. This is routine rather than exotic; the model generator writes an identical
+  first investigation into every file it touches.
+
+- **A witness can no longer replace the framework.** `witness` defines a real instance
+  method, so `witness(:class)` quietly replaced `Object#class` and every later failure
+  message reported the wrong thing. `witness(:attest)` was worse: it disabled assertions
+  outright, so the tests passed by doing nothing.
+
+- **`be(nil)` asserted the opposite of what it said.** `[nil].any?` is false — `Array#any?`
+  without a block tests the truthiness of the elements, not presence — so it fell through
+  to the truthiness branch.
+
+- **`match_array` was aliased to `contain_exactly`,** but RSpec's takes one array where
+  `contain_exactly` takes varargs, so `match_array([1, 2])` asserted the collection held
+  a single element which was itself `[1, 2]`.
+
+### Matchers
+
+`constable modernize` rewrote any matcher name straight into an `attest` call, so a spec
+using one Constable did not implement converted cleanly and then died at runtime.
+
+- Added: `contain_exactly`, `match_array`, `be` (identity, truthiness, and the
+  `be >= 0` operator form), `be_within(d).of(x)`, `start_with`, `end_with`,
+  `be_between`, `satisfy`.
+- `modernize` now **flags any matcher it does not recognize** instead of converting it.
+- `have_http_status` resolves names through `Rack::Utils` and knows
+  `:unprocessable_content` — the Rack 3.1 name for 422, and the one Rails 8.1 tells you
+  to use while Constable accepted only the deprecated spelling.
+- Helper specs are flagged. They converted reporting *"21 converted, 0 flagged"* and
+  then failed every example with `undefined local variable or method 'helper'`.
+
+### Output
+
+- **An `expanded` mode.** `output: concise | expanded` in `.constable/config.yml`, or
+  `--expanded` / `--concise` for one run. Concise is unchanged and still the default.
+  Expanded prints a line per test — glyph, description, duration — so you can see which
+  test is hanging while it hangs. Per-test durations are in milliseconds; the run-scale
+  format rendered every fast test as `0.0s`.
+- **Sections for the supervision states.** Jailed tests, warrants and tests on parole
+  were counted in the headline and then never mentioned again, so "2 jailed" was a
+  number with nothing behind it. `WARRANTS`, `JAILED` and `ON PAROLE` now print like
+  `FAILURES` does.
+- **Each one ends with what to do next.** "2 jailed" is a fact;
+  `constable jail parole PATH:LINE` is an action. Parole shows its progress toward
+  release.
+- Parole entries carry their `file:line` — the one thing their own hint asked you to
+  pass — and warning text wraps to the 60-column frame instead of spilling out of it.
+
+### Messages instead of stack traces
+
+- A YAML typo in `config.yml` raised a raw `Psych::SyntaxError`; a file that parsed but
+  was not a mapping raised *"no implicit conversion of Array into Hash"* from inside the
+  merge. Both now name the file and the problem.
+- A corrupt blotter raised *"file is not a database: PRAGMA journal_mode = WAL"*. It now
+  says what the file holds — flake history, the docket, warrants, never a test — and
+  that deleting it is safe.
+- `coverage_threshold` is clamped to a percentage, negative `warrant_retries` means off,
+  and `parole_period` clamps in one place. `Jail` already refused a period of zero, but
+  the reporter read the raw value and would print *"Day 1 of 0 — 0 clean runs to go"*
+  while the docket waited for ten.
+
+### Also
+
+- A new logo, with a dark variant, and a `<picture>` element so GitHub picks.
+
+
 ## [0.1.0]
 
 Initial release.
@@ -84,5 +241,6 @@ Initial release.
 - Diff-based coverage gate — only lines changed in the current diff are held to the
   threshold. `constable beat` for the full picture, `--html` for a browsable report.
 
-[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/Ray-Hughes/constable/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/Ray-Hughes/constable/releases/tag/v0.1.0

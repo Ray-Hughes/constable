@@ -1,8 +1,9 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/Ray-Hughes/constable/main/docs/assets/logo.png" alt="Constable" width="200">
-
-# Constable
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Ray-Hughes/constable/main/docs/assets/logo-dark.png">
+  <img src="https://raw.githubusercontent.com/Ray-Hughes/constable/main/docs/assets/logo.png" alt="Constable" width="340">
+</picture>
 
 **A strict Rails testing framework where fast and non-flaky are structural, not disciplinary.**
 
@@ -215,10 +216,16 @@ Constable::Matchers.define(:be_created) { |response| response.status == 201 }
 Constable::Matchers.define(:exist) { |model_class, attrs| model_class.exists?(attrs) }
 ```
 
-Built in: `eq`, `eql`, `include`, `match`, `raise_error`, `have_attributes`, `exist`,
-`be_created`, `redirect_to`, `have_http_status`, `change`, plus `be_a`, `be_nil`, `be_empty`,
-`be_truthy`, `be_falsey` and a `be_*` / `have_*` predicate fallback. Plain `assert_*` and
-`refute_*` primitives are always available alongside `attest`.
+Built in: `eq`, `eql`, `be`, `include`, `match`, `raise_error`, `have_attributes`,
+`exist`, `be_created`, `redirect_to`, `have_http_status`, `change`, `contain_exactly`,
+`match_array`, `start_with`, `end_with`, `be_between`, `be_within(d).of(x)`, `satisfy`,
+plus `be_a`, `be_nil`, `be_empty`, `be_truthy`, `be_falsey` and a `be_*` / `have_*`
+predicate fallback. `be` also takes the operator form — `attest(count).to be > 0`.
+Plain `assert_*` and `refute_*` primitives are always available alongside `attest`.
+
+The set is deliberately smaller than RSpec's, so `constable modernize` **flags any
+matcher it does not recognize** rather than converting it into a case that only fails
+once you run it.
 
 ### Shared behavior is just Ruby
 
@@ -369,6 +376,14 @@ Class name, description and file are stored alongside purely as a display label.
   new one appears and suggests `constable history relink OLD NEW`. Set `auto_relink: true` to
   confirm high-confidence matches automatically.
 
+Two tests with byte-identical bodies would otherwise share a key — and bodies repeat more
+than the phrase "content hash" suggests, since
+`attest(build(:thing, name: nil)).not_to be_valid` is the same handful of tokens in every
+model case. Constable re-keys colliding tests on their class and description once the
+suite is loaded, so no two tests ever share a docket row. Rename-survival is weaker for
+exactly those tests, which is the right trade: a history belonging to two tests at once is
+worse than one that resets.
+
 ### Command reference
 
 | Command | Runs |
@@ -387,22 +402,69 @@ Class name, description and file are stored alongside purely as a display label.
 | `constable import --from=rspec` | Adopt an existing suite as cold cases |
 | `constable modernize PATH` | Opt-in AST rewrite into the native DSL |
 
-Flags: `--full --unsafe --jail --warrants --coverage --seed N --workers N --verbose --tier T --no-color`.
+Flags: `--full --unsafe --jail --warrants --coverage --seed N --workers N --verbose --tier T\n--expanded --concise --output MODE --no-color`.
 
 Order is randomized every run for native cases, with the seed printed and replayable via
 `--seed`. Cold cases keep their own engine's order. Workers run in parallel by default,
 load-balanced by a cached per-test duration index.
+
+Each worker gets **its own database**, built from schema the way `rails test` does it.
+Sharing one would not be a speed/safety trade but a correctness bug: on SQLite the run
+dissolves into `database is locked`, and on a client/server database tests quietly see
+each other's rows. If your app has ActiveRecord but cannot shard, Constable runs serially
+and says why — slow is a trade-off, wrong is not.
 
 ### Output
 
 stdout is reserved for results. `Rails.logger`, SQL and request/response logging go to
 `log/test.log`; `--verbose` streams it back for active debugging.
 
+**While it runs**, the live stream has two modes. `concise` is the default: one glyph per
+test, grouped into a run per case, so a thousand-test suite stays inside one screen and a
+wall of green is the point.
+
+```
+  ProjectCase                       ✓✓✓✓✓✓✓✓✓✓✓✓
+  BillingCase                       ✓✓⚖⛓✓
+```
+
+`expanded` trades that for a line per test — glyph, name, duration — so you can see which
+test is hanging while it hangs, rather than after.
+
+```
+  ProjectCase
+    ✓ validations rejects a colour outside the palette  2ms
+    ✓ validations rejects a duplicate name for the same owner 12ms
+    ✗ #completion_ratio is the fraction of done tasks   8ms
+
+  BillingCase
+    ⚖ charges a card                                    310ms
+    ⛓ refunds a charge — assertion failed on the amount
+    ✓ issues a receipt                                  1.4s
+```
+
+Set it in `.constable/config.yml` (`output: concise` or `expanded`), or per run with
+`--expanded` / `--concise`. A jailed test never ran its body, so it is given no duration
+rather than a dishonest `0ms`. **The summary below is identical in both modes** — the mode
+only changes what you watch on the way there.
+
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  CONSTABLE            482 tests · 3 cases · 12.4s
+  CONSTABLE            6 tests · 3 cases · 12.4s
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✓ 478 passed   ✗ 2 failed   ⛓ 2 jailed (1 parole violation)   ◑ 1 on parole   ⚖ 1 warrant issued   ⚠ 3 warnings   ◐ 92% covered
+  ✓ 2 passed   ✗ 1 failed   ⛓ 2 jailed (1 parole violation)   ◑ 1 on parole   ⚖ 1 warrant issued   ⚠ 2 warnings   ◐ 92% covered (3 files unpatrolled)
+
+  PAROLE VIOLATED
+  ───────────────
+  ⛓ UsersController::CreatesUserCase
+    "creates a user with valid params"
+    spec/cases/users_controller/creates_user_case.rb:8
+    Failed on day 3 of a 10-run parole — back to jail. This is its 2nd time in jail.
+
+  → Somebody trusted this test again and it let them down,
+    so it is back on the docket. Fix it before the next
+    constable jail parole — a second violation is the signal
+    that the test, not the flake, is the problem.
 
   FAILURES
   ────────
@@ -417,11 +479,64 @@ stdout is reserved for results. `Rails.logger`, SQL and request/response logging
 
     Rerun just this test:
       constable test spec/cases/sessions_case.rb:12 --seed 8841
+
+  WARRANTS
+  ────────
+  ⚖ BillingCase
+    "charges a card"
+    spec/cases/sessions_case.rb:12
+    Failed, then passed 4 of 5 retries run in isolation.
+
+  → A warrant is "not reproducible", not "not a problem" —
+    it stops blocking the build and stays visible until
+    someone deals with it. Fixed the flake? constable
+    warrants release PATH:LINE
+
+  JAILED
+  ──────
+  ⛓ BillingCase
+    "refunds a charge"
+    spec/cases/sessions_case.rb:12
+    Assertion failed on the amount.
+
+  → Jailed means skipped and tracked, not passing. Think one
+    is fixed? constable jail parole PATH:LINE runs it for
+    real again — 10 clean runs and it releases itself.
+
+  ON PAROLE
+  ─────────
+  ◑ SessionsCase
+    "signs a user in"
+    spec/cases/sessions_case.rb:12
+    Day 4 of 10 — 6 clean runs to go.
+
+  → A paroled test runs for real and is watched: one failure
+    sends it straight back to jail. constable watchlist
+    shows everything under supervision.
+
+  WARNINGS
+  ────────
+  ⚠ spec/legacy/old_users_spec.rb
+    running as a cold case (Constable::ColdCase::RSpec) — 12
+    tests not yet under native rules
+
+  ⚠ spec/controllers/sessions_case.rb:44
+    unsafe { sleep(0.1) } — "testing an actual timeout path,
+    not a code smell"
+
+  SLOWEST
+  ────────
+  3.2s  UsersController::CreatesUserCase "creates a user with valid params"
+  1.1s  SessionsCase "times out after thirty seconds"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-Sections print worst-to-least-urgent: parole violations, failures, warnings, slowest.
-Failures carry their own context and point at your `investigate` line, not at framework
-internals.
+Sections print worst-to-least-urgent: parole violations, failures, warrants, jailed, on
+parole, warnings, slowest. A section only appears when it has something to say.
+
+Each supervision section ends with one line saying what to do next, because "2 jailed" is
+a fact and `constable jail parole PATH:LINE` is an action. Failures don't get a hint —
+they already end with the exact command to rerun them.
 
 ### The blotter
 
@@ -462,6 +577,7 @@ coverage_threshold: 90           # diff-based — only lines changed in the curr
 coverage_html: false
 
 fail_on_warnings: false
+output: concise                  # live stream detail: concise | expanded
 parallel_workers: auto
 
 tiers:                           # fallback inference; base classes are primary

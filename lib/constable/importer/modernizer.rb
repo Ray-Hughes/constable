@@ -508,6 +508,8 @@ module Constable
                                 "stub object.")
         end
 
+        flag_unknown_matcher(node, args.first) if %i[to not_to to_not].include?(name)
+
         if MOCK_ENTRY_POINTS.include?(name) && receiver.nil?
           note_untouched(:rspec_mocks, node,
                          "`#{first_line(node)}` uses rspec-mocks. Constable has no equivalent; convert it by hand.")
@@ -532,6 +534,14 @@ module Constable
           end
         when :should, :should_not
           flag(:should_syntax, node, "`#{name}` is RSpec's monkey-patched expectation syntax. Use `attest(...).to`.")
+        when :helper
+          if receiver.nil? && args.empty?
+            flag(:rspec_helper_object, node,
+                 "`helper` is RSpec's helper-spec proxy and has no Constable equivalent. " \
+                 "A helper is a plain module: `include YourHelper` in the case and call " \
+                 "the method directly -- which is exactly what `rails generate helper` " \
+                 "writes.")
+          end
         when :described_class
           if receiver.nil?
             flag(:described_class, node,
@@ -556,6 +566,36 @@ module Constable
         replaced = value.sub(/#{Regexp.escape(File.basename(value))}\z/, "case_helper")
         replace(arg.loc.expression, replaced.inspect)
         record_converted(:helper_require, node, value, replaced)
+      end
+
+      # Constable's matcher set is deliberately smaller than RSpec's, and the rewrite
+      # carries any matcher name straight across. Without this check the first anyone
+      # hears about it is a NoMethodError at runtime, naming the matcher -- or worse, an
+      # internal deferred class -- rather than the line that needs a decision.
+      def flag_unknown_matcher(node, matcher_node)
+        name = root_matcher_name(matcher_node)
+        return if name.nil?
+        return if Constable::Matchers.matcher_name?(name)
+
+        flag(:unknown_matcher, node,
+             "`#{name}` is not one of Constable's matchers. Define it in " \
+             "test/support/matchers.rb with `Constable::Matchers.define(:#{name})`, or " \
+             "rewrite the assertion.")
+      end
+
+      # `contain_exactly(1, 2)` -> :contain_exactly. `be_within(0.5).of(10)` -> :be_within.
+      # `change { x }.by(1)` -> :change. Anything that is not ultimately a bare method
+      # call -- a local variable holding a matcher, a constant -- returns nil and is left
+      # alone, because we cannot know what it is.
+      def root_matcher_name(node)
+        return nil unless node.is_a?(::Parser::AST::Node)
+
+        current = node
+        current = current.children.first while current.type == :send && current.children.first
+
+        return nil unless current.type == :send && current.children.first.nil?
+
+        current.children[1]
       end
 
       def mock_expectation?(node)

@@ -33,7 +33,7 @@ module Constable
       not_found: 404, method_not_allowed: 405, not_acceptable: 406,
       request_timeout: 408, conflict: 409, gone: 410, precondition_failed: 412,
       payload_too_large: 413, unsupported_media_type: 415, im_a_teapot: 418,
-      unprocessable_entity: 422, locked: 423, too_many_requests: 429,
+      unprocessable_entity: 422, unprocessable_content: 422, locked: 423, too_many_requests: 429,
       internal_server_error: 500, not_implemented: 501, bad_gateway: 502,
       service_unavailable: 503, gateway_timeout: 504
     }.freeze
@@ -43,6 +43,22 @@ module Constable
       redirect: (300..399), missing: (404..404), client_error: (400..499),
       error: (500..599), server_error: (500..599)
     }.freeze
+
+    # Rack renames statuses -- 422 became :unprocessable_content in Rack 3.1, and Rails
+    # 8.1 deprecates the old spelling -- so the table above is a floor, not the whole
+    # truth. Anything Rack knows is accepted, which means a rename costs no release here.
+    def self.rack_status_codes
+      return @rack_status_codes if defined?(@rack_status_codes)
+
+      @rack_status_codes =
+        if defined?(::Rack::Utils::SYMBOL_TO_STATUS_CODE)
+          ::Rack::Utils::SYMBOL_TO_STATUS_CODE.transform_keys(&:to_sym)
+        else
+          {}
+        end
+    rescue StandardError
+      @rack_status_codes = {}
+    end
 
     MAX_INSPECT = 200
     MAX_BODY    = 800
@@ -222,7 +238,9 @@ module Constable
         case expected
         when Integer then expected
         when /\A\d+\z/ then expected.to_i
-        else HTTP_STATUS_CODES[expected.to_s.to_sym]
+        else
+          name = expected.to_s.to_sym
+          HTTP_STATUS_CODES[name] || Matchers.rack_status_codes[name]
         end
       end
 
@@ -342,6 +360,104 @@ module Constable
 
       def context_for(actual)
         Matchers.context_for(actual)
+      end
+    end
+
+    # `be_within(0.5).of(10)` -- a matcher spelled across two calls, so it has to survive
+    # the first one and collect its subject on the second.
+    #
+    # Registering it matters for a second reason: without an entry, `be_within` fell
+    # through to the be_*/have_* predicate fallback, which happily built a
+    # PredicateDeferred and then blew up on `.of` with a NoMethodError naming an internal
+    # class rather than the matcher the author actually wrote.
+    class WithinDeferred < Deferred
+      def of(expected)
+        @expected = expected
+        @expected_set = true
+        self
+      end
+
+      def matches?(actual)
+        unless @expected_set
+          return [false, "be_within(#{@args.first.inspect}) is incomplete -- it needs .of: " \
+                         "attest(value).to be_within(0.5).of(10)", nil]
+        end
+
+        delta = @args.first
+        difference = (actual - @expected).abs
+        return true if difference <= delta
+
+        [false, "expected #{Matchers.describe(actual)} to be within #{delta.inspect} of " \
+                "#{Matchers.describe(@expected)}, but it differed by #{difference}", nil]
+      rescue NoMethodError, TypeError, ArgumentError
+        [false, "expected #{Matchers.describe(actual)} to be within #{delta.inspect} of " \
+                "#{Matchers.describe(@expected)}, but a #{actual.class} cannot be subtracted", nil]
+      end
+
+      def description
+        return "be within #{@args.first.inspect} of #{Matchers.describe(@expected)}" if @expected_set
+
+        "be within #{@args.first.inspect} of (nothing -- .of was never called)"
+      end
+    end
+
+    # `be`, in its three RSpec spellings:
+    #
+    #   attest(x).to be(other)   identity -- the same object, not merely equal
+    #   attest(x).to be >= 0     an operator comparison
+    #   attest(x).to be          truthiness
+    #
+    # `==` is deliberately not among the operators. Defining it on a matcher object
+    # breaks equality everywhere the object is compared, and `eq` already says it.
+    class BeDeferred < Deferred
+      COMPARISONS = %i[< <= > >=].freeze
+
+      COMPARISONS.each do |operator|
+        define_method(operator) do |operand|
+          @operator = operator
+          @operand  = operand
+          self
+        end
+      end
+
+      def matches?(actual)
+        return compare(actual) if @operator
+        # `.empty?`, not `.any?`: `[nil].any?` is false, which would send `be(nil)` down
+        # the truthiness branch and assert the opposite of what was written.
+        return identity(actual) unless @args.empty?
+        return true if actual
+
+        [false, "expected a truthy value, but got #{actual.inspect}", nil]
+      end
+
+      def description
+        return "be #{@operator} #{Matchers.describe(@operand)}" if @operator
+        return "be #{Matchers.describe(@args.first)}" unless @args.empty?
+
+        "be truthy"
+      end
+
+      private
+
+      def compare(actual)
+        return true if actual.public_send(@operator, @operand)
+
+        [false, "expected #{Matchers.describe(actual)} to be #{@operator} " \
+                "#{Matchers.describe(@operand)}", nil]
+      rescue NoMethodError, ArgumentError, TypeError
+        [false, "expected #{Matchers.describe(actual)} to be #{@operator} " \
+                "#{Matchers.describe(@operand)}, but a #{actual.class} cannot be compared", nil]
+      end
+
+      # `be` is identity, not equality -- that distinction is the only reason to reach for
+      # it over `eq`, so the failure message says which one failed.
+      def identity(actual)
+        expected = @args.first
+        return true if actual.equal?(expected)
+
+        hint = actual == expected ? " (they are equal, but not the same object)" : ""
+        [false, "expected #{Matchers.describe(actual)} to be the same object as " \
+                "#{Matchers.describe(expected)}#{hint}", nil]
       end
     end
 
@@ -793,6 +909,94 @@ module Constable
 
     define_builtin(:change, deferred_class: ChangeMatcher) do |_actual, *_args|
       raise Constable::Error, "change is only usable through attest { ... }.to change { ... }"
+    end
+
+    # Order-independent collection equality. `modernize` converts
+    # `expect(x).to contain_exactly(a, b)` verbatim, so not having it turned every
+    # converted spec that used it into a NoMethodError.
+    define_builtin(:contain_exactly) do |actual, *expected|
+      unless actual.respond_to?(:to_a)
+        next [false, "expected #{Matchers.describe(actual)} to be a collection, " \
+                     "but a #{actual.class} does not respond to #to_a", nil]
+      end
+
+      items = actual.to_a
+      missing = expected.dup
+      extra   = []
+      items.each do |item|
+        index = missing.index { |candidate| candidate == item }
+        index ? missing.delete_at(index) : extra << item
+      end
+      next true if missing.empty? && extra.empty?
+
+      parts = []
+      parts << "missing #{Matchers.describe(missing)}" unless missing.empty?
+      parts << "unexpected #{Matchers.describe(extra)}" unless extra.empty?
+      [false, "expected the collection to contain exactly #{expected.size} " \
+              "#{expected.size == 1 ? "item" : "items"}: #{parts.join(", ")}",
+       { "Actual" => Matchers.describe(items) }]
+    end
+    # Not an alias: RSpec's match_array takes one array where contain_exactly takes
+    # varargs, so aliasing them makes match_array([1, 2]) assert that the collection
+    # holds a single element which is itself the array [1, 2].
+    define_builtin(:match_array) do |actual, expected|
+      unless expected.respond_to?(:to_a)
+        next [false, "match_array takes an array: attest(list).to match_array([1, 2])", nil]
+      end
+
+      Matchers.matcher_for(:contain_exactly).block.call(actual, *expected.to_a)
+    end
+
+    define_builtin(:start_with) do |actual, prefix|
+      unless actual.respond_to?(:start_with?) || actual.respond_to?(:first)
+        next [false, "expected #{Matchers.describe(actual)} to start with " \
+                     "#{Matchers.describe(prefix)}, but a #{actual.class} cannot say", nil]
+      end
+      passed = if actual.respond_to?(:start_with?)
+                 actual.start_with?(prefix)
+               else
+                 actual.first(Array(prefix).size) == Array(prefix)
+               end
+      next true if passed
+
+      [false, "expected #{Matchers.describe(actual)} to start with #{Matchers.describe(prefix)}", nil]
+    end
+
+    define_builtin(:end_with) do |actual, suffix|
+      unless actual.respond_to?(:end_with?) || actual.respond_to?(:last)
+        next [false, "expected #{Matchers.describe(actual)} to end with " \
+                     "#{Matchers.describe(suffix)}, but a #{actual.class} cannot say", nil]
+      end
+      passed = if actual.respond_to?(:end_with?)
+                 actual.end_with?(suffix)
+               else
+                 actual.last(Array(suffix).size) == Array(suffix)
+               end
+      next true if passed
+
+      [false, "expected #{Matchers.describe(actual)} to end with #{Matchers.describe(suffix)}", nil]
+    end
+
+    define_builtin(:be_between) do |actual, low, high|
+      next true if actual.between?(low, high)
+
+      [false, "expected #{Matchers.describe(actual)} to be between " \
+              "#{Matchers.describe(low)} and #{Matchers.describe(high)}", nil]
+    end
+
+    define_builtin(:satisfy) do |actual, &block|
+      next [false, "satisfy needs a block: attest(x).to satisfy { |value| ... }", nil] unless block
+      next true if block.call(actual)
+
+      [false, "expected #{Matchers.describe(actual)} to satisfy the block", nil]
+    end
+
+    define_builtin(:be_within, deferred_class: WithinDeferred) do |_actual, *_args|
+      raise Constable::Error, "be_within needs .of: attest(value).to be_within(0.5).of(10)"
+    end
+
+    define_builtin(:be, deferred_class: BeDeferred) do |_actual, *_args|
+      raise Constable::Error, "be is handled by BeDeferred and should never invoke its block"
     end
 
     define_builtin(:be_a) do |actual, klass|

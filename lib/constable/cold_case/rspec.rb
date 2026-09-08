@@ -120,7 +120,12 @@ module Constable
             with_engine do
               collector  = Collector.new
               load_error = capture_load(path)
-              run_world(collector) unless load_error
+              unless load_error
+                # After the file has loaded -- that load is what registers them -- and
+                # before its examples run. See #run_pending_before_suite_hooks.
+                run_pending_before_suite_hooks(::RSpec.configuration)
+                run_world(collector)
+              end
 
               ColdCase.warn_for_file(path, base_class_name, collector.examples.size, config: config)
               results = build_results(path, collector.examples, config: config, seed: seed,
@@ -134,13 +139,100 @@ module Constable
         # configuration -- which also means any RSpec.configure hooks a rails_helper
         # installed are gone, so this is a teardown call, not a between-files call.
         def reset_engine!
+          # Inside the global-state swap, not outside it. Building a SuiteHookContext
+          # makes rspec-core lazily construct a world and a configuration, so running
+          # these hooks bare would leave both behind in a host process that had none --
+          # exactly the leak #with_engine exists to prevent.
+          with_engine { run_after_suite_hooks! } if after_suite_hooks_pending?
+
           @session_world = nil
           @session_configuration = nil
           @session_prepared = false
+          @ran_before_suite_hooks = nil
           nil
         end
 
         private
+
+        # --- Suite hooks ------------------------------------------------------------
+        #
+        # RSpec's own Runner wraps its group loop in `configuration.with_suite_hooks`.
+        # We drive the groups directly (see #run_world), so without this a cold case
+        # never fires `before(:suite)` -- and that is exactly where webmock/rspec calls
+        # `WebMock.enable!`, where VCR and DatabaseCleaner install themselves, and where
+        # SimpleCov starts. Skipping them fails *open*: a spec that stubs HTTP opens a
+        # real socket instead of erroring, which is the worst direction for a testing
+        # tool to be wrong in.
+        #
+        # `with_suite_hooks` itself is the wrong shape here. It is a bracket around one
+        # block, but "suite" means the whole run rather than one file: wrapping each file
+        # would fire `after(:suite)` after file one and hand file two the wreckage. Nor
+        # can the hooks all be run up front, because a legacy file's own
+        # `require "rails_helper"` is what registers them -- before the first load there
+        # is nothing to run.
+        #
+        # So each hook runs exactly once, the first time we see it: after a file has
+        # loaded, before its examples. `after(:suite)` runs once, from #reset_engine!.
+        def run_pending_before_suite_hooks(configuration)
+          pending = suite_hooks(configuration, :@before_suite_hooks) - ran_before_suite_hooks
+          return if pending.empty?
+
+          ran_before_suite_hooks.concat(pending)
+          invoke_suite_hooks(configuration, "a `before(:suite)` hook", pending,
+                             scope: :before_suite_hook)
+        end
+
+        # Only worth running if we ever ran the matching before(:suite) half -- otherwise
+        # this is a teardown for setup that never happened.
+        def run_after_suite_hooks!
+          configuration = @session_configuration
+          return if configuration.nil? || ran_before_suite_hooks.empty?
+
+          hooks = suite_hooks(configuration, :@after_suite_hooks)
+          return if hooks.empty?
+
+          invoke_suite_hooks(configuration, "an `after(:suite)` hook", hooks,
+                             scope: :after_suite_hook)
+        end
+
+        def ran_before_suite_hooks
+          @ran_before_suite_hooks ||= []
+        end
+
+        # Nothing was set up, so there is nothing to tear down -- and no reason to build
+        # an RSpec world to discover that.
+        def after_suite_hooks_pending?
+          !@session_configuration.nil? &&
+            ran_before_suite_hooks.any? &&
+            suite_hooks(@session_configuration, :@after_suite_hooks).any?
+        end
+
+        # RSpec keeps these in plain ivars with no public reader. Read them defensively:
+        # a missing ivar means a version that stores them elsewhere, and running no suite
+        # hooks is the behavior we already had.
+        def suite_hooks(configuration, ivar)
+          return [] unless configuration.respond_to?(:instance_variable_defined?)
+          return [] unless configuration.instance_variable_defined?(ivar)
+
+          Array(configuration.instance_variable_get(ivar))
+        end
+
+        # `run_suite_hooks` is private on Configuration, and it is the part that builds a
+        # SuiteHookContext and keeps one failing before-hook from running the rest. Use it
+        # when it is there, and fall back to driving the hooks ourselves when it is not.
+        def invoke_suite_hooks(configuration, description, hooks, scope:)
+          previous = ::RSpec.current_scope if ::RSpec.respond_to?(:current_scope)
+          ::RSpec.current_scope = scope if ::RSpec.respond_to?(:current_scope=)
+
+          if configuration.respond_to?(:run_suite_hooks, true)
+            configuration.send(:run_suite_hooks, description, hooks)
+          else
+            context = ::RSpec::Core::SuiteHookContext.new(description, configuration.reporter)
+            hooks.each { |hook| hook.run(context) }
+          end
+        ensure
+          ::RSpec.current_scope = previous if previous && ::RSpec.respond_to?(:current_scope=)
+        end
 
         # Running RSpec in-process is a global-state problem: RSpec.world holds every
         # registered example group and RSpec.configuration holds every hook. We swap in a

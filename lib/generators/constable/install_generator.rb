@@ -19,6 +19,7 @@ module Constable
     #   test/cases/example_case.rb   a worked case so `constable test` does something
     #   .constable/config.yml        every setting, at its default, as a reference
     #   .rubocop.yml                 the linter, merged into yours if you have one
+    #   .gitignore                   two lines, so the blotter stays local
     #
     # Plus the optional :cold_case Gemfile group, but only when there is actually
     # an RSpec or Minitest suite in the repo to import. Installing the gem into a
@@ -45,16 +46,31 @@ module Constable
       class_option :skip_support, type: :boolean, default: false,
                                   desc: "Don't write the example files under test/support/"
 
-      COLD_CASE_GROUP = <<~RUBY
+      COLD_CASE_HEADER = <<~RUBY
         # Cold cases: your existing RSpec/Minitest files, run verbatim through their own
         # real engine, with results merged into Constable's reporting and CI gate. These
-        # two gems are needed only for as long as cold cases exist -- delete the group
-        # once the suite is fully modernized and both dependencies drop out with it.
-        group :cold_case do
-          gem "rspec-rails"
-          gem "minitest"
-        end
+        # gems are needed only for as long as cold cases exist -- delete the group once
+        # the suite is fully modernized and the dependencies drop out with it.
       RUBY
+
+      # Only the engines this repo actually has files for, and only ones the Gemfile does
+      # not already declare. An app adopting Constable *from RSpec* -- which is most of
+      # them -- already has rspec-rails, and declaring it twice is not a style question:
+      # Bundler refuses to parse the file at all, so the install leaves the app unbootable.
+      COLD_CASE_GEMS = { rspec: "rspec-rails", minitest: "minitest" }.freeze
+
+      # Per engine, so a repo with only RSpec files does not get minitest added to its
+      # Gemfile for a migration it is never going to do.
+      LEGACY_GLOBS = { rspec: "spec/**/*_spec.rb", minitest: "test/**/*_test.rb" }.freeze
+
+      # The blotter is machine state: this laptop's flake history and jail docket. Sharing
+      # it through git would hand CI somebody else's docket and conflict on every run.
+      GITIGNORE_ENTRY = <<~TEXT
+        # Constable's blotter -- flake history, the jail docket, warrants. Local state:
+        # each machine keeps its own, and CI starts clean.
+        /.constable/*.sqlite3
+        /.constable/*.sqlite3-*
+      TEXT
 
       RUBOCOP_EXTENSION = "rubocop-constable"
 
@@ -101,7 +117,31 @@ module Constable
           return
         end
 
-        append_to_file "Gemfile", "\n#{COLD_CASE_GROUP}"
+        gems = cold_case_gems_to_add
+        if gems.empty?
+          say_status :skip, "Gemfile (every cold-case engine is already declared)", :blue
+          return
+        end
+
+        append_to_file "Gemfile", "\n#{cold_case_group(gems)}"
+      end
+
+      # The blotter must not be committed. Appended rather than templated, because an app
+      # always has a .gitignore already and ours is two lines of it.
+      def ignore_the_blotter
+        path = File.join(destination_root, ".gitignore")
+
+        unless File.exist?(path)
+          create_file ".gitignore", GITIGNORE_ENTRY
+          return
+        end
+
+        if File.read(path).include?("/.constable/*.sqlite3")
+          say_status :identical, ".gitignore (blotter already ignored)", :blue
+          return
+        end
+
+        append_to_file ".gitignore", "\n#{GITIGNORE_ENTRY}"
       end
 
       # An app that already lints has opinions in .rubocop.yml worth more than
@@ -137,6 +177,33 @@ module Constable
 
       private
 
+      # An engine earns a line only if this repo has files for it and the Gemfile does not
+      # already declare it.
+      def cold_case_gems_to_add
+        COLD_CASE_GEMS.filter_map do |engine, gem_name|
+          next unless legacy_files?(engine)
+          next if gem_declared?(gem_name)
+
+          gem_name
+        end
+      end
+
+      def cold_case_group(gems)
+        lines = gems.map { |gem_name| %(  gem "#{gem_name}") }
+        "#{COLD_CASE_HEADER}group :cold_case do\n#{lines.join("\n")}\nend\n"
+      end
+
+      # Matches `gem "rspec-rails"` and `gem 'rspec-rails', "~> 8.0"` alike, and ignores a
+      # commented-out line, which is a suggestion rather than a declaration.
+      def gem_declared?(gem_name)
+        gemfile_contents.each_line.any? do |line|
+          stripped = line.strip
+          next false if stripped.start_with?("#")
+
+          stripped.match?(/\Agem\s+["']#{Regexp.escape(gem_name)}["']/)
+        end
+      end
+
       def gemfile_contents
         File.read(File.join(destination_root, "Gemfile"))
       end
@@ -146,6 +213,10 @@ module Constable
       # just wrote can never be mistaken for a legacy suite.
       def legacy_suite_present?
         Dir.glob(File.join(destination_root, "{spec,test}/**/*_{spec,test}.rb")).any?
+      end
+
+      def legacy_files?(engine)
+        Dir.glob(File.join(destination_root, LEGACY_GLOBS.fetch(engine))).any?
       end
 
       # A textual merge, not a YAML round trip: parsing and re-emitting someone's

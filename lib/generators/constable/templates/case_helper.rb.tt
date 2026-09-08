@@ -67,38 +67,6 @@ end
 #  reimplementation of them would be a slightly wrong one.
 # -----------------------------------------------------------------------------
 
-# No database, no request stack, no browser -- just Ruby. The fastest thing
-# Constable can run, and where most of a suite should live.
-class UnitCase < Constable::Case
-  tier :unit
-end
-
-# get/post/patch/delete, `response`, `follow_redirect!`, cookies, and every URL
-# helper your routes define (`users_path`, `article_url(article)`). Each
-# investigation runs inside a transaction that is rolled back afterwards.
-class IntegrationCase < Constable::Case
-  include Constable::RailsSupport::Integration
-
-  tier :integration
-end
-
-# The browser instead of the request stack: Capybara's `visit`/`click_on`/
-# `fill_in`/`page`, its assertions, your URL helpers pointed at the test server,
-# and Rails' own `driven_by`. There is no `response` here -- a system case looks
-# at the rendered page, which is the whole reason to pay for a browser.
-class SystemCase < Constable::Case
-  # Capybara is not a Constable dependency. System cases are opt-in, and a suite
-  # with no browser tests shouldn't be made to install a browser driver to boot.
-  include Constable::RailsSupport::System if defined?(Capybara)
-
-  tier :system
-
-  # The default is Selenium driving Chrome, exactly as Rails' own system tests
-  # default. Change it here and every system case follows:
-  #
-  # driven_by :selenium, using: :headless_chrome, screen_size: [1400, 1400]
-end
-
 # -----------------------------------------------------------------------------
 #  Support files -- shared modules and custom matchers.
 #
@@ -110,9 +78,62 @@ end
 #  Sorted on purpose: Dir[] returns filesystem order, which differs between your
 #  laptop and CI. A suite that loads its own support files in an unpredictable
 #  order has already lost the argument about determinism.
+#
+#  Loaded BEFORE the tier classes below, so `include Authenticatable` on a tier
+#  is a thing you can actually write. Loading them afterwards would make the
+#  advice in test/support/authenticatable.rb raise NameError.
 # -----------------------------------------------------------------------------
 
 Dir[Rails.root.join("test/support/**/*.rb")].sort.each { |f| require f }
+
+# Factories, when the app has them. `create(:user)` is what a converted spec will be
+# full of, and a NoMethodError on the first native run is a bad way to learn that the
+# include was missing. Guarded, so a suite with no factory gem is unaffected.
+module CaseFactories
+  include FactoryBot::Syntax::Methods if defined?(FactoryBot::Syntax::Methods)
+end
+
+# No database, no request stack, no browser -- just Ruby. The fastest thing
+# Constable can run, and where most of a suite should live.
+class UnitCase < Constable::Case
+  include CaseFactories
+
+  tier :unit
+end
+
+# get/post/patch/delete, `response`, `follow_redirect!`, cookies, and every URL
+# helper your routes define (`users_path`, `article_url(article)`). Each
+# investigation runs inside a transaction that is rolled back afterwards.
+class IntegrationCase < Constable::Case
+  include Constable::RailsSupport::Integration
+  include CaseFactories
+
+  # Every integration case gets the app's sign-in helpers. Uncomment once
+  # test/support/authenticatable.rb says something true about your app:
+  #
+  # include Authenticatable
+
+  tier :integration
+end
+
+# The browser instead of the request stack: Capybara's `visit`/`click_on`/
+# `fill_in`/`page`, its assertions, your URL helpers pointed at the test server,
+# and Rails' own `driven_by`. There is no `response` here -- a system case looks
+# at the rendered page, which is the whole reason to pay for a browser.
+class SystemCase < Constable::Case
+  include CaseFactories
+
+  # Capybara is not a Constable dependency. System cases are opt-in, and a suite
+  # with no browser tests shouldn't be made to install a browser driver to boot.
+  include Constable::RailsSupport::System if defined?(Capybara)
+
+  tier :system
+
+  # The default is Selenium driving Chrome, exactly as Rails' own system tests
+  # default. Change it here and every system case follows:
+  #
+  # driven_by :selenium, using: :headless_chrome, screen_size: [1400, 1400]
+end
 
 # -----------------------------------------------------------------------------
 #  Code-level configuration.

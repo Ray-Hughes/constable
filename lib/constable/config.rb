@@ -19,6 +19,7 @@ module Constable
       "coverage_threshold" => 90,
       "coverage_html" => false,
       "fail_on_warnings" => false,
+      "output" => "concise",
       "parallel_workers" => "auto",
       "tiers" => {
         "unit" => "test/cases/models/**/*",
@@ -33,8 +34,27 @@ module Constable
 
     def self.load(root: Constable.root, overrides: {})
       path = File.join(root.to_s, CONFIG_PATH)
-      raw  = File.exist?(path) ? (YAML.safe_load_file(path, permitted_classes: [], aliases: true) || {}) : {}
-      new(raw, root: root, overrides: overrides)
+      new(read_file(path), root: root, overrides: overrides)
+    end
+
+    # A typo in config.yml used to surface as a raw Psych::SyntaxError, or -- for a file
+    # that parsed but wasn't a mapping -- as "no implicit conversion of Array into Hash"
+    # from somewhere deep in the merge. Neither says which file to open.
+    def self.read_file(path)
+      return {} unless File.exist?(path)
+
+      loaded = YAML.safe_load_file(path, permitted_classes: [], aliases: true)
+      return {} if loaded.nil?
+
+      unless loaded.is_a?(Hash)
+        raise Constable::Error,
+              "#{CONFIG_PATH} must be a mapping of settings, but it parsed as " \
+              "#{loaded.class.name.downcase}. Check the indentation."
+      end
+
+      loaded
+    rescue Psych::SyntaxError => e
+      raise Constable::Error, "#{CONFIG_PATH} is not valid YAML: #{e.problem} at line #{e.line}."
     end
 
     def initialize(raw = {}, root: Constable.root, overrides: {})
@@ -45,14 +65,42 @@ module Constable
 
     def cold_cases         = Array(@raw["cold_cases"])
     def warrants?          = truthy(@raw["warrants"])
-    def warrant_retries    = @raw["warrant_retries"].to_i
+    # Negative retries are a typo for "off", not an instruction to count backwards.
+    def warrant_retries    = [@raw["warrant_retries"].to_i, 0].max
     def auto_relink?       = truthy(@raw["auto_relink"])
-    def parole_period      = @raw["parole_period"].to_i
+
+    # Clamped here rather than at each call site: Jail already refused a period of zero
+    # ("release on sight" is not parole), but the reporter read the raw value and would
+    # cheerfully print "Day 1 of 0 -- 0 clean runs to go" while the docket waited for 10.
+    def parole_period
+      period = @raw["parole_period"].to_i
+      period.positive? ? period : DEFAULTS["parole_period"]
+    end
+
     def coverage?          = truthy(@raw["coverage"])
-    def coverage_threshold = @raw["coverage_threshold"].to_i
+    # Clamped: a threshold above 100 is a build that can never go green, and a negative
+    # one is a gate that can never fail. Both are typos rather than intentions.
+    def coverage_threshold = @raw["coverage_threshold"].to_i.clamp(0, 100)
     def coverage_html?     = truthy(@raw["coverage_html"])
     def fail_on_warnings?  = truthy(@raw["fail_on_warnings"])
     def tiers              = @raw["tiers"] || {}
+
+    # How much the live stream says while the suite runs.
+    #
+    #   concise   one glyph per test, grouped into a run per case. The default: a
+    #             1,000-test suite stays inside one screen.
+    #   expanded  a line per test -- glyph, name, duration. Slower to read in bulk,
+    #             but you can see which test is hanging without waiting for the summary.
+    #
+    # The summary itself is identical either way. This only affects the live stream.
+    OUTPUT_MODES = %i[concise expanded].freeze
+
+    def output_mode
+      mode = @raw["output"].to_s.strip.downcase.to_sym
+      OUTPUT_MODES.include?(mode) ? mode : :concise
+    end
+
+    def expanded_output? = output_mode == :expanded
     def storage            = @raw["storage"] || {}
 
     def storage_adapter = (storage["adapter"] || "sqlite").to_s

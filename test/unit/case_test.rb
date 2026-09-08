@@ -803,5 +803,55 @@ module Constable
       assert_empty two.own_teardowns
       assert_empty two.teardowns
     end
+
+    # --- reserved witness names ------------------------------------------------------
+    #
+    # `witness` defines a real instance method, so a badly chosen name replaces part of
+    # the framework. `witness(:attest)` is the worst of them: assertions stop working and
+    # the tests pass by doing nothing, which is the one failure mode a testing framework
+    # must never have.
+
+    def test_a_witness_may_not_replace_attest
+      error = assert_raises(ArgumentError) do
+        Class.new(Constable::Case).class_eval { witness(:attest) { "nope" } }
+      end
+
+      assert_match(/would replace Constable::Case#attest/, error.message)
+    end
+
+    def test_a_witness_may_not_replace_class
+      assert_raises(ArgumentError) do
+        Class.new(Constable::Case).class_eval { witness(:class) { "nope" } }
+      end
+    end
+
+    def test_a_witness_may_not_replace_the_dsl
+      %i[investigate witness briefing docket unsafe].each do |name|
+        assert_raises(ArgumentError, "witness(:#{name}) should be refused") do
+          Class.new(Constable::Case).class_eval { witness(name) { "nope" } }
+        end
+      end
+    end
+
+    def test_a_witness_may_not_take_a_framework_namespaced_name
+      error = assert_raises(ArgumentError) do
+        Class.new(Constable::Case).class_eval { witness(:constable_smuggled) { "nope" } }
+      end
+
+      assert_match(/Constable's own namespace/, error.message)
+    end
+
+    # The guard is a list, not a blanket method_defined? check: shadowing a name a tier
+    # happens to define is unusual but legitimate, and ordinary names must stay free.
+    def test_ordinary_names_are_still_allowed
+      klass = Class.new(Constable::Case)
+      klass.class_eval do
+        witness(:user)     { "u" }
+        witness(:response) { "r" }
+        witness(:name)     { "n" }
+      end
+
+      assert_equal %i[user response name], klass.witness_names
+    end
   end
 end

@@ -36,16 +36,36 @@ module Constable
 
       def connect!
         require_driver!
+        open_database!
+      end
+
+      # The blotter is the one file Constable owns outright, and it is disposable: it
+      # holds flake history, the docket and warrants, never a test. So when it cannot be
+      # opened, say that deleting it is a real option -- the raw
+      # `SQLite3::NotADatabaseException: file is not a database: PRAGMA journal_mode = WAL`
+      # tells a reader nothing about what to do next, and a blotter that got committed to
+      # git and then merged is exactly how it ends up unreadable.
+      def open_database!
         FileUtils.mkdir_p(File.dirname(path))
         @connection = SQLite3::Database.new(path)
         @connection.results_as_hash = true
         @connection.busy_timeout = BUSY_TIMEOUT_MS
-        # Readers never block the writer and the writer never blocks readers.
+        # Readers never block the writer and the writer never blocks readers. This is also
+        # the first statement to touch the file, so a corrupt blotter surfaces here.
         @connection.execute("PRAGMA journal_mode = WAL")
         # WAL + NORMAL is durable across process crashes, which is the only failure that
         # matters here; a machine losing power mid-run costs us one run's bookkeeping.
         @connection.execute("PRAGMA synchronous = NORMAL")
         @connection
+      rescue SystemCallError => e
+        raise Constable::Error,
+              "Constable cannot open its blotter at #{path} (#{e.class}: #{e.message}). " \
+              "Point `storage.path` in .constable/config.yml somewhere writable."
+      rescue StandardError => e
+        raise Constable::Error,
+              "Constable's blotter at #{path} is not a readable database " \
+              "(#{e.class}). It holds flake history, the jail docket and warrants -- " \
+              "never your tests -- so deleting it is safe and starts that record fresh."
       end
 
       def require_driver!

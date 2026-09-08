@@ -333,6 +333,95 @@ module Constable
       refute_nil untouched_named(result, :rspec_mocks)
     end
 
+    # ---- matchers Constable does not have ------------------------------------------
+    #
+    # The rewrite carries any matcher name straight across, so without this check the
+    # first anyone hears about a missing matcher is a NoMethodError at runtime.
+
+    def test_a_matcher_constable_does_not_have_is_flagged
+      result = convert("describe User do\n  it(\"x\") { expect(a).to smell_wrong(b) }\nend\n")
+
+      flag = flag_named(result, :unknown_matcher)
+      refute_nil flag
+      assert_match(/smell_wrong/, flag[:reason])
+      assert_match(/Constable::Matchers\.define/, flag[:reason])
+    end
+
+    def test_a_built_in_matcher_is_not_flagged
+      %w[eq include match raise_error have_http_status contain_exactly change].each do |matcher|
+        result = convert("describe User do\n  it(\"x\") { expect(a).to #{matcher}(b) }\nend\n")
+        assert_nil flag_named(result, :unknown_matcher), "#{matcher} is built in and must not be flagged"
+      end
+    end
+
+    # be_*/have_* resolve through the predicate fallback, so they always work.
+    def test_predicate_matchers_are_never_flagged
+      result = convert("describe User do\n  it(\"x\") { expect(a).to be_published }\nend\n")
+
+      assert_nil flag_named(result, :unknown_matcher)
+    end
+
+    def test_a_chained_matcher_is_judged_by_its_root
+      result = convert("describe User do\n  it(\"x\") { expect(a).to be_within(0.5).of(10) }\nend\n")
+
+      assert_nil flag_named(result, :unknown_matcher), "be_within is registered"
+    end
+
+    def test_an_unknown_chained_matcher_is_flagged_by_its_root
+      result = convert("describe User do\n  it(\"x\") { expect(a).to be_roughly(0.5).of(10) }\nend\n")
+
+      # be_roughly matches the be_* predicate fallback, so it is legal -- the point is
+      # that the root is what gets judged, not the trailing `.of`.
+      assert_nil flag_named(result, :unknown_matcher)
+    end
+
+    def test_negated_expectations_are_checked_too
+      result = convert("describe User do\n  it(\"x\") { expect(a).not_to smell_wrong(b) }\nend\n")
+
+      refute_nil flag_named(result, :unknown_matcher)
+    end
+
+    # A matcher held in a local variable could be anything, and the parser tells us so:
+    # an assigned name is an lvar, not a send. Guessing there would produce false alarms.
+    def test_a_matcher_held_in_a_variable_is_left_alone
+      result = convert(<<~SPEC)
+        describe User do
+          it "x" do
+            matcher = eq(1)
+            expect(a).to matcher
+          end
+        end
+      SPEC
+
+      assert_nil flag_named(result, :unknown_matcher)
+    end
+
+    # ---- helper specs ----------------------------------------------------------------
+
+    # `modernize` used to report "21 converted, 0 flagged" on a helper spec and produce a
+    # case where every example died with `undefined local variable or method 'helper'`.
+    def test_the_rspec_helper_object_is_flagged
+      result = convert(<<~SPEC, path: "spec/helpers/tasks_helper_spec.rb")
+        describe TasksHelper do
+          it "formats a badge" do
+            expect(helper.badge(1)).to eq("No. 1")
+          end
+        end
+      SPEC
+
+      flag = flag_named(result, :rspec_helper_object)
+      refute_nil flag
+      assert_match(/no Constable equivalent/, flag[:reason])
+      assert_match(/include YourHelper/, flag[:reason])
+    end
+
+    # `helper` as a receiver or with arguments is somebody's own method, not RSpec's.
+    def test_a_method_called_helper_with_arguments_is_left_alone
+      result = convert("describe User do\n  it(\"x\") { expect(helper(:a)).to eq(1) }\nend\n")
+
+      assert_nil flag_named(result, :rspec_helper_object)
+    end
+
     # ---- the deliberate refusals ---------------------------------------------------
 
     def test_let_bang_is_flagged_because_eager_and_lazy_are_not_the_same_thing

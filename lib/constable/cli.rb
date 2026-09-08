@@ -17,7 +17,10 @@ module Constable
     # wrong", and CI needs to. Commands return a status; this turns it into one.
     def self.dispatch!(argv)
       start(argv)
-    rescue Thor::Error => e
+    # Thor::Error is a malformed command; Constable::Error is a wrong path, an unknown
+    # tier, an unreadable config. Both are the user's mistake rather than a crash, and
+    # both deserve one sentence and a usage status instead of a backtrace.
+    rescue Thor::Error, Constable::Error => e
       warn e.message
       exit(EXIT_USAGE)
     rescue Interrupt
@@ -42,6 +45,9 @@ module Constable
     option :workers,  type: :numeric, desc: "Parallel workers (default: config, or auto)"
     option :verbose,  type: :boolean, default: false, desc: "Stream log/test.log to stdout"
     option :tier,     type: :string,  desc: "Run one tier only: unit, integration or system"
+    option :output,   type: :string,  desc: "Live stream detail: concise (default) or expanded"
+    option :expanded, type: :boolean, default: false, desc: "Shorthand for --output=expanded"
+    option :concise,  type: :boolean, default: false, desc: "Shorthand for --output=concise"
     def test(*paths)
       config = load_config
       LogRouter.route!(verbose: options[:verbose])
@@ -299,12 +305,26 @@ module Constable
       no_commands do
         def act(locator)
           jail = Jail.new(config: Constable.config, storage: Constable.storage)
-          identity = jail.identity_for(locator)
+          refuse_ambiguous(locator, jail.candidates(locator), "on the docket")
+
+          identity = jail.resolve(locator)
           unless identity
             warn "Nothing on the docket at #{locator}"
             exit(EXIT_USAGE)
           end
           yield jail, identity
+        end
+
+        # A bare path naming several tests is a question. Answer it with the list rather
+        # than acting on whichever row the database happened to return first.
+        def refuse_ambiguous(locator, candidates, noun)
+          return if candidates.size <= 1
+
+          warn "#{locator} matches #{candidates.size} tests #{noun}. Name one:"
+          candidates.sort_by { |entry| entry.line.to_i }.each do |entry|
+            warn "  #{entry.location}  #{entry.label}"
+          end
+          exit(EXIT_USAGE)
         end
 
         def repeat_note(entry)
@@ -344,12 +364,14 @@ module Constable
       desc "release PATH:LINE", "Clear a warrant by hand"
       def release(locator)
         warrants = Warrants.new(config: Constable.config, storage: Constable.storage)
-        identity = warrants.identity_for(locator)
+        JailCommand.new.send(:refuse_ambiguous, locator, warrants.candidates(locator), "under warrant")
+
+        identity = warrants.resolve(locator)
         unless identity
           warn "No warrant at #{locator}"
           exit(EXIT_USAGE)
         end
-        warrants.clear(identity)
+        warrants.release(identity)
         say "Warrant cleared."
       end
     end
@@ -400,7 +422,18 @@ module Constable
       end
 
       def reporter(config)
-        Reporter.new(io: $stdout, config: config, color: color?)
+        Reporter.new(io: $stdout, config: config, color: color?, mode: output_mode)
+      end
+
+      # nil means "the config file decides". The explicit --output wins over the two
+      # shorthands, and --concise wins over --expanded if somebody passes both -- the
+      # quieter of two contradictory instructions is the safer one to obey.
+      def output_mode
+        return options[:output] if options[:output]
+        return :concise if options[:concise]
+        return :expanded if options[:expanded]
+
+        nil
       end
 
       def say_table(heading, entries)

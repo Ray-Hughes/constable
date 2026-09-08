@@ -222,17 +222,35 @@ module Constable
 
     # The CLI speaks in file:line, the blotter is keyed by content hash. Warrant rows
     # carry both; loaded investigations are the fallback.
-    def resolve(target)
+    # Every docket row a target could mean.
+    #
+    # The interesting case is a bare path. "test/cases/users_case.rb" with three tests
+    # on the docket is a question, not an instruction: picking one silently acts on a
+    # test the user never named -- and not even the first one, since the order is
+    # whatever storage returns. Callers ask for the candidates and refuse to guess.
+    def candidates(target)
       text = target.to_s.strip
-      return nil if text.empty?
-      return text if text.match?(/\A[0-9a-f]{8,64}\z/) && entry(text)
+      return [] if text.empty?
+
+      if text.match?(/\A[0-9a-f]{8,64}\z/) && (row = entry(text))
+        return [row]
+      end
 
       file, line = Jail.split_target(text)
-      return nil if file.empty?
+      return [] if file.empty?
 
       matches = entries.select { |e| Jail.same_path?(e.file, file) }
       matches = matches.select { |e| e.line == line } if line
-      return matches.first.identity if matches.any?
+      matches
+    end
+
+    def resolve(target)
+      matches = candidates(target)
+      return matches.first.identity if matches.size == 1
+      return nil unless matches.empty?
+
+      file, line = Jail.split_target(target.to_s.strip)
+      return nil if file.empty?
 
       Jail.registry_identity(file, line)
     end

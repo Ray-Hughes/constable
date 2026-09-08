@@ -21,6 +21,7 @@ module Constable
       test/cases/example_case.rb
       .constable/config.yml
       .rubocop.yml
+      .gitignore
     ].freeze
 
     def install(args = [])
@@ -101,7 +102,8 @@ module Constable
       install
       helper = generated("test/case_helper.rb")
 
-      assert_match(/class UnitCase < Constable::Case\n  tier :unit\nend/, helper)
+      assert_match(/class UnitCase < Constable::Case\b/, helper)
+      assert_match(/tier :unit/, helper)
       assert_match(/class IntegrationCase < Constable::Case\b/, helper)
       assert_match(/tier :integration/, helper)
       assert_match(/class SystemCase < Constable::Case\b/, helper)
@@ -243,6 +245,10 @@ module Constable
       write_file("spec/models/user_spec.rb", "describe User do; end\n")
     end
 
+    def write_legacy_test
+      write_file("test/models/user_test.rb", "class UserTest < Minitest::Test; end\n")
+    end
+
     def test_cold_case_group_is_appended_when_a_legacy_suite_exists
       write_gemfile
       write_legacy_spec
@@ -252,8 +258,119 @@ module Constable
 
       assert_match(/^group :cold_case do$/, gemfile)
       assert_match(/gem "rspec-rails"/, gemfile)
-      assert_match(/gem "minitest"/, gemfile)
       assert_match(/delete the group/, gemfile)
+    end
+
+    # Only the engines this repo has files for. A pure-RSpec app should not be handed a
+    # minitest dependency for a migration it is never going to do.
+    def test_only_the_engines_with_files_present_are_added
+      write_gemfile
+      write_legacy_spec
+      install
+
+      refute_match(/gem "minitest"/, generated("Gemfile"))
+    end
+
+    def test_both_engines_are_added_when_both_suites_exist
+      write_gemfile
+      write_legacy_spec
+      write_legacy_test
+      install
+
+      gemfile = generated("Gemfile")
+      assert_match(/gem "rspec-rails"/, gemfile)
+      assert_match(/gem "minitest"/, gemfile)
+    end
+
+    # The bug this guards. Any app adopting Constable *from RSpec* already declares
+    # rspec-rails, and a second declaration is not a style problem: Bundler refuses to
+    # parse the Gemfile at all, so the install leaves the app unbootable.
+    def test_a_gem_the_gemfile_already_declares_is_never_declared_twice
+      write_gemfile("source \"https://rubygems.org\"\n\ngem \"rspec-rails\", \"~> 8.0\"\n")
+      write_legacy_spec
+      install
+
+      assert_equal 1, generated("Gemfile").scan(/gem ["']rspec-rails["']/).size
+    end
+
+    def test_the_group_is_skipped_entirely_when_every_engine_is_already_declared
+      write_gemfile("source \"https://rubygems.org\"\n\ngem \"rspec-rails\"\n")
+      write_legacy_spec
+      install
+
+      refute_match(/group :cold_case/, generated("Gemfile"))
+    end
+
+    # A commented-out gem line is a suggestion, not a declaration.
+    def test_a_commented_out_gem_line_does_not_count_as_declared
+      write_gemfile("source \"https://rubygems.org\"\n\n# gem \"rspec-rails\"\n")
+      write_legacy_spec
+      install
+
+      assert_match(/^  gem "rspec-rails"$/, generated("Gemfile"))
+    end
+
+    # --- case_helper wiring ----------------------------------------------------------
+
+    # test/support/authenticatable.rb tells the reader to `include Authenticatable` in
+    # IntegrationCase. That only works if the support files are loaded first, and the
+    # generated file used to load them at the bottom -- so following its own advice
+    # raised NameError and the suite never booted.
+    def test_support_files_load_before_the_tier_classes
+      install
+      helper = generated("test/case_helper.rb")
+
+      support_at = helper.index("test/support/**/*.rb")
+      tiers_at   = helper.index("class UnitCase")
+
+      refute_nil support_at
+      refute_nil tiers_at
+      assert_operator support_at, :<, tiers_at,
+                      "support files must load before the tiers that include them"
+    end
+
+    # A converted spec is full of create(:user). Without this include the first native
+    # run after `constable modernize` is a wall of NoMethodError.
+    def test_tier_classes_include_factory_bot_when_it_is_available
+      install
+      helper = generated("test/case_helper.rb")
+
+      assert_match(/FactoryBot::Syntax::Methods/, helper)
+      %w[UnitCase IntegrationCase SystemCase].each do |tier|
+        body = helper[/class #{tier} < Constable::Case.*?\nend/m]
+        assert_match(/include CaseFactories/, body, "#{tier} should include the factory module")
+      end
+    end
+
+    # ...but a suite with no factory gem must still boot.
+    def test_the_factory_include_is_guarded
+      install
+
+      assert_match(/if defined\?\(FactoryBot::Syntax::Methods\)/, generated("test/case_helper.rb"))
+    end
+
+    # --- the blotter is machine state ------------------------------------------------
+
+    def test_install_ignores_the_blotter
+      install
+
+      assert_match(%r{/\.constable/\*\.sqlite3}, generated(".gitignore"))
+    end
+
+    def test_an_existing_gitignore_is_appended_to_not_replaced
+      write_file(".gitignore", "/log/*.log\n")
+      install
+
+      gitignore = generated(".gitignore")
+      assert_match(%r{/log/\*\.log}, gitignore)
+      assert_match(%r{/\.constable/\*\.sqlite3}, gitignore)
+    end
+
+    def test_the_blotter_is_not_ignored_twice_when_run_again
+      install
+      install(["--force"])
+
+      assert_equal 1, generated(".gitignore").scan(%r{^/\.constable/\*\.sqlite3$}).size
     end
 
     def test_cold_case_group_is_appended_only_once_when_run_twice

@@ -21,12 +21,16 @@ module Constable
 
     def lines = output.split("\n", -1)
 
+    # Hints wrap to the frame, so assertions about their prose have to ignore where the
+    # line breaks happen to fall.
+    def unwrapped = output.gsub(/\s+/, " ")
+
     # --- fixtures ------------------------------------------------------------------
 
     def build_result(case_name: "SessionsCase", description: "does the thing",
                      status: :passed, duration: 0.0, file: "spec/cases/sessions_case.rb",
                      line: 12, kind: :native, failure: nil, seed: nil,
-                     parole_day: nil, times_jailed: nil, jail_reason: nil)
+                     parole_day: nil, times_jailed: nil, jail_reason: nil, retries: [])
       result = Result.new(
         identity: Identity.digest("#{case_name}#{description}"),
         case_name: case_name, description: description, file: file, line: line,
@@ -36,6 +40,7 @@ module Constable
       result.parole_day   = parole_day
       result.times_jailed = times_jailed
       result.jail_reason  = jail_reason
+      result.retries      = retries
       result
     end
 
@@ -61,8 +66,10 @@ module Constable
                      failure: build_failure(context: response_body_context)),
         build_result(case_name: "SessionsCase", description: "times out after thirty seconds", duration: 1.1),
         build_result(case_name: "SessionsCase", description: "signs a user in", duration: 0.2, parole_day: 4),
-        build_result(case_name: "BillingCase", description: "charges a card", status: :warranted, duration: 0.3),
-        build_result(case_name: "BillingCase", description: "refunds a charge", status: :jailed, duration: 0.0)
+        build_result(case_name: "BillingCase", description: "charges a card", status: :warranted,
+                     duration: 0.3, retries: %i[passed failed passed passed passed]),
+        build_result(case_name: "BillingCase", description: "refunds a charge", status: :jailed,
+                     duration: 0.0, jail_reason: "assertion failed on the amount")
       ]
     end
 
@@ -77,6 +84,144 @@ module Constable
         { message: %(unsafe { sleep(0.1) } — "testing an actual timeout path, not a code smell"),
           location: "spec/controllers/sessions_case.rb:44", kind: :unsafe }
       ]
+    end
+
+    # --- output modes ---------------------------------------------------------------
+
+    def test_concise_is_the_default_and_streams_one_glyph_per_test
+      r = reporter
+      refute_predicate r, :expanded?
+
+      passing(3).each { |result| r.record(result) }
+      r.flush!
+
+      assert_match(/SessionsCase\s+✓✓✓/, output)
+      refute_includes output, "passes 0"
+    end
+
+    def test_expanded_streams_a_line_per_test_with_its_description
+      r = reporter(mode: :expanded)
+      assert_predicate r, :expanded?
+
+      passing(2).each { |result| r.record(result) }
+      r.flush!
+
+      assert_includes output, "  SessionsCase"
+      assert_includes output, "✓ passes 0"
+      assert_includes output, "✓ passes 1"
+    end
+
+    def test_expanded_prints_a_duration_for_tests_that_actually_ran
+      r = reporter(mode: :expanded)
+      r.record(build_result(description: "is quick", duration: 0.012))
+      r.flush!
+
+      assert_match(/✓ is quick\s+12ms/, output)
+    end
+
+    # A jailed test never ran its body, so there is no honest duration to print. "0ms"
+    # would be a claim about work that never happened.
+    def test_expanded_prints_no_duration_for_a_jailed_test
+      r = reporter(mode: :expanded)
+      r.record(build_result(description: "is jailed", status: :jailed, duration: 0.0,
+                            jail_reason: "assertion failed on the amount"))
+      r.flush!
+
+      assert_includes output, "is jailed"
+      assert_includes output, "assertion failed on the amount"
+      refute_match(/is jailed\s+\d/, output)
+    end
+
+    # Workers interleave. A case that comes back gets a second header rather than having
+    # its later tests appended silently under whatever spoke last.
+    def test_expanded_reprints_the_case_header_when_a_case_comes_back
+      r = reporter(mode: :expanded)
+      r.record(build_result(case_name: "AlphaCase", description: "first"))
+      r.record(build_result(case_name: "BetaCase", description: "second"))
+      r.record(build_result(case_name: "AlphaCase", description: "third"))
+      r.flush!
+
+      assert_equal(2, lines.count { |line| line.strip == "AlphaCase" })
+    end
+
+    def test_an_explicit_mode_beats_the_config_file
+      Constable.config.raw["output"] = "expanded"
+      assert_predicate reporter, :expanded?
+      refute_predicate reporter(mode: :concise), :expanded?
+    ensure
+      Constable.config.raw.delete("output")
+    end
+
+    def test_an_unrecognized_mode_falls_back_rather_than_raising
+      refute_predicate reporter(mode: "sideways"), :expanded?
+    end
+
+    # --- supervision sections ---------------------------------------------------------
+
+    def test_jailed_tests_get_their_own_section_with_a_next_step
+      reporter.finish(results: [
+                        build_result(description: "refunds a charge", status: :jailed,
+                                     jail_reason: "assertion failed on the amount")
+                      ], warnings: [])
+
+      assert_includes output, "JAILED"
+      assert_includes output, "Assertion failed on the amount."
+      assert_includes unwrapped, "constable jail parole PATH:LINE"
+    end
+
+    def test_a_repeat_offender_says_how_many_times_it_has_been_jailed
+      reporter.finish(results: [
+                        build_result(status: :jailed, jail_reason: "still red", times_jailed: 3)
+                      ], warnings: [])
+
+      assert_includes output, "Its 3rd time in jail."
+    end
+
+    def test_warrants_get_their_own_section_with_a_next_step
+      reporter.finish(results: [
+                        build_result(case_name: "BillingCase", description: "charges a card",
+                                     status: :warranted, retries: %i[passed failed passed passed passed])
+                      ], warnings: [])
+
+      assert_includes output, "WARRANTS"
+      assert_includes output, "Failed, then passed 4 of 5 retries run in isolation."
+      assert_includes unwrapped, "constable warrants release PATH:LINE"
+    end
+
+    def test_tests_on_parole_get_their_own_section_showing_progress
+      reporter.finish(results: [build_result(description: "signs a user in", parole_day: 4)],
+                      warnings: [])
+
+      assert_includes output, "ON PAROLE"
+      assert_includes output, "Day 4 of 10 — 6 clean runs to go."
+      assert_includes unwrapped, "constable watchlist"
+    end
+
+    def test_the_last_run_of_a_parole_says_so_rather_than_counting_to_zero
+      reporter.finish(results: [build_result(parole_day: 10)], warnings: [])
+
+      assert_includes output, "releases after this run."
+    end
+
+    # A hint printed on a run with nothing to hint about is noise, and noise is what
+    # stops people reading the summary at all.
+    def test_supervision_sections_are_absent_when_nothing_is_under_supervision
+      reporter.finish(results: passing(2), warnings: [])
+
+      refute_includes output, "JAILED"
+      refute_includes output, "WARRANTS"
+      refute_includes output, "ON PAROLE"
+      refute_includes output, "→"
+    end
+
+    # Prose that runs past the frame reads as a bug in the tool.
+    def test_hints_wrap_to_the_frame
+      reporter.finish(results: [build_result(status: :jailed, jail_reason: "still red")],
+                      warnings: [])
+
+      hint_lines = lines.select { |line| line.include?("→") || line.strip.start_with?("constable jail") }
+      refute_empty hint_lines
+      lines.each { |line| assert_operator line.length, :<=, RULE.length, "line ran past the frame: #{line.inspect}" }
     end
 
     # --- the whole summary ----------------------------------------------------------
@@ -97,7 +242,13 @@ module Constable
           ───────────────
           ⛓ UsersController::CreatesUserCase
             "creates a user with valid params"
+            spec/cases/users_controller/creates_user_case.rb:8
             Failed on day 3 of a 10-run parole — back to jail. This is its 2nd time in jail.
+
+          → Somebody trusted this test again and it let them down,
+            so it is back on the docket. Fix it before the next
+            constable jail parole — a second violation is the signal
+            that the test, not the flake, is the problem.
 
           FAILURES
           ────────
@@ -113,13 +264,49 @@ module Constable
             Rerun just this test:
               constable test spec/cases/sessions_case.rb:12 --seed 8841
 
+          WARRANTS
+          ────────
+          ⚖ BillingCase
+            "charges a card"
+            spec/cases/sessions_case.rb:12
+            Failed, then passed 4 of 5 retries run in isolation.
+
+          → A warrant is "not reproducible", not "not a problem" —
+            it stops blocking the build and stays visible until
+            someone deals with it. Fixed the flake? constable
+            warrants release PATH:LINE
+
+          JAILED
+          ──────
+          ⛓ BillingCase
+            "refunds a charge"
+            spec/cases/sessions_case.rb:12
+            Assertion failed on the amount.
+
+          → Jailed means skipped and tracked, not passing. Think one
+            is fixed? constable jail parole PATH:LINE runs it for
+            real again — 10 clean runs and it releases itself.
+
+          ON PAROLE
+          ─────────
+          ◑ SessionsCase
+            "signs a user in"
+            spec/cases/sessions_case.rb:12
+            Day 4 of 10 — 6 clean runs to go.
+
+          → A paroled test runs for real and is watched: one failure
+            sends it straight back to jail. constable watchlist
+            shows everything under supervision.
+
           WARNINGS
           ────────
           ⚠ spec/legacy/old_users_spec.rb
-            running as a cold case (Constable::ColdCase::RSpec) — 12 tests not yet under native rules
+            running as a cold case (Constable::ColdCase::RSpec) — 12
+            tests not yet under native rules
 
           ⚠ spec/controllers/sessions_case.rb:44
-            unsafe { sleep(0.1) } — "testing an actual timeout path, not a code smell"
+            unsafe { sleep(0.1) } — "testing an actual timeout path,
+            not a code smell"
 
           SLOWEST
           ────────
@@ -383,6 +570,7 @@ module Constable
       assert_includes output, indent(<<~BLOCK, 2)
         ⛓ UsersController::CreatesUserCase
           "creates a user with valid params"
+          spec/cases/sessions_case.rb:12
           Failed on day 3 of a 10-run parole — back to jail. This is its 2nd time in jail.
       BLOCK
     end
@@ -425,9 +613,12 @@ module Constable
 
       reporter.finish(results: passing(1), duration: 1.0)
 
+      # Wrapped to the frame; the assertion carries the break so a regression in the
+      # wrapping shows up here rather than only in somebody's terminal.
       assert_includes output, indent(<<~BLOCK, 2)
         ⚠ spec/legacy/old_users_spec.rb
-          running as a cold case (Constable::ColdCase::RSpec) — 12 tests not yet under native rules
+          running as a cold case (Constable::ColdCase::RSpec) — 12
+          tests not yet under native rules
       BLOCK
     end
 

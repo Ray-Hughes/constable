@@ -42,6 +42,30 @@ module Constable
       @cases.find { |klass| klass.constable_display_name == name.to_s || klass.name == name.to_s }
     end
 
+    # Re-keys any investigations that share a body with another, so the blotter never
+    # treats two tests as one. Runs once, after the whole suite is loaded -- a collision
+    # is invisible until every case file has been seen.
+    #
+    # Returns the groups it re-keyed, so a caller can report them if it wants to.
+    def disambiguate_identities!
+      collisions = investigations.group_by(&:identity).select { |_key, group| group.size > 1 }
+      return [] if collisions.empty?
+
+      collisions.each_value { |group| group.each(&:disambiguate!) }
+
+      # Class and description are usually enough to tell two identical bodies apart. When
+      # they are not -- a copy-pasted `investigate` with the same name and the same body
+      # in the same case -- fall back to position, which is the only thing left that
+      # differs. History for those resets whenever the file is reordered, which is the
+      # honest cost of two tests that are indistinguishable by anything a human wrote.
+      still_colliding = investigations.group_by(&:identity).select { |_key, group| group.size > 1 }
+      still_colliding.each_value do |group|
+        group.each_with_index { |investigation, index| investigation.disambiguate!(ordinal: index) }
+      end
+
+      collisions.values
+    end
+
     def each(&) = @cases.each(&)
 
     def size    = @cases.size

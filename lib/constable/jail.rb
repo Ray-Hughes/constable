@@ -267,13 +267,20 @@ module Constable
     # Call it *before* writing the result to flake history (the flip check reads the
     # previous status) and *after* Warrants has had its say (a warranted result is not a
     # failure, so it never reaches the docket).
-    def adjudicate(result, jail_mode: false)
+    # `systemic:` says this run failed for a reason that has nothing to do with any
+    # individual test -- see Runner#systemic_failure. The failures still stand and the
+    # build still goes red, but they are not *evidence*: nothing moves through the state
+    # machine, because "the database was locked for the whole run" is not a fact about a
+    # test and must not put one on the docket.
+    def adjudicate(result, jail_mode: false, systemic: false)
       return result if result.nil?
 
       docket = entry(result.identity)
 
+      return mark_jailed(result) if docket&.jailed?
+      return result if systemic
+
       return record_result(result) if docket&.paroled?
-      return mark_jailed(result)   if docket&.jailed?
       return result unless result.failed?
 
       if jail_mode
@@ -331,17 +338,37 @@ module Constable
     # test that is not on the docket yet.
     #
     # Returns an identity String, or nil when nothing matches.
-    def resolve(target)
+    # Every docket row a target could mean.
+    #
+    # The interesting case is a bare path. "test/cases/users_case.rb" with three tests
+    # on the docket is a question, not an instruction: picking one silently acts on a
+    # test the user never named -- and not even the first one, since the order is
+    # whatever storage returns. Callers ask for the candidates and refuse to guess.
+    def candidates(target)
       text = target.to_s.strip
-      return nil if text.empty?
-      return text if identity_like?(text) && entry(text)
+      return [] if text.empty?
+
+      if identity_like?(text) && (row = entry(text))
+        return [row]
+      end
 
       file, line = self.class.split_target(text)
-      return nil if file.empty?
+      return [] if file.empty?
 
       matches = entries.select { |e| self.class.same_path?(e.file, file) }
       matches = matches.select { |e| e.line == line } if line
-      return matches.first.identity if matches.any?
+      matches
+    end
+
+    # An identity String, or nil when nothing matches -- or when more than one does.
+    # Ambiguity is the caller's to report, with the candidates in hand.
+    def resolve(target)
+      matches = candidates(target)
+      return matches.first.identity if matches.size == 1
+      return nil unless matches.empty?
+
+      file, line = self.class.split_target(target.to_s.strip)
+      return nil if file.empty?
 
       self.class.registry_identity(file, line)
     end

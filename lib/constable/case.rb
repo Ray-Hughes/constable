@@ -60,6 +60,7 @@ module Constable
         raise ArgumentError, "witness(#{name.inspect}) requires a block" unless block
 
         name = name.to_sym
+        guard_witness_name!(name)
         own_witnesses[name] = block
         define_method(name) do
           constable_witnesses.fetch(name) { constable_witnesses[name] = instance_exec(&block) }
@@ -159,6 +160,38 @@ module Constable
       # case, then each docket in turn.
       def briefings
         constable_lineage.flat_map(&:own_briefings)
+      end
+
+      # Names a witness may not take.
+      #
+      # `witness` defines a real instance method, so `witness(:class) { ... }` quietly
+      # replaces Object#class on the case and every later `attest` failure reports the
+      # wrong thing. Worse, `witness(:attest)` disables assertions outright -- the tests
+      # then pass by doing nothing, which is the one failure mode a testing framework
+      # must never have.
+      #
+      # Deliberately a list rather than `method_defined?`: a blanket check would reject
+      # ordinary names a tier happens to define (`response` on an integration case), and
+      # shadowing those is a legitimate, if unusual, thing to want.
+      RESERVED_WITNESS_NAMES = %i[
+        class send __send__ __id__ object_id method methods freeze frozen? dup clone
+        hash inspect to_s instance_variable_get instance_variable_set instance_variables
+        attest unsafe witness briefing investigate docket tier setup teardown
+        assert refute flunk skip pass freeze_time travel_to travel_back
+      ].freeze
+
+      def guard_witness_name!(name)
+        if RESERVED_WITNESS_NAMES.include?(name)
+          raise ArgumentError,
+                "witness(:#{name}) would replace Constable::Case##{name}, which the " \
+                "framework needs. Pick another name."
+        end
+
+        return unless name.to_s.start_with?("constable_")
+
+        raise ArgumentError,
+              "witness(:#{name}) is in Constable's own namespace. Names beginning " \
+              "`constable_` belong to the framework."
       end
 
       def witnesses
