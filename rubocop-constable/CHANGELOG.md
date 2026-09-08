@@ -3,7 +3,15 @@
 All notable changes to `rubocop-constable` are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - unreleased
+## [1.0.0]
+
+Version bumped to track `constable-rails` 1.0.0. The cops themselves are unchanged --
+all seven were already correct, and the suite (97 runs) still passes untouched. They
+were verified against a real Rails app for the first time in this cycle: all seven fire,
+and cold cases are exempt as designed (27 spec files, zero offenses, while the native
+probe file trips nine).
+
+## [0.1.0]
 
 Initial release. Seven cops, all enabled by default, all scoped to native
 `Constable::Case` files:

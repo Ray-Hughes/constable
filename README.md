@@ -216,10 +216,16 @@ Constable::Matchers.define(:be_created) { |response| response.status == 201 }
 Constable::Matchers.define(:exist) { |model_class, attrs| model_class.exists?(attrs) }
 ```
 
-Built in: `eq`, `eql`, `include`, `match`, `raise_error`, `have_attributes`, `exist`,
-`be_created`, `redirect_to`, `have_http_status`, `change`, plus `be_a`, `be_nil`, `be_empty`,
-`be_truthy`, `be_falsey` and a `be_*` / `have_*` predicate fallback. Plain `assert_*` and
-`refute_*` primitives are always available alongside `attest`.
+Built in: `eq`, `eql`, `be`, `include`, `match`, `raise_error`, `have_attributes`,
+`exist`, `be_created`, `redirect_to`, `have_http_status`, `change`, `contain_exactly`,
+`match_array`, `start_with`, `end_with`, `be_between`, `be_within(d).of(x)`, `satisfy`,
+plus `be_a`, `be_nil`, `be_empty`, `be_truthy`, `be_falsey` and a `be_*` / `have_*`
+predicate fallback. `be` also takes the operator form — `attest(count).to be > 0`.
+Plain `assert_*` and `refute_*` primitives are always available alongside `attest`.
+
+The set is deliberately smaller than RSpec's, so `constable modernize` **flags any
+matcher it does not recognize** rather than converting it into a case that only fails
+once you run it.
 
 ### Shared behavior is just Ruby
 
@@ -370,6 +376,14 @@ Class name, description and file are stored alongside purely as a display label.
   new one appears and suggests `constable history relink OLD NEW`. Set `auto_relink: true` to
   confirm high-confidence matches automatically.
 
+Two tests with byte-identical bodies would otherwise share a key — and bodies repeat more
+than the phrase "content hash" suggests, since
+`attest(build(:thing, name: nil)).not_to be_valid` is the same handful of tokens in every
+model case. Constable re-keys colliding tests on their class and description once the
+suite is loaded, so no two tests ever share a docket row. Rename-survival is weaker for
+exactly those tests, which is the right trade: a history belonging to two tests at once is
+worse than one that resets.
+
 ### Command reference
 
 | Command | Runs |
@@ -393,6 +407,12 @@ Flags: `--full --unsafe --jail --warrants --coverage --seed N --workers N --verb
 Order is randomized every run for native cases, with the seed printed and replayable via
 `--seed`. Cold cases keep their own engine's order. Workers run in parallel by default,
 load-balanced by a cached per-test duration index.
+
+Each worker gets **its own database**, built from schema the way `rails test` does it.
+Sharing one would not be a speed/safety trade but a correctness bug: on SQLite the run
+dissolves into `database is locked`, and on a client/server database tests quietly see
+each other's rows. If your app has ActiveRecord but cannot shard, Constable runs serially
+and says why — slow is a trade-off, wrong is not.
 
 ### Output
 
