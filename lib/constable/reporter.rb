@@ -100,14 +100,16 @@ module Constable
       0x1F900..0x1F9FF, 0x20000..0x3FFFD
     ].freeze
 
-    attr_reader :io, :config, :seed, :total, :mode
+    attr_reader :io, :config, :seed, :total
 
     def initialize(io: $stdout, config: nil, color: nil, slowest: DEFAULT_SLOWEST, mode: nil)
       @io      = io
       @config  = config || Constable.config
       @color   = resolve_color(color)
       @slowest = slowest.to_i
-      @mode    = resolve_mode(mode)
+      # Resolved lazily: the reporter is built before case_helper.rb has run, so reading
+      # the config now would miss anything Constable.configure sets.
+      @requested_mode = mode
       @io.set_encoding(Encoding::UTF_8) if @io.respond_to?(:set_encoding)
 
       reset_stream!
@@ -210,7 +212,8 @@ module Constable
     def failed?  = !success?
     def color?   = @color
     def finished? = @finished
-    def expanded? = @mode == :expanded
+    def mode      = @mode ||= resolve_mode(@requested_mode)
+    def expanded? = mode == :expanded
 
     private
 

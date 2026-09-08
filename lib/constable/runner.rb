@@ -64,6 +64,19 @@ module Constable
     def jail_run?   = @jail_run
     def coverage?   = @coverage_requested
 
+    # Loads every case file and hands back the identities the suite actually defines,
+    # without running anything. `constable prune` needs this: which tests still exist is
+    # only knowable once the whole suite has been loaded.
+    def self.identities(config: Constable.config)
+      selection = Selection.new([], config: config, root: Constable.root, full: true)
+      runner = new(selection: selection, config: config,
+                   reporter: Reporter.new(io: StringIO.new, config: config, color: false),
+                   storage: Constable.storage, workers: 1)
+      runner.send(:load_suite!)
+      Constable.registry.disambiguate_identities!
+      Constable.registry.investigations.map(&:identity)
+    end
+
     # => Integer exit status (0 clean, 1 failures)
     def call
       # Before anything is loaded: Coverage only counts files required after it starts, so
@@ -73,6 +86,11 @@ module Constable
       Constable::Coverage.start!(config: @config, force: true) if coverage?
 
       load_suite!
+      # case_helper.rb has now run, so anything it set through Constable.configure exists.
+      # Applied before the first read of any setting, and before the reporter resolves its
+      # own mode. CLI flags still win: they are held separately and checked first.
+      @config.apply_overrides!(Constable.configuration.overrides)
+
       # Before anything is keyed on an identity -- selection, the docket, flake history --
       # settle any two tests that happen to share a body.
       Constable.registry.disambiguate_identities!

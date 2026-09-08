@@ -399,6 +399,7 @@ worse than one that resets.
 | `constable status` | How the suite is doing over time |
 | `constable beat [--html]` | Coverage: overall %, per-file, the unpatrolled list |
 | `constable history relink OLD NEW` | Carry history across a real body change |
+| `constable prune [--dry-run]` | Forget docket rows and warrants for tests that no longer exist |
 | `constable import --from=rspec` | Adopt an existing suite as cold cases |
 | `constable modernize PATH` | Opt-in AST rewrite into the native DSL |
 
@@ -556,6 +557,45 @@ storage:
 ```
 
 ### Configuration
+
+Settings can be written in Ruby, in `test/case_helper.rb` — the same place RSpec puts
+`RSpec.configure` — or in `.constable/config.yml`, or on the command line. The most
+specific wins:
+
+```
+a CLI flag              --workers 4, --expanded      one run
+Constable.configure     test/case_helper.rb          code you deliberately ran
+.constable/config.yml   the project's declared default
+Constable's defaults
+```
+
+Every key below can be set in either place. Put settings that differ per machine or per
+branch in the YAML, where they are obvious and greppable; put settings that have to be
+*computed* in Ruby, because YAML cannot:
+
+```ruby
+# test/case_helper.rb
+Constable.configure do |c|
+  c.parallel_workers = ENV.fetch("CI_WORKERS", 4).to_i
+  c.coverage         = ENV["CI"] == "true"
+  c.output           = :expanded
+end
+```
+
+`config.yml` is optional, and one setting is the reason it exists: **`storage` can only be
+set there.** The blotter is opened before `case_helper.rb` loads, so that `constable jail`,
+`warrants`, `watchlist` and `status` can read the docket without booting the app — a
+broken app should not stop you reading the docket. Setting it in Ruby raises rather than
+being quietly ignored.
+
+Beyond that it is a preference. A settings file is greppable and diffable without running
+anything, which suits values that differ per project or per branch; Ruby suits anything
+computed.
+
+`config.yml` doubles as the reference, so re-run
+`rails generate constable:install --skip` after an upgrade: it appends any settings your
+file does not mention and leaves your own values and comments alone. (`--skip` so the
+other generated files, which you have probably edited, are left as they are.)
 
 ```yaml
 # .constable/config.yml

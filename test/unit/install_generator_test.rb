@@ -310,6 +310,80 @@ module Constable
       assert_match(/^  gem "rspec-rails"$/, generated("Gemfile"))
     end
 
+    # --- upgrading an existing config -------------------------------------------------
+    #
+    # config.yml doubles as the reference: every key at its default, with the reasoning
+    # above it. That only works if it stays current, and a gem upgrade cannot rewrite it
+    # without clobbering the user's settings. Before this, a setting added after you
+    # installed was simply invisible -- `output` shipped in 1.0.0 and never appeared.
+
+    def test_a_missing_config_is_created_whole
+      install
+
+      assert_match(/^output: concise/, generated(".constable/config.yml"))
+    end
+
+    def test_settings_added_since_install_are_appended
+      write_file(".constable/config.yml", "parole_period: 4\n")
+      install
+
+      config = generated(".constable/config.yml")
+      assert_match(/^output: concise/, config, "the new setting should be appended")
+      assert_match(/^parole_period: 4$/, config, "the existing value must survive")
+    end
+
+    def test_appended_settings_bring_their_explanation_with_them
+      write_file(".constable/config.yml", "parole_period: 4\n")
+      install
+
+      config = generated(".constable/config.yml")
+      assert_match(/Added by `rails generate constable:install` on a later upgrade/, config)
+      assert_match(/concise \| expanded/, config, "a bare key with no reasoning is not a reference")
+    end
+
+    def test_a_setting_the_file_already_sets_is_not_appended_again
+      write_file(".constable/config.yml", "output: expanded\n")
+      install
+
+      assert_equal 1, generated(".constable/config.yml").scan(/^output:/).size
+    end
+
+    def test_a_users_own_comments_are_never_touched
+      write_file(".constable/config.yml", "# our CI box lies about its cores\nparallel_workers: 2\n")
+      install
+
+      config = generated(".constable/config.yml")
+      assert_match(/# our CI box lies about its cores/, config)
+      assert_match(/^parallel_workers: 2$/, config)
+    end
+
+    def test_a_fully_current_config_is_left_alone
+      install
+      before = generated(".constable/config.yml")
+
+      install(["--force"])
+
+      assert_equal before, generated(".constable/config.yml")
+    end
+
+    # A commented-out example is a suggestion, not a declaration -- the shipped file is
+    # full of them, and treating one as "already set" would hide a real setting.
+    def test_a_commented_out_setting_does_not_count_as_present
+      write_file(".constable/config.yml", "# output: expanded\n")
+      install
+
+      assert_match(/^output: concise/, generated(".constable/config.yml"))
+    end
+
+    def test_nested_keys_are_not_mistaken_for_top_level_ones
+      write_file(".constable/config.yml", "storage:\n  adapter: sqlite\n  path: x.sqlite3\n")
+      install
+
+      config = generated(".constable/config.yml")
+      assert_equal 1, config.scan(/^storage:/).size
+      assert_match(/^  adapter: sqlite$/, config)
+    end
+
     # --- case_helper wiring ----------------------------------------------------------
 
     # test/support/authenticatable.rb tells the reader to `include Authenticatable` in

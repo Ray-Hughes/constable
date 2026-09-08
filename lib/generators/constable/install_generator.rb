@@ -72,6 +72,15 @@ module Constable
         /.constable/*.sqlite3-*
       TEXT
 
+      NEW_SETTINGS_HEADER = <<~TEXT
+        # ---------------------------------------------------------------------------
+        # Added by `rails generate constable:install` on a later upgrade. These settings
+        # did not exist when this file was written; each is shown at its default, so
+        # deleting any of them changes nothing.
+        # ---------------------------------------------------------------------------
+
+      TEXT
+
       RUBOCOP_EXTENSION = "rubocop-constable"
 
       def create_case_helper
@@ -85,8 +94,27 @@ module Constable
         template "authenticatable.rb.tt", "test/support/authenticatable.rb"
       end
 
+      # The config file doubles as the reference -- every key at its default, with the
+      # reasoning above it -- which only works if it stays current. A gem upgrade cannot
+      # rewrite it (that would clobber your settings) and Thor's only other answer is to
+      # skip the file entirely, so before 1.1.0 a setting added after you installed was
+      # invisible: `output` shipped in 1.0.0 and never appeared in an existing config.
+      #
+      # So: create it if it is missing, and otherwise append only the settings it does not
+      # already mention. Your edits and comments are never touched.
       def create_config
-        template "config.yml.tt", ".constable/config.yml"
+        path = File.join(destination_root, ".constable/config.yml")
+        return template("config.yml.tt", ".constable/config.yml") unless File.exist?(path)
+
+        missing = missing_config_blocks(File.read(path))
+        if missing.empty?
+          say_status :identical, ".constable/config.yml (every setting is documented)", :blue
+          return
+        end
+
+        names = missing.flat_map { |block| config_keys_in(block) }
+        say_status :append, ".constable/config.yml (#{names.join(", ")})", :green
+        append_to_file ".constable/config.yml", "\n#{NEW_SETTINGS_HEADER}#{missing.join("\n\n")}\n"
       end
 
       def create_example_case
@@ -202,6 +230,31 @@ module Constable
 
           stripped.match?(/\Agem\s+["']#{Regexp.escape(gem_name)}["']/)
         end
+      end
+
+      # Blocks in the shipped reference whose settings the existing file never mentions.
+      # A "block" is a run of lines between blank ones: the comment and the setting it
+      # explains travel together, because a bare key with no reasoning is not a reference.
+      def missing_config_blocks(existing)
+        present = config_keys_in(existing)
+
+        reference_blocks.select do |block|
+          keys = config_keys_in(block)
+          keys.any? && (keys - present) == keys
+        end
+      end
+
+      def reference_blocks
+        File.read(find_in_source_paths("config.yml.tt")).split(/\n{2,}/).map(&:rstrip).reject(&:empty?)
+      end
+
+      # Top-level YAML keys only, ignoring comments and nested ones -- a commented-out
+      # example is a suggestion, not a declaration.
+      def config_keys_in(text)
+        text.lines.filter_map do |line|
+          match = line.match(/\A([a-z][a-z0-9_]*):/)
+          match && match[1]
+        end.uniq
       end
 
       def gemfile_contents

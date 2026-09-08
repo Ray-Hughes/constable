@@ -1,13 +1,29 @@
 # .constable/config.yml
 #
-# Settings, as opposed to code. Everything here is a number, a flag or a glob;
-# anything that is Ruby -- custom matchers, tier base classes, one-time global
-# setup -- lives in test/case_helper.rb instead.
+# Optional. Everything here can also be written in Ruby, in test/case_helper.rb:
 #
-# Every key Constable understands is present below at its default value, so this
-# file doubles as the complete reference. Delete anything you haven't changed;
-# the behavior is identical either way. CLI flags win over this file for the
-# duration of a single run.
+#     Constable.configure do |c|
+#       c.parallel_workers = ENV.fetch("CI_WORKERS", 4).to_i
+#       c.output           = :expanded
+#     end
+#
+# ...which is the better home for anything computed, and the more familiar one if you
+# come from RSpec's spec_helper.rb. Ruby wins over this file; a CLI flag wins over both.
+#
+# Two reasons this file exists at all:
+#
+#   1. `storage` cannot go anywhere else. The blotter is opened before case_helper.rb
+#      loads, so that `constable jail`, `warrants`, `watchlist` and `status` can read the
+#      docket without booting the app -- a broken app should not stop you reading the
+#      docket. Setting it in Ruby raises rather than being quietly ignored.
+#
+#   2. A settings file is greppable and diffable without executing anything, which is
+#      what you want for the values that differ per project or per branch.
+#
+# Every key Constable understands is below at its default, so this doubles as the
+# reference. Delete anything you have not changed; the behavior is identical either way.
+# Re-run `rails generate constable:install --skip` after upgrading and any settings added
+# since will be appended here, leaving your own values and comments alone.
 
 # Glob paths to run as cold cases: original RSpec/Minitest files, driven verbatim
 # through their own real engine, with pass/fail/timing fed into Constable's

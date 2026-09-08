@@ -399,6 +399,48 @@ module Constable
       end
     end
 
+    desc "prune", "Forget docket rows and warrants for tests that no longer exist"
+    long_desc <<~DESC
+      A test's key is a content hash of its body, so editing a jailed test gives it a new
+      identity and leaves the old row behind -- pointing at a file:line that may now hold
+      something else. That is identity working as designed; this is the broom.
+
+      Loads the whole suite first, because which tests still exist is only knowable once
+      every case file has been read. Cold cases are never pruned while their file exists:
+      their tests cannot be enumerated without running their own engine, so silence about
+      them means nothing.
+    DESC
+    option :dry_run, type: :boolean, default: false, desc: "List what would go, change nothing"
+    def prune
+      config = load_config
+      known  = Runner.identities(config: config)
+      cold   = ->(path) { config.cold_case?(path) }
+
+      jail     = Jail.new(config: config, storage: Constable.storage)
+      warrants = Warrants.new(config: config, storage: Constable.storage)
+
+      stale_rows     = jail.stale_entries(known, cold_case: cold)
+      stale_warrants = warrants.stale_entries(known, cold_case: cold)
+
+      if stale_rows.empty? && stale_warrants.empty?
+        say "Nothing to prune -- every row on the docket still names a test that exists."
+        return 0
+      end
+
+      report_prunable("docket", stale_rows)
+      report_prunable("warrants", stale_warrants)
+
+      if options[:dry_run]
+        say "Dry run: nothing was changed."
+        return 0
+      end
+
+      stale_rows.each { |entry| jail.forget(entry.identity) }
+      stale_warrants.each { |entry| warrants.release(entry.identity) }
+      say "Pruned #{stale_rows.size + stale_warrants.size} row(s). Flake history is left alone."
+      0
+    end
+
     desc "jail SUBCOMMAND", "The jail docket"
     subcommand "jail", JailCommand
 
@@ -409,6 +451,16 @@ module Constable
     subcommand "history", HistoryCommand
 
     no_commands do
+      def report_prunable(heading, entries)
+        return if entries.empty?
+
+        say "#{heading} (#{entries.size}):"
+        entries.sort_by { |entry| [entry.file.to_s, entry.line.to_i] }.each do |entry|
+          say "  #{entry.location}  #{entry.label}"
+        end
+        say ""
+      end
+
       def load_config
         Constable.config
       end

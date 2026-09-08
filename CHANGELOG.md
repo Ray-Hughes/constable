@@ -5,6 +5,93 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.1.0]
+
+Three things that were documented and did not work, plus the command for a docket
+that has gone stale.
+
+### `Constable.configure` actually configures things now
+
+The generated `test/case_helper.rb` told you to write `c.parallel_workers = 4`, explained
+when you would want to, and then **nothing in the codebase ever read it**. Four accessors,
+all inert.
+
+They work now, and every setting `.constable/config.yml` understands is settable in Ruby
+alongside them — `cold_cases`, `storage`, `warrants`, `warrant_retries`, `auto_relink`,
+`parole_period`, `coverage`, `coverage_threshold`, `coverage_html`, `fail_on_warnings`,
+`parallel_workers`, `output`, `tiers`. A test asserts the two halves stay in step, so a
+setting cannot be added to one and forgotten in the other.
+
+Precedence, and the reasoning:
+
+```
+a CLI flag              --workers 4, --expanded      one run, most specific
+Constable.configure     test/case_helper.rb          code you deliberately ran
+.constable/config.yml   the project's declared default
+Constable's defaults
+```
+
+Which to use? A setting that differs per machine or per branch belongs in the YAML, where
+it is obvious and greppable. A setting that has to be *computed* belongs in Ruby, because
+YAML cannot do this:
+
+```ruby
+Constable.configure do |c|
+  c.parallel_workers = ENV.fetch("CI_WORKERS", 4).to_i
+  c.coverage         = ENV["CI"] == "true"
+end
+```
+
+Values set in Ruby go through the same clamping as values set in the file, so a typo is no
+more dangerous in one than the other.
+
+**`storage` is the one exception, and it now says so.** The blotter is opened before
+`case_helper.rb` loads, so that `constable jail`, `warrants`, `watchlist` and `status` can
+read the docket without booting the app — a broken app should not stop you reading the
+docket. Setting it in Ruby would have been silently ignored, which is the exact failure
+this release exists to stop, so it raises and explains why.
+
+The docs now lead with Ruby. `.constable/config.yml` is optional and framed as what it is:
+a greppable file for values that differ per project or per branch, plus the one setting
+that has to be readable without executing anything.
+
+### Settings added after you install are no longer invisible
+
+`.constable/config.yml` doubles as the reference — every key at its default, with the
+reasoning above it — which only works if it stays current. A gem upgrade cannot rewrite it
+without clobbering your settings, and Thor's only other answer is to skip the file, so
+**`output` shipped in 1.0.0 and never appeared in any existing config.** The first anyone
+knew was running `bundle update` and finding the setting missing.
+
+`rails generate constable:install` now appends only the settings your file does not
+mention, each with its explanation, under a header saying where they came from. Your
+values and your own comments are never touched. Re-run it after any upgrade.
+
+### `constable prune`
+
+A test's key is a content hash of its body, so editing a jailed test gives it a new
+identity and leaves the old row behind — pointing at a `file:line` that may now hold
+something else. That is identity working as designed, and it was the one known limitation
+left open in 1.0.0. This is the broom:
+
+```console
+$ constable prune --dry-run   # list what would go
+$ constable prune             # forget it
+```
+
+It loads the whole suite first, because which tests still exist is only knowable once
+every case file has been read, and it is deliberately conservative in two directions:
+
+- **A known identity is never pruned**, even when the file recorded beside it is gone. The
+  path is a display label; the identity is the truth. A test that moved file has an
+  out-of-date label, not a missing test.
+- **A cold case is never pruned while its file exists.** Cold-case tests cannot be
+  enumerated without running their own engine, so their absence says nothing.
+
+Flake history is left alone either way — only the docket and outstanding warrants are
+touched.
+
+
 ## [1.0.0]
 
 The first release anybody should install.
@@ -241,6 +328,7 @@ Initial release.
 - Diff-based coverage gate — only lines changed in the current diff are held to the
   threshold. `constable beat` for the full picture, `--html` for a browsable report.
 
-[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Ray-Hughes/constable/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Ray-Hughes/constable/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/Ray-Hughes/constable/releases/tag/v0.1.0

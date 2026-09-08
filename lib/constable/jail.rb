@@ -241,6 +241,11 @@ module Constable
     # `constable jail release PATH:LINE`. Off the docket entirely, no supervision.
     def release(identity) = @storage.release(identity.to_s) ? true : false
 
+    # Pruning is not release. Release says "this test is trusted again"; prune says "this
+    # row is about a test that no longer exists". The distinction matters because release
+    # is a judgement someone made and prune is bookkeeping.
+    def forget(identity) = @storage.release(identity.to_s) ? true : false
+
     # `jail run` never auto-releases and never auto-paroles. One green run proves nothing;
     # it only earns a mention. A human reads this list and decides.
     #
@@ -358,6 +363,39 @@ module Constable
       matches = entries.select { |e| self.class.same_path?(e.file, file) }
       matches = matches.select { |e| e.line == line } if line
       matches
+    end
+
+    # Rows whose test no longer exists.
+    #
+    # A test's key is a content hash of its body, so editing a jailed test gives it a new
+    # identity and leaves the old row behind -- pointing at a file:line that may now hold
+    # something else entirely. That is content-hash identity working as designed, but over
+    # a few months the docket fills with tests nobody can find.
+    #
+    # `known` is every identity the loaded suite registered, so this is only meaningful
+    # after a full load. Two things are deliberately conservative about it:
+    #
+    #   * A known identity is never stale, even when the file recorded beside it is gone.
+    #     The path is a display label; the identity is the truth. A test that moved file
+    #     has an out-of-date label, not a missing test.
+    #   * A cold case is never pruned while its file exists. Cold-case tests cannot be
+    #     enumerated without running their own engine, so absence from `known` says
+    #     nothing about them.
+    def stale_entries(known, cold_case: nil)
+      known = Array(known)
+      entries.reject { |entry| known.include?(entry.identity) }
+             .select { |entry| gone?(entry, cold_case) }
+    end
+
+    def gone?(entry, cold_case)
+      relative = entry.file.to_s
+      return true if relative.empty?
+
+      path = File.absolute_path?(relative) ? relative : File.join(Constable.root, relative)
+      return true unless File.exist?(path)
+      return false if cold_case&.call(relative)
+
+      true
     end
 
     # An identity String, or nil when nothing matches -- or when more than one does.

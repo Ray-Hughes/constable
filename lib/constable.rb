@@ -130,12 +130,58 @@ module Constable
   end
 
   # Code-level configuration set from test/case_helper.rb.
+  # The Ruby half of configuration, set from test/case_helper.rb.
+  #
+  # Anything that is *code* -- custom matchers, tier base classes, one-time global setup --
+  # can only live here. Everything that is merely a *setting* can live in either place, and
+  # this is the one that wins:
+  #
+  #   a CLI flag        for one run
+  #   Constable.configure   in case_helper.rb, because it is code and ran deliberately
+  #   .constable/config.yml the declared default for the project
+  #   Constable's defaults
+  #
+  # Until 1.1.0 the four accessors here were read by nothing at all: `c.parallel_workers = 4`
+  # was in the generated case_helper.rb, documented, and silently ignored.
   class Configuration
-    attr_accessor :parallel_workers, :seed, :coverage, :warrants
+    # Every setting .constable/config.yml understands, settable in Ruby as well. A nil is
+    # "not set here" rather than "set to nothing", so leaving one alone defers to the file.
+    SETTINGS = %i[
+      cold_cases warrants warrant_retries auto_relink parole_period
+      coverage coverage_threshold coverage_html fail_on_warnings parallel_workers
+      output tiers
+    ].freeze
+
+    # `storage` is the one setting that cannot live here, and the reason is ordering, not
+    # preference: the blotter handle is opened before test/case_helper.rb is loaded,
+    # because `constable jail`, `warrants`, `watchlist` and `status` all read the docket
+    # without booting the app at all. By the time this block runs, it is already open.
+    #
+    # Raising beats accepting the value and quietly using the old path -- silently
+    # ignoring a setting somebody wrote is the failure mode this whole class was fixed for.
+    SETTINGS_ONLY_IN_YAML = %i[storage].freeze
+
+    attr_accessor(*SETTINGS, :seed)
+
+    def storage=(_value)
+      raise ConfigurationError,
+            "storage must be set in .constable/config.yml, not Constable.configure. The " \
+            "blotter is opened before case_helper.rb loads, so that `constable jail` and " \
+            "`constable status` can read the docket without booting the app -- by the " \
+            "time this block runs the connection is already open."
+    end
 
     def initialize
       @before_suite_hooks = []
       @after_suite_hooks  = []
+    end
+
+    # Only the settings actually assigned, ready to merge over the file's values.
+    def overrides
+      SETTINGS.each_with_object({}) do |name, out|
+        value = public_send(name)
+        out[name.to_s] = value unless value.nil?
+      end
     end
 
     def before_suite(&block) = @before_suite_hooks << block

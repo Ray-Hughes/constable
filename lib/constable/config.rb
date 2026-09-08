@@ -63,6 +63,16 @@ module Constable
       @raw  = deep_merge(@raw, stringify(overrides || {}))
     end
 
+    # Merges values set in Ruby (Constable.configure) over the ones read from the file.
+    # Called once, after case_helper.rb has been loaded -- which is the first moment those
+    # values exist.
+    def apply_overrides!(overrides)
+      return self if overrides.nil? || overrides.empty?
+
+      @raw = deep_merge(@raw, stringify(overrides))
+      self
+    end
+
     def cold_cases         = Array(@raw["cold_cases"])
     def warrants?          = truthy(@raw["warrants"])
     # Negative retries are a typo for "off", not an instruction to count backwards.

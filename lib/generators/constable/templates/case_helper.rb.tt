@@ -139,11 +139,51 @@ end
 #  Code-level configuration.
 # -----------------------------------------------------------------------------
 
+#  Two kinds of thing live in this block.
+#
+#  Code -- matchers, suite hooks -- can only be written here. Settings can be
+#  written here *or* in .constable/config.yml, and this file wins, because it is
+#  code you deliberately ran rather than a default you declared. A CLI flag beats
+#  both, for one run:
+#
+#      a CLI flag              --workers 4, --expanded
+#      Constable.configure     this block
+#      .constable/config.yml   the project's declared defaults
+#      Constable's defaults
+#
+#  Every key config.yml understands can be set here. The full list:
+#
+#      c.cold_cases         = ["spec/**/*_spec.rb"]
+#      c.storage            = { "adapter" => "sqlite", "path" => ".constable/x.sqlite3" }
+#      c.warrants           = true
+#      c.warrant_retries    = 5
+#      c.auto_relink        = false
+#      c.parole_period      = 10
+#      c.coverage           = true
+#      c.coverage_threshold = 90
+#      c.coverage_html      = false
+#      c.fail_on_warnings   = true
+#      c.parallel_workers   = 4
+#      c.output             = :expanded
+#      c.tiers              = { "unit" => "test/cases/models/**/*" }
+#
+#  Which is worth using when? A setting that differs per machine or per branch
+#  belongs in config.yml, where it is obvious and greppable. A setting that has to
+#  be computed -- workers from an env var, coverage only on CI -- belongs here,
+#  because YAML cannot do that:
+#
+#      c.parallel_workers = ENV.fetch("CI_WORKERS", 4).to_i
+#      c.coverage         = ENV["CI"] == "true"
+# -----------------------------------------------------------------------------
+
 Constable.configure do |c|
   # Workers default to `auto` -- processor count minus a little headroom, so the
   # machine stays usable while the suite runs. Pin it only when a CI container
   # lies about its core count.
   # c.parallel_workers = 4
+
+  # The live stream: :concise (one glyph per test) or :expanded (a line each).
+  # c.output = :expanded
 
   # One-time global setup, run once per process before the whole suite. This is
   # for configuring the world -- drivers, adapters, formats -- and deliberately
