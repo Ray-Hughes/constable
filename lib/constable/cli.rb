@@ -501,14 +501,19 @@ module Constable
 
       def color?
         return false if options[:"no-color"]
-        return false unless $stdout.tty?
+        # The console, not $stdout -- which by now is log/test.log, and a file is never a
+        # tty. Asking the wrong one silently turns colour off for everybody.
+        return false unless LogRouter.console.tty?
         return false unless ENV["NO_COLOR"].to_s.empty?
 
         true
       end
 
+      # LogRouter.console, not $stdout: by this point route! has pointed $stdout at
+      # log/test.log so a stray gem warning cannot land in the middle of the live stream.
+      # The reporter is the one thing that still writes to the terminal.
       def reporter(config)
-        Reporter.new(io: $stdout, config: config, color: color?, mode: output_mode)
+        Reporter.new(io: LogRouter.console, config: config, color: color?, mode: output_mode)
       end
 
       # nil means "the config file decides". The explicit --output wins over the two

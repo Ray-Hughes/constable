@@ -422,8 +422,16 @@ and says why — slow is a trade-off, wrong is not.
 
 ### Output
 
-stdout is reserved for results. `Rails.logger`, SQL and request/response logging go to
-`log/test.log`; `--verbose` streams it back for active debugging.
+stdout is reserved for results — not just Constable's own output, but the app's. Rails
+loggers, SQL, request/response logging, and anything a gem prints to `$stdout` or
+`$stderr` mid-run all go to `log/test.log`; `--verbose` streams it back for active
+debugging.
+
+That matters more than it sounds. A gem warning fired once per file lands in the middle of
+the live stream, and you get `Address ✓✓✓✓✓✓To use retry middleware with Faraday...`
+instead of a readable run. The one thing Constable deliberately does not intercept is a
+write straight to file descriptor 2 — capturing that would also swallow a real crash and
+break `binding.pry`, so `2>/dev/null` stays yours to decide on.
 
 **While it runs**, the live stream has two modes. `concise` is the default: one glyph per
 test, grouped into a run per case, so a thousand-test suite stays inside one screen and a

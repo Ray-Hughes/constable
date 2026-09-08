@@ -55,6 +55,14 @@ module Constable
       def sync         = true
       def tty?         = false
 
+      # Something that has been handed $stdout may ask it for a file descriptor. Answer
+      # with the first target that has one rather than raising NoMethodError from inside
+      # somebody else's gem.
+      def fileno
+        @targets.each { |t| return t.fileno if t.respond_to?(:fileno) }
+        nil
+      end
+
       def sync=(value)
         @targets.each { |target| target.sync = value if target.respond_to?(:sync=) }
       end
@@ -89,12 +97,18 @@ module Constable
       def route!(verbose: false, path: nil, io: $stdout, root: nil)
         target = path ? File.expand_path(path.to_s, root || Constable.root) : default_path(root)
 
+        # Taking the console does not depend on Rails, and the ordering matters: route! runs
+        # before the app boots, so anything that waited for Rails would miss every warning
+        # emitted *by* booting it -- which is most of them. A suite with no Rails at all
+        # still wants its stdout kept for results.
+        file = open_log(target)
+        capture_console!(file, verbose ? io : nil)
+
         unless rails_loaded?
-          reason = "Rails is not loaded — nothing to route, stdout is already results only"
+          reason = "Rails is not loaded — no loggers to route, but stdout is held for results"
           return @current = Routing.new(routed: false, path: target, verbose: verbose, reason: reason)
         end
 
-        file   = open_log(target)
         logger = build_logger(verbose ? Tee.new(file, io) : file)
 
         remember_previous!
@@ -103,9 +117,40 @@ module Constable
         @current = Routing.new(routed: true, path: target, verbose: verbose, reason: nil)
       end
 
+      # The terminal, as it was before route! took it. The reporter writes here; everything
+      # else writes to the log.
+      def console = @console_out || $stdout
+
+      # Rails loggers are not the only thing that writes to a terminal. A gem warning --
+      # Faraday's "install the faraday-retry gem", say -- goes straight to $stderr, once
+      # per file that triggers it, and lands in the middle of the live stream:
+      #
+      #   Address    ✓✓✓✓✓✓✓✓✓✓✓To use retry middleware with Faraday v2.0+...
+      #
+      # stdout is supposed to be results only. So the app's stdout and stderr are pointed
+      # at log/test.log for the duration of the run, and the reporter keeps the real
+      # terminal it captured beforehand. `--verbose` tees both back, which is the whole
+      # point of that flag.
+      def capture_console!(file, tee_to)
+        @console_out = $stdout
+        @console_err = $stderr
+
+        replacement = tee_to ? Tee.new(file, tee_to) : file
+        $stdout = replacement
+        $stderr = replacement
+      end
+
+      def restore_console!
+        $stdout = @console_out if @console_out
+        $stderr = @console_err if @console_err
+        @console_out = nil
+        @console_err = nil
+      end
+
       # Puts back whatever the app had before route!. Only useful in-process (our own
       # suite, or a REPL); a real run never wants its logs back on stdout.
       def restore!
+        restore_console!
         (@previous || {}).each do |constant_name, (setter, logger)|
           constant = resolve(constant_name)
           constant&.public_send(setter, logger)

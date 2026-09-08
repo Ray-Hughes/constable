@@ -5,6 +5,32 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.3.2]
+
+### stdout is results only — the app's stdout too, not just Constable's
+
+`log/test.log` has taken Rails' loggers since 1.0.0. It did not take anything a gem writes
+directly to `$stdout` or `$stderr`, and a warning fired once per file lands in the middle
+of the live stream:
+
+```
+Address    ✓✓✓✓✓✓✓✓✓✓✓To use retry middleware with Faraday v2.0+, install `faraday-retry` gem
+```
+
+Both streams are now pointed at the log for the duration of a run, and the reporter keeps
+the terminal it captured beforehand. `--verbose` tees them back, which is what that flag
+is for.
+
+Two ordering bugs came with it, both caught before release. The console has to be taken
+**before** the Rails check, because `route!` runs before the app boots and most of the
+noise is emitted *by* booting it. And colour detection was asking `$stdout.tty?` — which
+by then is a file, and a file is never a tty, so colour would have silently switched off
+for everybody.
+
+Not intercepted: a write straight to file descriptor 2. Capturing that would also swallow
+a real crash and break `binding.pry`, so `2>/dev/null` stays the user's decision.
+
+
 ## [1.3.1]
 
 ### Cold cases now read `.rspec`
@@ -528,7 +554,8 @@ Initial release.
 - Diff-based coverage gate — only lines changed in the current diff are held to the
   threshold. `constable beat` for the full picture, `--html` for a browsable report.
 
-[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/Ray-Hughes/constable/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Ray-Hughes/constable/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Ray-Hughes/constable/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Ray-Hughes/constable/compare/v1.1.0...v1.2.0
