@@ -224,6 +224,60 @@ module Constable
       lines.each { |line| assert_operator line.length, :<=, RULE.length, "line ran past the frame: #{line.inspect}" }
     end
 
+    # --- cold cases at scale -----------------------------------------------------------
+    #
+    # A suite part-way through adoption has hundreds of cold-case files -- one real app
+    # had 1,277 -- and each one warns. Printed individually that is four thousand lines
+    # of the same sentence, and the warnings that need a decision are buried in it.
+
+    def cold_case_warnings(count, tests_each: 5)
+      Array.new(count) do |i|
+        { kind: :cold_case, location: "spec/models/thing_#{i}_spec.rb", tests: tests_each,
+          message: "running as a cold case (Constable::ColdCase::RSpec) — " \
+                   "#{tests_each} tests not yet under native rules" }
+      end
+    end
+
+    def test_a_few_cold_cases_are_still_listed_one_by_one
+      reporter.finish(results: passing(1), warnings: cold_case_warnings(3))
+
+      assert_equal 3, output.scan(/thing_\d+_spec\.rb/).size
+    end
+
+    def test_many_cold_cases_collapse_into_one_line
+      reporter.finish(results: passing(1), warnings: cold_case_warnings(1277))
+
+      assert_empty output.scan(/thing_\d+_spec\.rb/), "1,277 filenames is not a summary"
+      assert_match(/1277 files running as cold cases/, output)
+    end
+
+    # The count is the point of the warning: it is the number that is supposed to shrink.
+    def test_the_collapsed_line_keeps_the_totals
+      reporter.finish(results: passing(1), warnings: cold_case_warnings(20, tests_each: 7))
+
+      assert_match(/20 files running as cold cases, 140 tests/, output)
+      assert_match(/constable test --unsafe/, output, "it should say how to run just those")
+    end
+
+    def test_collapsing_does_not_swallow_other_warnings
+      warnings = cold_case_warnings(50) +
+                 [{ kind: :unsafe, location: "test/cases/a_case.rb:9",
+                    message: "unsafe { sleep(0.1) } — waiting on a real timeout" }]
+
+      reporter.finish(results: passing(1), warnings: warnings)
+
+      assert_match(/files running as cold cases/, output)
+      assert_match(/a_case\.rb:9/, output, "an unsafe block still needs a decision")
+    end
+
+    # The headline count is unaffected: the summary line is about how they are displayed,
+    # not how many there are.
+    def test_the_headline_still_counts_every_warning
+      reporter.finish(results: passing(1), warnings: cold_case_warnings(1277))
+
+      assert_match(/1277 warnings/, output)
+    end
+
     # --- the whole summary ----------------------------------------------------------
 
     def test_the_summary_renders_exactly_as_specified

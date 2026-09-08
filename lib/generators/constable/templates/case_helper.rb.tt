@@ -156,6 +156,7 @@ end
 #
 #      c.cold_cases         = []      # RSpec/Minitest globs to run as cold cases
 #      c.parallel_workers   = "auto"  # or an integer. Each worker gets its own database
+#      c.worker_databases   = :schema # or :reuse (keep them between runs) / :off
 #      c.output             = :concise    # or :expanded -- a line per test, with timings
 #      c.fail_on_warnings   = false   # CI: fail when the warning count is not trending down
 #      c.warrants           = false   # rerun a failure in isolation before believing it

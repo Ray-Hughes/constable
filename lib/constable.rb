@@ -97,8 +97,8 @@ module Constable
 
     # Warnings are never silent and never fatal by default. They accumulate through a run
     # and always get their own section in the summary.
-    def warn!(message, location: nil, kind: :unsafe)
-      warnings << { message: message, location: location, kind: kind }
+    def warn!(message, location: nil, kind: :unsafe, **extra)
+      warnings << { message: message, location: location, kind: kind, **extra }
     end
 
     def warnings
@@ -149,7 +149,7 @@ module Constable
     SETTINGS = %i[
       cold_cases warrants warrant_retries auto_relink parole_period
       coverage coverage_threshold coverage_html fail_on_warnings parallel_workers
-      output tiers
+      worker_databases output tiers
     ].freeze
 
     # `storage` is the one setting that cannot live here, and the reason is ordering, not

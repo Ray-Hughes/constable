@@ -73,6 +73,21 @@ fail_on_warnings: false  # CI: fail the build when the warning count doesn't tre
 
 parallel_workers: auto   # or an explicit integer
 
+# How a parallel worker gets a database of its own. Sharing one is not a speed/safety
+# trade but a correctness bug: on SQLite the run dissolves into "database is locked", and
+# on a client/server database tests quietly see each other's rows.
+#
+#   schema  rebuild <database>_<index> from schema on every run. What Rails does for
+#           `rails test`, and correct by construction -- no drift is possible.
+#   reuse   connect to <database>_<index> when it is already there, and build it from
+#           schema only when it is not. Faster, because a large schema is not reloaded
+#           every run -- and the only option that works at all when the schema cannot
+#           rebuild the database by itself, which is true of any app with Postgres custom
+#           types (`CREATE TYPE` has no schema.rb representation, so a from-scratch load
+#           fails). Keeping those databases current becomes your job.
+#   off     do not shard, so do not fork. An explicit serial run: no attempt, no warning.
+worker_databases: schema   # schema | reuse | off
+
 # How much the live stream says while the suite is running. The summary is identical
 # either way -- this only changes what you watch on the way there.
 #

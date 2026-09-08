@@ -399,6 +399,40 @@ module Constable
       end
     end
 
+    desc "prepare", "Build the per-worker test databases parallel runs need"
+    long_desc <<~DESC
+      For `worker_databases: reuse`. Creates `<database>_0` .. `<database>_<N-1>` and
+      loads the schema into each, once, so later runs can connect straight to them.
+
+      Only useful for an app that has opted into reuse -- the default `schema` mode
+      rebuilds them on every run and needs no preparation. It is the answer for an app
+      whose schema cannot rebuild the database by itself: prepare these once, by whatever
+      means already works for you, and Constable will use them from then on.
+    DESC
+    option :workers, type: :numeric, desc: "How many to prepare (default: the configured worker count)"
+    def prepare
+      config = load_config
+      unless WorkerDatabases.shardable?
+        warn "This app has no ActiveRecord test databases to prepare."
+        exit(EXIT_USAGE)
+      end
+
+      count = (options[:workers] || config.parallel_workers).to_i.clamp(1, 64)
+      say "Preparing #{count} worker #{count == 1 ? "database" : "databases"}..."
+
+      count.times do |index|
+        built = WorkerDatabases.prepare!(index)
+        say "  worker #{index}: #{built.empty? ? "already prepared" : "built #{built.join(", ")}"}"
+      end
+
+      say "\nDone. Set `worker_databases: reuse` so runs connect to these instead of " \
+          "rebuilding them."
+      0
+    rescue Constable::Error => e
+      warn e.message
+      exit(EXIT_FAILED)
+    end
+
     desc "prune", "Forget docket rows and warrants for tests that no longer exist"
     long_desc <<~DESC
       A test's key is a content hash of its body, so editing a jailed test gives it a new

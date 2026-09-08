@@ -5,6 +5,60 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.3.0]
+
+Adoption at scale. Everything here came from installing 1.2.0 into a 1,277-spec-file
+Postgres app.
+
+### `worker_databases: reuse`
+
+Per-worker databases have been rebuilt from schema on every run since 1.0.0, which is
+what Rails does for `rails test`. It is correct by construction — no drift is possible —
+and it is useless for an app whose schema **cannot** rebuild the database by itself. Any
+app with Postgres custom types is in that position: `CREATE TYPE` has no `schema.rb`
+representation, so a from-scratch load fails on a schema that references a type it never
+defines.
+
+```yaml
+worker_databases: schema   # schema (default) | reuse | off
+```
+
+`reuse` connects to `<database>_<index>` when it is already there and builds it from
+schema only when it is not — checking each database separately, which matters for a
+multi-database app where one may be prepared and another not. "Already there" means
+present *and* holding tables: an empty database is not a prepared one, and running a
+suite against no tables is the worst available outcome.
+
+It is also just faster for everyone. A 3,000-line schema is no longer reloaded once per
+worker per run.
+
+`off` skips sharding entirely — an explicit serial run, no attempt and no warning.
+
+New command, for the one-time setup `reuse` needs:
+
+```console
+$ constable prepare              # build <database>_0 .. _<N-1>, once
+$ constable prepare --workers 8
+```
+
+### Hundreds of cold cases no longer bury the summary
+
+Every cold-case file warns, once per run, so that "12 tests not yet under native rules"
+is never something the suite quietly forgets to mention. At 1,277 files that is four
+thousand lines of the same sentence, and the warnings that actually need a decision — an
+`unsafe` block, a jailed test — are lost inside it.
+
+Past ten files they collapse into one line that keeps the numbers, which are the part
+that is supposed to shrink:
+
+```
+⚠ 1277 files running as cold cases, 18432 tests — not yet under native rules.
+  `constable test --unsafe` runs just these.
+```
+
+Fewer than ten are still listed individually, and nothing else is ever collapsed.
+
+
 ## [1.2.0]
 
 Two bugs found installing 1.1.0 into a large real Postgres app (~3,000-line schema,
@@ -408,7 +462,8 @@ Initial release.
 - Diff-based coverage gate — only lines changed in the current diff are held to the
   threshold. `constable beat` for the full picture, `--html` for a browsable report.
 
-[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/Ray-Hughes/constable/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Ray-Hughes/constable/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Ray-Hughes/constable/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Ray-Hughes/constable/compare/v0.1.0...v1.0.0

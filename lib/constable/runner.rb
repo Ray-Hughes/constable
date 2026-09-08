@@ -283,6 +283,9 @@ module Constable
     #
     # When we cannot shard, we run serially and say why. Slow is a trade-off; wrong is not.
     def parallel_safe?
+      # An explicit opt-out. No attempt, and no warning about one -- the user has already
+      # told us they know.
+      return false if @config.worker_databases == :off
       return true unless WorkerDatabases.active_record?
       return true if WorkerDatabases.shardable?
 
@@ -342,7 +345,7 @@ module Constable
           # A raise here dumps a full stack trace per worker and leaves the parent
           # reporting a run that never happened.
           begin
-            WorkerDatabases.after_fork!(worker_index)
+            WorkerDatabases.after_fork!(worker_index, mode: @config.worker_databases)
           rescue Constable::Error => e
             write_message(writer, :worker_error, e.message)
             writer.close
@@ -400,8 +403,9 @@ module Constable
         "no parallel worker could build its own test database, so the suite ran serially " \
         "instead. This usually means the app's schema cannot rebuild the database by " \
         "itself -- Postgres custom types, functions and triggers are the common reason, " \
-        "and `rails test` parallelization fails the same way. Set `parallel_workers: 1` " \
-        "to skip the attempt. The first worker said: #{reason}",
+        "and `rails test` parallelization fails the same way. Set " \
+        "`worker_databases: reuse` to keep prepared databases between runs instead, or " \
+        "`worker_databases: off` to stop trying. The first worker said: #{reason}",
         kind: :parallel
       )
 

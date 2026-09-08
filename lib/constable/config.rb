@@ -21,6 +21,7 @@ module Constable
       "fail_on_warnings" => false,
       "output" => "concise",
       "parallel_workers" => "auto",
+      "worker_databases" => "schema",
       "tiers" => {
         "unit" => "test/cases/models/**/*",
         "integration" => "test/cases/controllers/**/*",
@@ -103,6 +104,24 @@ module Constable
     #             but you can see which test is hanging without waiting for the summary.
     #
     # The summary itself is identical either way. This only affects the live stream.
+    # How a parallel worker gets a database of its own.
+    #
+    #   schema  rebuild `<database>_<index>` from schema on every run. What Rails does for
+    #           `rails test`, and correct by construction: no drift is possible.
+    #   reuse   connect to `<database>_<index>` when it already exists, and build it from
+    #           schema only when it does not. Faster -- a large schema is not reloaded on
+    #           every run -- and the only option that works for an app whose schema cannot
+    #           rebuild the database by itself, which is any app with Postgres custom
+    #           types. The cost is that keeping those databases current is now yours.
+    #   off     do not shard, so do not fork. An explicit serial run, with no attempt and
+    #           no warning.
+    WORKER_DATABASE_MODES = %i[schema reuse off].freeze
+
+    def worker_databases
+      mode = @raw["worker_databases"].to_s.strip.downcase.to_sym
+      WORKER_DATABASE_MODES.include?(mode) ? mode : :schema
+    end
+
     OUTPUT_MODES = %i[concise expanded].freeze
 
     def output_mode

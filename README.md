@@ -399,6 +399,7 @@ worse than one that resets.
 | `constable status` | How the suite is doing over time |
 | `constable beat [--html]` | Coverage: overall %, per-file, the unpatrolled list |
 | `constable history relink OLD NEW` | Carry history across a real body change |
+| `constable prepare [--workers N]` | Build the per-worker test databases `worker_databases: reuse` needs |
 | `constable prune [--dry-run]` | Forget docket rows and warrants for tests that no longer exist |
 | `constable import --from=rspec` | Adopt an existing suite as cold cases |
 | `constable modernize PATH` | Opt-in AST rewrite into the native DSL |
@@ -409,7 +410,11 @@ Order is randomized every run for native cases, with the seed printed and replay
 `--seed`. Cold cases keep their own engine's order. Workers run in parallel by default,
 load-balanced by a cached per-test duration index.
 
-Each worker gets **its own database**, built from schema the way `rails test` does it.
+Each worker gets **its own database**, built from schema the way `rails test` does it —
+or kept between runs, with `worker_databases: reuse`, which is both faster and the only
+thing that works for an app whose schema cannot rebuild the database by itself (any app
+with Postgres custom types: `CREATE TYPE` has no `schema.rb` representation). Prepare
+those once with `constable prepare`.
 Sharing one would not be a speed/safety trade but a correctness bug: on SQLite the run
 dissolves into `database is locked`, and on a client/server database tests quietly see
 each other's rows. If your app has ActiveRecord but cannot shard, Constable runs serially

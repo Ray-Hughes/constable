@@ -44,6 +44,12 @@ module Constable
     # without a limit a quiet case could hold the buffer forever.
     STREAM_FLUSH_THRESHOLD = 12
 
+    # How many cold-case files are listed one by one before they are summarised instead.
+    # A suite part-way through adoption has hundreds -- one real app had 1,277 -- and
+    # printing every one buries the warnings that actually need a decision under four
+    # thousand lines that say the same thing.
+    COLD_CASE_LIST_LIMIT = 10
+
     DEFAULT_SLOWEST = 5
 
     # Column the expanded stream right-aligns durations into. Descriptions are never
@@ -609,6 +615,7 @@ module Constable
     end
 
     def section_warnings(warnings)
+      warnings = collapse_cold_cases(warnings)
       return if warnings.empty?
 
       section("WARNINGS")
@@ -622,6 +629,25 @@ module Constable
           warning_message_lines(message).each { |line| writeln(ENTRY_INDENT + line) }
         end
       end
+    end
+
+    # Cold cases are a fact about the suite, not a list of problems: every one says the
+    # same sentence about a different file. Past the limit they become one line that
+    # still carries the number -- which is the part that is supposed to shrink over time,
+    # and the reason the warning exists at all.
+    def collapse_cold_cases(warnings)
+      cold, rest = warnings.partition { |w| w[:kind] == :cold_case }
+      return warnings if cold.size <= COLD_CASE_LIST_LIMIT
+
+      tests = cold.sum { |w| w[:tests].to_i }
+      total = tests.positive? ? ", #{tests} #{pluralize(tests, "test")}" : ""
+
+      [{
+        kind: :cold_case,
+        location: nil,
+        message: "#{cold.size} files running as cold cases#{total} — not yet under " \
+                 "native rules. `constable test --unsafe` runs just these."
+      }] + rest
     end
 
     # A warning carries the author's own words -- an unsafe block's reason, a cold case's
@@ -707,7 +733,11 @@ module Constable
       w = warning.to_h.transform_keys(&:to_sym)
       return nil if w[:message].nil?
 
-      { message: w[:message].to_s, location: w[:location], kind: (w[:kind] || :unsafe).to_sym }
+      # `tests` rides along so cold cases can be totalled when there are too many to list.
+      # Normalizing is about the three fields the reporter needs, not about discarding
+      # everything a warning chose to carry.
+      { message: w[:message].to_s, location: w[:location], kind: (w[:kind] || :unsafe).to_sym,
+        tests: w[:tests] }.compact
     end
 
     def normalize_coverage(coverage)

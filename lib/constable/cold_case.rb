@@ -195,7 +195,11 @@ module Constable
           "running as a cold case (#{base_class_name}) — " \
           "#{count} #{count == 1 ? "test" : "tests"} not yet under native rules",
           location: location,
-          kind: :cold_case
+          kind: :cold_case,
+          # Carried so the reporter can total them when there are too many to list. A
+          # suite mid-adoption has hundreds of these, and printing every one buries the
+          # things that actually need a decision.
+          tests: count
         )
       end
 

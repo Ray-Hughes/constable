@@ -16,26 +16,65 @@ module Constable
     end
 
     # Builds just enough ::ActiveRecord for WorkerDatabases to have an opinion.
-    def stub_active_record(with_test_databases: true)
-      calls = { cleared: 0, schema: [] }
+    # The smallest thing that behaves like ActiveRecord for this module's purposes.
+    # `populated:` decides whether the per-worker databases already hold tables, which is
+    # the question :reuse mode turns on.
+    def stub_active_record(with_test_databases: true, populated: false, databases: %w[primary])
+      calls = { cleared: 0, schema: [], reconstructed: [], renamed: [] }
 
       Object.const_set(:ActiveRecord, Module.new) unless defined?(::ActiveRecord)
       handler = Object.new
       handler.define_singleton_method(:clear_all_connections!) { calls[:cleared] += 1 }
 
+      configs = databases.map { |name| FakeDbConfig.new(name, calls) }
+      connection = Object.new
+      connection.define_singleton_method(:tables) { populated ? %w[users] : [] }
+
       base = Class.new
       base.define_singleton_method(:connection_handler) { handler }
+      base.define_singleton_method(:connection) { connection }
+      base.define_singleton_method(:establish_connection) { |*| true }
+      base.define_singleton_method(:configurations) do
+        Object.new.tap do |c|
+          c.define_singleton_method(:configs_for) { |**| configs }
+        end
+      end
       ::ActiveRecord.const_set(:Base, base)
 
+      tasks = Module.new
+      tasks.define_singleton_method(:reconstruct_from_schema) do |db_config, _|
+        calls[:reconstructed] << db_config.database
+      end
+      ::ActiveRecord.const_set(:Tasks, Module.new) unless ::ActiveRecord.const_defined?(:Tasks, false)
+      ::ActiveRecord::Tasks.const_set(:DatabaseTasks, tasks)
+
       if with_test_databases
-        databases = Module.new
-        databases.define_singleton_method(:create_and_load_schema) do |index, env_name:|
+        test_databases = Module.new
+        test_databases.define_singleton_method(:create_and_load_schema) do |index, env_name:|
           calls[:schema] << [index, env_name]
         end
-        ::ActiveRecord.const_set(:TestDatabases, databases)
+        ::ActiveRecord.const_set(:TestDatabases, test_databases)
       end
 
       calls
+    end
+
+    # Stands in for an ActiveRecord::DatabaseConfigurations::HashConfig. Records the
+    # rename, which is the part :reuse mode has to get right for a multi-database app.
+    class FakeDbConfig
+      attr_reader :database
+
+      def initialize(database, calls)
+        @database = database
+        @calls = calls
+      end
+
+      def _database=(name)
+        @database = name
+        @calls[:renamed] << name
+      end
+
+      def database_tasks? = true
     end
 
     def teardown_fake_active_record
@@ -43,6 +82,7 @@ module Constable
 
       ::ActiveRecord.send(:remove_const, :Base) if ::ActiveRecord.const_defined?(:Base, false)
       ::ActiveRecord.send(:remove_const, :TestDatabases) if ::ActiveRecord.const_defined?(:TestDatabases, false)
+      ::ActiveRecord.send(:remove_const, :Tasks) if ::ActiveRecord.const_defined?(:Tasks, false)
       Object.send(:remove_const, :ActiveRecord) if ::ActiveRecord.constants.empty?
     end
 
@@ -202,8 +242,93 @@ module Constable
       warning = Constable.warnings.find { |w| w[:kind] == :parallel }
       refute_nil warning, "a silent fallback is the failure mode this exists to prevent"
       assert_match(/ran serially/, warning[:message])
-      assert_match(/parallel_workers: 1/, warning[:message], "it should say how to skip the attempt")
+      assert_match(/worker_databases: reuse/, warning[:message], "it should offer the way that works")
+      assert_match(/worker_databases: off/, warning[:message], "and the way to stop trying")
       assert_match(/assign_record/, warning[:message], "and pass the real error through")
+    end
+
+    # --- worker_databases modes --------------------------------------------------------
+
+    def test_reuse_builds_a_database_that_is_not_there_yet
+      calls = stub_active_record(populated: false)
+
+      WorkerDatabases.after_fork!(0, mode: :reuse)
+
+      assert_equal 1, calls[:reconstructed].size, "a missing database still has to be built"
+    end
+
+    # The point of the mode: a prepared database is not rebuilt, so a large schema is not
+    # reloaded on every run -- and an app whose schema cannot load standalone still works.
+    def test_reuse_leaves_a_prepared_database_alone
+      calls = stub_active_record(populated: true)
+
+      WorkerDatabases.after_fork!(0, mode: :reuse)
+
+      assert_empty calls[:reconstructed]
+    end
+
+    # A database that exists but is empty is not prepared. Running a suite against no
+    # tables is the worst of the available outcomes.
+    def test_reuse_rebuilds_an_empty_database
+      calls = stub_active_record(populated: false)
+
+      WorkerDatabases.after_fork!(0, mode: :reuse)
+
+      refute_empty calls[:reconstructed]
+    end
+
+    def test_reuse_renames_every_database_to_its_worker_sibling
+      calls = stub_active_record(populated: true, databases: %w[primary etl])
+
+      WorkerDatabases.after_fork!(3, mode: :reuse)
+
+      assert_equal %w[primary_3 etl_3], calls[:renamed]
+    end
+
+    def test_schema_mode_is_still_the_default
+      calls = stub_active_record
+
+      WorkerDatabases.after_fork!(1)
+
+      assert_equal [[1, "test"]], calls[:schema]
+      assert_empty calls[:reconstructed]
+    end
+
+    # --- constable prepare -------------------------------------------------------------
+
+    def test_prepare_builds_the_databases
+      calls = stub_active_record(populated: false)
+
+      WorkerDatabases.prepare!(0)
+
+      refute_empty calls[:reconstructed]
+    end
+
+    # prepare! renames in the parent, not in a fork that is about to die. Leaving the
+    # names renamed would point the console -- and anything else in the process -- at
+    # `<database>_0` instead of the real test database.
+    def test_prepare_puts_the_database_names_back
+      stub_active_record(populated: true, databases: %w[primary etl])
+
+      WorkerDatabases.prepare!(2)
+
+      assert_equal %w[primary etl], WorkerDatabases.database_names
+    end
+
+    def test_prepare_puts_the_names_back_even_when_it_fails
+      stub_active_record(populated: false, databases: %w[primary])
+      ::ActiveRecord::Tasks::DatabaseTasks.define_singleton_method(:reconstruct_from_schema) do |*|
+        raise "no such schema"
+      end
+
+      assert_raises(Constable::Error) { WorkerDatabases.prepare!(0) }
+      assert_equal %w[primary], WorkerDatabases.database_names
+    end
+
+    def test_prepare_refuses_an_app_with_no_databases
+      error = assert_raises(Constable::Error) { WorkerDatabases.prepare!(0) }
+
+      assert_match(/no ActiveRecord databases to prepare/, error.message)
     end
   end
 end
