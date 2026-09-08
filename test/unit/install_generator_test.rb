@@ -310,6 +310,47 @@ module Constable
       assert_match(/^  gem "rspec-rails"$/, generated("Gemfile"))
     end
 
+    # The configure block is the reference for Ruby-side settings the way config.yml is
+    # for the file, so every setting has to appear in it. Missing one means somebody
+    # cannot discover it without reading the gem.
+    def test_the_configure_block_lists_every_setting
+      install
+      helper = generated("test/case_helper.rb")
+
+      Configuration::SETTINGS.each do |setting|
+        assert_match(/c\.#{setting}\s*=/, helper, "case_helper.rb should show c.#{setting}")
+      end
+    end
+
+    # ...and must not show the one that raises.
+    def test_the_configure_block_does_not_offer_storage
+      install
+      helper = generated("test/case_helper.rb")
+
+      refute_match(/^\s*#?\s*c\.storage\s*=/, helper)
+      assert_match(/CONSTABLE_STORAGE_URL/, helper, "it should say where storage does go")
+    end
+
+    # --- a Ruby-only setup ------------------------------------------------------------
+    #
+    # config.yml is optional: every setting except `storage` can be written in
+    # test/case_helper.rb, and storage can come from the environment. Somebody who wants
+    # one place for configuration should not be handed a second one they did not ask for.
+
+    def test_skip_config_writes_no_yaml
+      install(["--skip-config"])
+
+      refute generated?(".constable/config.yml")
+    end
+
+    def test_skip_config_still_writes_everything_else
+      install(["--skip-config"])
+
+      assert generated?("test/case_helper.rb")
+      assert generated?(".rubocop.yml")
+      assert generated?(".gitignore")
+    end
+
     # --- upgrading an existing config -------------------------------------------------
     #
     # config.yml doubles as the reference: every key at its default, with the reasoning

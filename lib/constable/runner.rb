@@ -86,11 +86,6 @@ module Constable
       Constable::Coverage.start!(config: @config, force: true) if coverage?
 
       load_suite!
-      # case_helper.rb has now run, so anything it set through Constable.configure exists.
-      # Applied before the first read of any setting, and before the reporter resolves its
-      # own mode. CLI flags still win: they are held separately and checked first.
-      @config.apply_overrides!(Constable.configuration.overrides)
-
       # Before anything is keyed on an identity -- selection, the docket, flake history --
       # settle any two tests that happen to share a body.
       Constable.registry.disambiguate_identities!
@@ -160,6 +155,15 @@ module Constable
       helper = %w[test/case_helper.rb spec/case_helper.rb].map { |p| File.join(Constable.root, p) }
                                                           .find { |p| File.exist?(p) }
       require helper if helper
+
+      # Between requiring the helper and asking the selection anything.
+      #
+      # Ordering is the whole point. case_helper.rb is where Constable.configure runs, so
+      # its settings do not exist until the line above. But Selection memoizes its targets
+      # the first time it is asked for them, and `cold_cases` is one of the settings people
+      # will most want to set in Ruby -- ask first and the override arrives too late to
+      # matter, silently. Requiring the helper needs no selection, so this fits between.
+      @config.apply_overrides!(Constable.configuration.overrides)
 
       @selection.native_targets.each { |target| load_case_file(target.path) }
       helper

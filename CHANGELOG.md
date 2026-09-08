@@ -51,9 +51,34 @@ read the docket without booting the app — a broken app should not stop you rea
 docket. Setting it in Ruby would have been silently ignored, which is the exact failure
 this release exists to stop, so it raises and explains why.
 
-The docs now lead with Ruby. `.constable/config.yml` is optional and framed as what it is:
-a greppable file for values that differ per project or per branch, plus the one setting
-that has to be readable without executing anything.
+The docs now lead with Ruby. The generated `case_helper.rb` lists **every** setting at its
+default, commented out and ready to uncomment, so it can be the only place you configure
+Constable — with a test asserting the list stays complete, and that it never offers
+`storage`.
+
+### `.constable/config.yml` is now genuinely optional
+
+You can delete it. `rails generate constable:install --skip-config` never writes it.
+
+The one thing keeping it mandatory was `storage`, which cannot be set in Ruby for the
+ordering reason above. It now reads from the environment as well, which is the right shape
+for CI anyway, where the value is a secret and differs per machine:
+
+```
+CONSTABLE_STORAGE_URL=postgres://user:pass@host/constable_metadata
+CONSTABLE_STORAGE_PATH=/var/lib/constable/blotter.sqlite3
+CONSTABLE_STORAGE_ADAPTER=postgres
+```
+
+An adapter is inferred from the URL scheme when it is not given, and an empty variable
+means unset rather than "connect to the empty string". The `.constable/` **directory**
+still exists to hold the blotter — deliberately not `tmp/`, which `rails tmp:clear` and
+most deploys would wipe, taking weeks of flake history with it.
+
+One bug found while checking this end to end, in the override layer added above: settings
+were applied *after* the selection had already been asked for its targets, so
+`c.cold_cases` in Ruby was silently ignored and a suite of 192 ran 35. Overrides are now
+applied between requiring the helper and asking the selection anything.
 
 ### Settings added after you install are no longer invisible
 

@@ -45,6 +45,8 @@ module Constable
                                   desc: "Don't write the example case under test/cases/"
       class_option :skip_support, type: :boolean, default: false,
                                   desc: "Don't write the example files under test/support/"
+      class_option :skip_config, type: :boolean, default: false,
+                                 desc: "Don't write .constable/config.yml -- configure in Ruby instead"
 
       COLD_CASE_HEADER = <<~RUBY
         # Cold cases: your existing RSpec/Minitest files, run verbatim through their own
@@ -103,6 +105,11 @@ module Constable
       # So: create it if it is missing, and otherwise append only the settings it does not
       # already mention. Your edits and comments are never touched.
       def create_config
+        if options[:skip_config]
+          say_status :skip, ".constable/config.yml (configure in test/case_helper.rb instead)", :blue
+          return
+        end
+
         path = File.join(destination_root, ".constable/config.yml")
         return template("config.yml.tt", ".constable/config.yml") unless File.exist?(path)
 

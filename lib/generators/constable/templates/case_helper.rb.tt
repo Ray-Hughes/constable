@@ -151,39 +151,96 @@ end
 #      .constable/config.yml   the project's declared defaults
 #      Constable's defaults
 #
-#  Every key config.yml understands can be set here. The full list:
-#
-#      c.cold_cases         = ["spec/**/*_spec.rb"]
-#      c.storage            = { "adapter" => "sqlite", "path" => ".constable/x.sqlite3" }
-#      c.warrants           = true
-#      c.warrant_retries    = 5
-#      c.auto_relink        = false
-#      c.parole_period      = 10
-#      c.coverage           = true
-#      c.coverage_threshold = 90
-#      c.coverage_html      = false
-#      c.fail_on_warnings   = true
-#      c.parallel_workers   = 4
-#      c.output             = :expanded
-#      c.tiers              = { "unit" => "test/cases/models/**/*" }
-#
-#  Which is worth using when? A setting that differs per machine or per branch
-#  belongs in config.yml, where it is obvious and greppable. A setting that has to
-#  be computed -- workers from an env var, coverage only on CI -- belongs here,
-#  because YAML cannot do that:
+#  Which is worth using when? A settings file is greppable and diffable without
+#  running anything, which suits values that differ per project or per branch.
+#  Ruby suits anything that has to be computed, because YAML cannot:
 #
 #      c.parallel_workers = ENV.fetch("CI_WORKERS", 4).to_i
 #      c.coverage         = ENV["CI"] == "true"
+#
+#  Every setting is listed below at its default, so this file can be the only
+#  place you configure Constable -- `.constable/config.yml` is optional and can
+#  be deleted. The one exception is `storage`; see the note on it below.
 # -----------------------------------------------------------------------------
 
 Constable.configure do |c|
-  # Workers default to `auto` -- processor count minus a little headroom, so the
-  # machine stays usable while the suite runs. Pin it only when a CI container
-  # lies about its core count.
+  # --- Adoption --------------------------------------------------------------
+
+  # Existing RSpec/Minitest files to run verbatim as cold cases, through their
+  # own engine, with results merged into Constable's reporting and CI gate.
+  # This is the zero-file-change adoption route.
+  # c.cold_cases = ["spec/**/*_spec.rb"]
+
+  # --- Speed -----------------------------------------------------------------
+
+  # Defaults to `auto`: processor count minus a little headroom, so the machine
+  # stays usable while the suite runs. Pin it only when a CI container lies
+  # about its core count. Each worker gets its own database.
   # c.parallel_workers = 4
 
-  # The live stream: :concise (one glyph per test) or :expanded (a line each).
+  # --- Output ----------------------------------------------------------------
+
+  # The live stream while the suite runs. The summary is identical either way.
+  #   :concise   one glyph per test, grouped per case (default)
+  #   :expanded  a line per test: glyph, name, duration
   # c.output = :expanded
+
+  # CI: fail the build when the warning count is not trending down. Warnings are
+  # cold-case files and `unsafe` blocks -- things that are allowed but visible.
+  # c.fail_on_warnings = true
+
+  # --- Flake handling --------------------------------------------------------
+
+  # Rerun a failure in isolation before believing it. A test that fails then
+  # passes is flaky rather than broken: it gets a warrant instead of failing the
+  # build, and stays loudly visible until someone deals with it.
+  # c.warrants = true
+
+  # Reruns before deciding. A partial sample is a worse answer than a slower one.
+  # c.warrant_retries = 5
+
+  # Consecutive clean runs before a paroled test releases itself.
+  # c.parole_period = 10
+
+  # Auto-confirm high-confidence rename detection instead of suggesting
+  # `constable history relink`.
+  # c.auto_relink = false
+
+  # --- Coverage --------------------------------------------------------------
+
+  # c.coverage           = true
+  # c.coverage_threshold = 90     # diff-based: only lines changed in this diff
+  # c.coverage_html      = false  # write a browsable report every run
+
+  # --- Tiers -----------------------------------------------------------------
+
+  # Fallback path-based inference, used only when a case does not inherit from
+  # one of the tier base classes above. Inheritance is the primary mechanism and
+  # always wins; this is here so an un-migrated file lands somewhere sensible
+  # rather than in the slowest tier.
+  # c.tiers = {
+  #   "unit"        => "test/cases/models/**/*",
+  #   "integration" => "test/cases/controllers/**/*",
+  #   "system"      => "test/cases/system/**/*"
+  # }
+
+  # --- storage: the one setting that cannot live here ------------------------
+  #
+  # The blotter is opened before this file loads, so that `constable jail`,
+  # `warrants`, `watchlist` and `status` can read the docket without booting the
+  # app -- a broken app should not stop you reading the docket. Setting it here
+  # raises rather than being quietly ignored. Use .constable/config.yml:
+  #
+  #   storage:
+  #     adapter: postgres
+  #     url: postgres://user:pass@host/constable_metadata
+  #
+  # ...or the environment, which suits CI, where it is a secret and differs per
+  # machine:
+  #
+  #   CONSTABLE_STORAGE_URL   CONSTABLE_STORAGE_PATH   CONSTABLE_STORAGE_ADAPTER
+
+  # --- Code, which only lives here -------------------------------------------
 
   # One-time global setup, run once per process before the whole suite. This is
   # for configuring the world -- drivers, adapters, formats -- and deliberately

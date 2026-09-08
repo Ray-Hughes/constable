@@ -113,11 +113,33 @@ module Constable
     def expanded_output? = output_mode == :expanded
     def storage            = @raw["storage"] || {}
 
-    def storage_adapter = (storage["adapter"] || "sqlite").to_s
-    def storage_url     = storage["url"]
+    # Storage is the one setting that cannot be written in Ruby -- the blotter is opened
+    # before test/case_helper.rb loads, so `constable jail` and `constable status` can read
+    # the docket without booting the app. That would leave .constable/config.yml mandatory
+    # for anyone not on the default SQLite, so the environment can say it instead:
+    #
+    #   CONSTABLE_STORAGE_URL=postgres://user:pass@host/constable_metadata
+    #   CONSTABLE_STORAGE_PATH=/var/lib/constable/blotter.sqlite3
+    #
+    # Which is also the right shape for CI, where the value is a secret and differs per
+    # machine. The environment wins over the file, as an environment usually should.
+    def storage_url = env_or("CONSTABLE_STORAGE_URL", storage["url"])
+
+    def storage_adapter
+      explicit = env_or("CONSTABLE_STORAGE_ADAPTER", storage["adapter"])
+      return explicit.to_s if explicit
+
+      # A URL with no adapter names its own: postgres://... can only mean postgres.
+      scheme = storage_url.to_s[%r{\A([a-z][a-z0-9+.-]*)://}, 1]
+      return "postgres" if %w[postgres postgresql].include?(scheme)
+      return "mysql" if %w[mysql mysql2].include?(scheme)
+
+      "sqlite"
+    end
 
     def storage_path
-      path = storage["path"] || DEFAULTS["storage"]["path"]
+      path = env_or("CONSTABLE_STORAGE_PATH", storage["path"]) ||
+             DEFAULTS["storage"]["path"]
       File.absolute_path?(path) ? path : File.join(@root, path)
     end
 
@@ -154,6 +176,13 @@ module Constable
     def to_h    = @raw.dup
 
     private
+
+    # An empty environment variable is not a value. `CONSTABLE_STORAGE_URL=` in a CI
+    # config means "unset", not "connect to the empty string".
+    def env_or(name, fallback)
+      value = ENV.fetch(name, nil)
+      value.nil? || value.strip.empty? ? fallback : value.strip
+    end
 
     def truthy(value)
       return false if value.nil? || value == false
