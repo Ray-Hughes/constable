@@ -41,9 +41,10 @@ module Constable
     # Re-keys this investigation because another one has the same body. Called by the
     # registry once the whole suite is loaded, which is the first moment a collision can
     # be seen. See Identity.disambiguate.
-    def disambiguate!
+    def disambiguate!(ordinal: nil)
       @identity = Identity.disambiguate(identity, case_name: case_name,
-                                                  description: full_description)
+                                                  description: full_description,
+                                                  ordinal: ordinal)
       self
     end
 

@@ -110,6 +110,19 @@ module Constable
       assert_equal 2, investigations.map(&:identity).uniq.size
     end
 
+    # A copy-pasted investigate: same case, same description, same body. Class and
+    # description cannot tell these apart, so position is the only thing left.
+    def test_two_investigations_identical_in_every_way_are_still_separated
+      build_case("AlphaCase") do
+        investigate("same") { assert(true) }
+        investigate("same") { assert(true) }
+      end
+
+      Constable.registry.disambiguate_identities!
+
+      assert_equal 2, investigations.map(&:identity).uniq.size
+    end
+
     def test_disambiguated_keys_still_look_like_identities
       identical_bodies
       Constable.registry.disambiguate_identities!

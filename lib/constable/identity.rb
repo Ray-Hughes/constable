@@ -46,8 +46,10 @@ module Constable
     # and description. The rename-survival promise is weaker for exactly those tests --
     # rewording one of them starts its history over -- which is the right trade: a
     # history that belongs to two tests at once is worse than one that resets.
-    def disambiguate(base, case_name:, description:)
-      digest("#{base}:#{case_name}:#{description}")
+    def disambiguate(base, case_name:, description:, ordinal: nil)
+      key = "#{base}:#{case_name}:#{description}"
+      key = "#{key}:#{ordinal}" unless ordinal.nil?
+      digest(key)
     end
 
     def digest(string)
