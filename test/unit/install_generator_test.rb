@@ -102,7 +102,8 @@ module Constable
       install
       helper = generated("test/case_helper.rb")
 
-      assert_match(/class UnitCase < Constable::Case\n  tier :unit\nend/, helper)
+      assert_match(/class UnitCase < Constable::Case\b/, helper)
+      assert_match(/tier :unit/, helper)
       assert_match(/class IntegrationCase < Constable::Case\b/, helper)
       assert_match(/tier :integration/, helper)
       assert_match(/class SystemCase < Constable::Case\b/, helper)
@@ -307,6 +308,45 @@ module Constable
       install
 
       assert_match(/^  gem "rspec-rails"$/, generated("Gemfile"))
+    end
+
+    # --- case_helper wiring ----------------------------------------------------------
+
+    # test/support/authenticatable.rb tells the reader to `include Authenticatable` in
+    # IntegrationCase. That only works if the support files are loaded first, and the
+    # generated file used to load them at the bottom -- so following its own advice
+    # raised NameError and the suite never booted.
+    def test_support_files_load_before_the_tier_classes
+      install
+      helper = generated("test/case_helper.rb")
+
+      support_at = helper.index("test/support/**/*.rb")
+      tiers_at   = helper.index("class UnitCase")
+
+      refute_nil support_at
+      refute_nil tiers_at
+      assert_operator support_at, :<, tiers_at,
+                      "support files must load before the tiers that include them"
+    end
+
+    # A converted spec is full of create(:user). Without this include the first native
+    # run after `constable modernize` is a wall of NoMethodError.
+    def test_tier_classes_include_factory_bot_when_it_is_available
+      install
+      helper = generated("test/case_helper.rb")
+
+      assert_match(/FactoryBot::Syntax::Methods/, helper)
+      %w[UnitCase IntegrationCase SystemCase].each do |tier|
+        body = helper[/class #{tier} < Constable::Case.*?\nend/m]
+        assert_match(/include CaseFactories/, body, "#{tier} should include the factory module")
+      end
+    end
+
+    # ...but a suite with no factory gem must still boot.
+    def test_the_factory_include_is_guarded
+      install
+
+      assert_match(/if defined\?\(FactoryBot::Syntax::Methods\)/, generated("test/case_helper.rb"))
     end
 
     # --- the blotter is machine state ------------------------------------------------
