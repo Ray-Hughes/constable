@@ -114,12 +114,26 @@ module Constable
           }
         end
 
+        # Written for somebody who has just typed `constable import` and does not yet know
+        # what a cold case is. "reopen" is the word this code uses internally and it means
+        # nothing to a reader; "import" itself suggests files were copied somewhere, which
+        # is the opposite of what happened. So: say where the files are, say what changed,
+        # and say what to do next.
         def summary
-          verb = dry_run? ? "would" : "did"
-          lines = ["#{@from} import (#{@strategy}) -- #{verb} reopen #{imported_count} file(s)"]
+          verb = dry_run? ? "Would adopt" : "Adopted"
+          noun = imported_count == 1 ? "file" : "files"
+          lines = ["#{verb} #{imported_count} #{@from} #{noun} as cold cases."]
+
           unless @globs_added.empty?
-            lines << "  config path match: added #{@globs_added.size} glob(s) to #{@config_path}"
-            @globs_added.each { |glob| lines << "    - #{glob}   (#{covered_by(glob).size} files, 0 file changes)" }
+            lines << ""
+            lines << "  Your #{@from} files stay exactly where they are and are not changed."
+            lines << "  #{dry_run? ? "One line would be added to" : "One line was added to"} " \
+                     "#{@config_path}:"
+            lines << ""
+            @globs_added.each { |glob| lines << "    cold_cases:\n      - #{glob}" }
+            lines << ""
+            lines << "  Constable runs them from there, through real #{engine_label}, and folds"
+            lines << "  the results into its own reporting, flake history and CI gate."
             unless comments_preserved?
               lines << "  note: config.yml was rewritten from parsed YAML; comments were not preserved"
             end
@@ -133,8 +147,19 @@ module Constable
             @skipped.each { |s| lines << "    - #{s[:path]} (#{s[:reason]})" }
           end
           @errors.each { |e| lines << "  error: #{e[:path]} -- #{e[:message]}" }
+
+          unless dry_run? || imported_count.zero?
+            lines << ""
+            lines << "  Next:  constable test --full        run everything, cold and native"
+            lines << "         constable test --unsafe      run only these"
+            lines << "         constable modernize PATH     see what one file would look like"
+            lines << "                                      as a native case (writes nothing)"
+          end
+
           lines.join("\n")
         end
+
+        def engine_label = @from.to_s == "rspec" ? "RSpec" : "Minitest"
 
         def superclass_name = ENGINES.fetch(@from)[:superclass]
 

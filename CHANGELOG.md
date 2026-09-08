@@ -5,6 +5,72 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.3.1]
+
+### Cold cases now read `.rspec`
+
+The bug that mattered. `.rspec` is where an RSpec suite says what to load before any spec
+file:
+
+```
+--require spec_helper
+--require rails_helper
+```
+
+That is what `rspec --init` generates, and it is why a real spec file usually has no
+`require` line of its own — there is nothing for it to repeat. RSpec's own runner reads
+those files. Constable's cold-case driver did not.
+
+So a cold case ran with no `rails_helper` at all: no FactoryBot, no shoulda-matchers, no
+`spec/support/**`. On a 1,277-file suite that is **entirely green under
+`bundle exec rspec`**, `constable test spec/models --full` reported:
+
+```
+✓ 774 passed   ✗ 3589 failed
+```
+
+2,637 of them `undefined method 'create'`, the rest `belong_to`,
+`validate_presence_of`, missing support constants. Every one of them Constable's fault,
+and every one of them looking like the user's.
+
+Cold cases now apply the `--require` directives from `.rspec`, `~/.rspec`, `.rspec-local`
+and `SPEC_OPTS`, parsed by RSpec itself so the precedence is its own rather than a guess.
+Only `--require` is taken: formatters, colour and output streams belong to Constable's
+reporter, ordering is Constable's job, and a `--tag` filter meant for a different run
+should not silently drop tests from this one.
+
+The same file is now 14 passed, 0 failed — matching `bundle exec rspec` exactly.
+
+This never showed up before because the app it was developed against wrote
+`require "rails_helper"` at the top of every spec, which is the one arrangement that
+hides it.
+
+### `constable import` says what it actually did
+
+It reported `did reopen 1277 file(s)`. "Reopen" is this code's internal word and means
+nothing to a reader, and "import" on its own suggests the files were copied somewhere —
+which is the opposite of what happened. A real user read it exactly that way and asked
+why their specs had not moved into `test/`.
+
+```
+Adopted 1277 rspec files as cold cases.
+
+  Your rspec files stay exactly where they are and are not changed.
+  One line was added to .constable/config.yml:
+
+    cold_cases:
+      - spec/**/*_spec.rb
+
+  Constable runs them from there, through real RSpec, and folds
+  the results into its own reporting, flake history and CI gate.
+
+  Next:  constable test --full        run everything, cold and native
+         constable test --unsafe      run only these
+         constable modernize PATH     see what one file would look like
+                                      as a native case (writes nothing)
+```
+
+
 ## [1.3.0]
 
 Adoption at scale. Everything here came from installing 1.2.0 into a 1,277-spec-file
@@ -462,7 +528,8 @@ Initial release.
 - Diff-based coverage gate — only lines changed in the current diff are held to the
   threshold. `constable beat` for the full picture, `--html` for a browsable report.
 
-[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/Ray-Hughes/constable/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Ray-Hughes/constable/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Ray-Hughes/constable/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Ray-Hughes/constable/compare/v1.0.0...v1.1.0

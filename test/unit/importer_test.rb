@@ -399,10 +399,51 @@ module Constable
 
       summary = import(paths: ["spec/models", "spec/controllers/take_spec.rb"]).summary
 
-      assert_includes summary, "config path match"
       assert_includes summary, "spec/models/**/*_spec.rb"
       assert_includes summary, "superclass swap"
       assert_includes summary, "spec/controllers/take_spec.rb -> class LegacyTakeSpec < Constable::ColdCase::RSpec"
+    end
+
+    # Written for somebody who has just typed the command and does not yet know what a
+    # cold case is. The first version said "did reopen 1277 file(s)" -- "reopen" is this
+    # code's internal word and means nothing to a reader, and "import" on its own suggests
+    # the files were copied somewhere, which is the opposite of what happened. A real user
+    # read it exactly that way.
+    def test_the_summary_says_the_files_did_not_move
+      seed_rspec("spec/models/user_spec.rb")
+
+      summary = import.summary
+
+      assert_match(/stay exactly where they are/, summary)
+      assert_match(/not changed/, summary)
+      refute_match(/reopen/, summary, "'reopen' is internal vocabulary")
+    end
+
+    def test_the_summary_shows_the_line_it_added
+      seed_rspec("spec/models/user_spec.rb")
+
+      summary = import.summary
+
+      assert_match(/cold_cases:/, summary)
+      assert_match(%r{\.constable/config\.yml}, summary)
+    end
+
+    def test_the_summary_says_what_to_do_next
+      seed_rspec("spec/models/user_spec.rb")
+
+      summary = import.summary
+
+      assert_match(/constable test --full/, summary)
+      assert_match(/constable modernize/, summary)
+    end
+
+    def test_a_dry_run_does_not_suggest_next_steps
+      seed_rspec("spec/models/user_spec.rb")
+
+      summary = import(dry_run: true).summary
+
+      assert_match(/Would adopt/, summary)
+      refute_match(/Next:/, summary)
     end
 
     def test_result_to_h_is_serializable

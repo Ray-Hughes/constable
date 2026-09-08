@@ -168,8 +168,8 @@ module Constable
         strategy: options[:strategy].to_sym
       )
 
+      # The summary says this in full now, in the reader's own terms.
       say result.summary
-      say "\nNothing was rewritten -- cold cases run through their own engine, unchanged." if result.any_changes?
       exit(EXIT_CLEAN)
     end
 

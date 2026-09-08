@@ -278,7 +278,51 @@ module Constable
           # rspec-core's own default; restated because rspec-rails turns it off and a
           # verbatim legacy file may well open with a bare `describe`.
           configuration.expose_dsl_globally = true if configuration.respond_to?(:expose_dsl_globally=)
+          apply_rspec_options(configuration)
           @session_prepared = true
+        end
+
+        # `.rspec` is where a suite says what to load before any spec file.
+        #
+        #   --require spec_helper
+        #   --require rails_helper
+        #
+        # That is what `rspec --init` generates, and it is why a real spec file usually
+        # has no `require` line of its own -- there is nothing for it to repeat. RSpec's
+        # own runner reads those files; driving example groups directly does not, so
+        # without this a cold case runs with no rails_helper at all: no FactoryBot, no
+        # shoulda-matchers, no spec/support. In one real suite that was 2,637 tests
+        # failing on `undefined method 'create'` -- a suite that is entirely green under
+        # `bundle exec rspec`.
+        #
+        # Only `--require` is taken. Formatters, colour and output streams belong to
+        # Constable's reporter, ordering is Constable's job, and a `--tag` filter from a
+        # file RSpec would apply to its own run should not silently drop tests from this
+        # one. Requires are the part that decides whether the suite can run at all.
+        def apply_rspec_options(configuration)
+          requires = rspec_option_requires
+          return if requires.empty?
+
+          # `requires=` rather than plain Kernel#require: it is RSpec's own accessor, and
+          # it puts `lib` and the default path (`spec`) on the load path first, which is
+          # what makes a bare `require "rails_helper"` resolve.
+          configuration.requires = requires
+        rescue StandardError => e
+          # A helper that will not load is the suite's problem to fix, and it will say so
+          # loudly on the first file. Constable's job here is not to disappear.
+          Constable.warn!("could not load what .rspec requires (#{e.class}: #{e.message}). " \
+                          "Cold cases will run without it.", kind: :cold_case)
+        end
+
+        # Parsed by RSpec itself, so `.rspec`, `~/.rspec`, `.rspec-local` and SPEC_OPTS are
+        # all read with its precedence rather than a guess at the format.
+        def rspec_option_requires
+          return [] unless defined?(::RSpec::Core::ConfigurationOptions)
+
+          options = ::RSpec::Core::ConfigurationOptions.new([]).options
+          Array(options[:requires])
+        rescue StandardError
+          []
         end
 
         def clear_examples
