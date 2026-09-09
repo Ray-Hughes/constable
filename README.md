@@ -7,7 +7,7 @@
 
 **A strict Rails testing framework where fast and non-flaky are structural, not disciplinary.**
 
-[![Gem Version](https://img.shields.io/gem/v/constable-rails?color=1f6feb&label=constable-rails)](https://rubygems.org/gems/constable-rails)
+[![Gem Version](https://badge.fury.io/rb/constable-rails.svg)](https://badge.fury.io/rb/constable-rails)
 [![CI](https://github.com/Ray-Hughes/constable/actions/workflows/ci.yml/badge.svg)](https://github.com/Ray-Hughes/constable/actions/workflows/ci.yml)
 [![Ruby](https://img.shields.io/badge/ruby-%3E%3D%203.1-CC342D)](https://www.ruby-lang.org)
 [![Rails](https://img.shields.io/badge/rails-%3E%3D%207.0-D30001)](https://rubyonrails.org)
