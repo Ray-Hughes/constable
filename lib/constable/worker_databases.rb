@@ -58,7 +58,7 @@ module Constable
     #            that works when the schema cannot rebuild the database by itself.
     def after_fork!(index, mode: :schema)
       return false unless shardable?
-      return reuse!(index) if mode.to_sym == :reuse
+      return connect_worker!(index) if mode.to_sym == :reuse
 
       ::ActiveRecord::TestDatabases.create_and_load_schema(index, env_name: env_name)
       true
@@ -172,8 +172,38 @@ module Constable
       nil
     end
 
-    # The :reuse half. Points every database this environment declares at its `_<index>`
-    # sibling, and only builds the ones that are not there yet.
+    # The :reuse half, inside a worker: connect to `<database>_<index>` and nothing else.
+    #
+    # Building is deliberately not done here. Twelve workers forked at once would each try
+    # to build the same missing databases simultaneously, and on Postgres the clone has to
+    # disconnect everything attached to the template first -- which is the shared test
+    # database every other worker is also cloning from. They terminate each other's
+    # connections and die, silently, mid-run. Observed exactly that: nineteen files
+    # scheduled, zero results, workers gone without a word.
+    #
+    # So preparation happens once, in the parent, through `constable prepare`. A worker
+    # that finds nothing to connect to says so, and the runner falls back to serial.
+    def connect_worker!(index)
+      missing = []
+
+      each_worker_config(index) do |db_config|
+        missing << db_config.database unless populated?(db_config)
+      end
+
+      unless missing.empty?
+        raise Constable::Error,
+              "worker #{index} has no database to use (#{missing.join(", ")}). " \
+              "`worker_databases: reuse` expects them to exist already -- run " \
+              "`constable prepare` once, then run the suite."
+      end
+
+      ::ActiveRecord::Base.establish_connection
+      []
+    end
+
+    # The building half, run from the parent by `constable prepare`. Points every database
+    # this environment declares at its `_<index>` sibling, and builds the ones that are
+    # not there yet.
     #
     # "There" means present *and* populated: an empty database is not a prepared one, and
     # connecting to it would hand the worker a suite with no tables. Deciding that per

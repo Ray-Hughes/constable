@@ -428,6 +428,10 @@ module Constable
     option :workers, type: :numeric, desc: "How many to prepare (default: the configured worker count)"
     def prepare
       config = load_config
+      # The app has to be up before we can ask ActiveRecord anything about it.
+      Runner.boot!
+      config.apply_overrides!(Constable.configuration.overrides)
+
       unless WorkerDatabases.shardable?
         CLI.complain("This app has no ActiveRecord test databases to prepare.")
         exit(EXIT_USAGE)

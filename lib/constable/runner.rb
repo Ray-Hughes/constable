@@ -64,6 +64,20 @@ module Constable
     def jail_run?   = @jail_run
     def coverage?   = @coverage_requested
 
+    # Boots the app the way a run does -- test/case_helper.rb, which requires
+    # config/environment -- without selecting or running anything.
+    #
+    # `constable prepare` needs this: it asks ActiveRecord what databases exist, and
+    # before the helper has run there is no ActiveRecord to ask. It reported "this app has
+    # no test databases to prepare" on an app with three of them.
+    def self.boot!
+      helper = %w[test/case_helper.rb spec/case_helper.rb]
+               .map { |p| File.join(Constable.root, p) }
+               .find { |p| File.exist?(p) }
+      require helper if helper
+      helper
+    end
+
     # Loads every case file and hands back the identities the suite actually defines,
     # without running anything. `constable prune` needs this: which tests still exist is
     # only knowable once the whole suite has been loaded.
@@ -384,7 +398,7 @@ module Constable
       end
 
       collected = drain(readers)
-      pids.each { |pid| Process.waitpid(pid) rescue nil } # rubocop:disable Style/RescueModifier
+      record_worker_exits(pids)
 
       # No worker could build itself a database, so no test ran. Not every app can be
       # sharded: an app whose schema.rb cannot rebuild the database on its own -- Postgres
@@ -412,17 +426,41 @@ module Constable
 
     def worker_errors = (@worker_errors ||= [])
 
+    # A worker can die below Ruby: a segfault, an OOM kill, a signal. No `rescue` reaches
+    # that, so the only evidence is the exit status, and without it the run can only say
+    # "the workers exited without reporting anything" -- true, and useless.
+    #
+    # Forking a process that already holds database connections is where this comes from.
+    # An app with a native driver -- Oracle's OCI, for instance -- can have a child die
+    # the moment it touches an inherited handle.
+    def record_worker_exits(pids)
+      pids.each do |pid|
+        _, status = Process.waitpid2(pid)
+        next if status.nil? || status.success?
+
+        worker_errors << if status.signaled?
+                           "a worker was killed by SIG#{Signal.signame(status.termsig)} " \
+                             "-- forking an app that already holds native database " \
+                             "connections can do this"
+                         else
+                           "a worker exited with status #{status.exitstatus}"
+                         end
+      rescue StandardError
+        nil
+      end
+    end
+
     def run_serially_after_worker_failure(items)
       reason = worker_errors.first.to_s
       reason = "the workers exited without reporting anything" if reason.empty?
 
       Constable.warn!(
-        "no parallel worker could build its own test database, so the suite ran serially " \
-        "instead. This usually means the app's schema cannot rebuild the database by " \
-        "itself -- Postgres custom types, functions and triggers are the common reason, " \
-        "and `rails test` parallelization fails the same way. Set " \
-        "`worker_databases: reuse` to keep prepared databases between runs instead, or " \
-        "`worker_databases: off` to stop trying. The first worker said: #{reason}",
+        "the parallel workers produced no results, so the suite ran serially instead -- " \
+        "everything ran, nothing was skipped. Two things cause this: the app's schema " \
+        "cannot rebuild a database by itself (Postgres custom types; try " \
+        "`worker_databases: reuse` with `constable prepare`), or forking is unsafe in " \
+        "this app, which happens when a native driver's connections are inherited by a " \
+        "child. `worker_databases: off` stops the attempt. The workers said: #{reason}",
         kind: :parallel
       )
 

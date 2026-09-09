@@ -5,6 +5,54 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.4.1]
+
+### A parallel run that ran nothing is no longer a pass
+
+Pointing a real app at `worker_databases: reuse` produced this:
+
+```
+CONSTABLE            0 tests · 0 cases · 7.9s
+✓ 0 passed   ✗ 0 failed
+```
+
+Nineteen files scheduled. None ran. Exit 0. The third time this shape has appeared in a
+week, and the most dangerous instance of it.
+
+Two causes. A forked worker only reported `Constable::Error`, so anything else killed it
+silently — the parent saw a closed pipe, no results and no reason. Workers now report
+whatever they die of, including the exit status when they die below Ruby (a signal, a
+segfault, an OOM kill; forking an app that already holds native database connections can
+do exactly that). And the fallback to a serial run was conditional on a worker having
+managed to *explain* itself; it now triggers on the fact that matters — work was
+scheduled and nothing came back. If the serial fallback also produces nothing, that
+raises rather than being summarised as a clean zero.
+
+Same command now: **84 tests run**, serially, with a warning saying why.
+
+### Workers no longer build databases; `constable prepare` does
+
+`reuse` had each worker build its own missing databases after forking. On Postgres the
+clone must disconnect everything attached to the template first — and the template is the
+shared test database *every other worker* is cloning from at the same moment. Twelve
+workers terminated each other's connections and died mid-run.
+
+Preparation happens once, in the parent, through `constable prepare`. A worker that finds
+nothing to connect to says so and names the command. `constable prepare` also boots the
+app first, which it was not doing: it reported "this app has no ActiveRecord test
+databases to prepare" on an app with three of them.
+
+### Configuration is documented where you read it
+
+Every setting in `.constable/config.yml` now carries its explanation, and the ones with
+fixed choices name and describe each value inline — `worker_databases`, `output`, the
+storage adapter. Two tests enforce it: a setting cannot arrive without an explanation, and
+one with fixed choices has to name them.
+
+The blotter section now says outright that it is **not** your application's database.
+Two people read it the other way, which is a naming problem, not a reading problem.
+
+
 ## [1.4.0]
 
 Two problems from the same 1,277-file suite: a docket nobody asked for, and 110 minutes.
@@ -664,7 +712,8 @@ Initial release.
 - Diff-based coverage gate — only lines changed in the current diff are held to the
   threshold. `constable beat` for the full picture, `--html` for a browsable report.
 
-[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/Ray-Hughes/constable/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/Ray-Hughes/constable/compare/v1.3.3...v1.4.0
 [1.3.3]: https://github.com/Ray-Hughes/constable/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/Ray-Hughes/constable/compare/v1.3.1...v1.3.2

@@ -43,6 +43,11 @@ cold_cases: []
 
 # The blotter: flake history, the jail docket, warrants.
 #
+# NOT your application's database, and nothing to do with it. Your tests keep using
+# whatever config/database.yml says -- Postgres stays Postgres. This is a separate file
+# holding Constable's own bookkeeping, and it never contains a row of your data. Leaving
+# it on SQLite is right even for a Postgres app.
+#
 # Constable owns this store outright. It is deliberately not the app's own
 # database, for two reasons. Native cases run inside a transaction that gets
 # rolled back, so writing "this test just failed" through that connection would

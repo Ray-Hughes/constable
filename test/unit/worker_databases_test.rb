@@ -249,35 +249,68 @@ module Constable
 
     # --- worker_databases modes --------------------------------------------------------
 
-    def test_reuse_builds_a_database_that_is_not_there_yet
+    def test_prepare_builds_a_database_that_is_not_there_yet
       calls = stub_active_record(populated: false)
 
-      WorkerDatabases.after_fork!(0, mode: :reuse)
+      WorkerDatabases.prepare!(0)
 
       assert_equal 1, calls[:reconstructed].size, "a missing database still has to be built"
     end
 
-    # The point of the mode: a prepared database is not rebuilt, so a large schema is not
-    # reloaded on every run -- and an app whose schema cannot load standalone still works.
-    def test_reuse_leaves_a_prepared_database_alone
+    # Building is deliberately not done inside a worker. Twelve forked workers would each
+    # try to build the same missing databases at once, and on Postgres the clone has to
+    # disconnect everything attached to the template -- the shared test database every
+    # other worker is cloning from. They terminate each other and die mid-run. Observed
+    # exactly that: nineteen files scheduled, zero results, workers gone without a word.
+    def test_a_worker_never_builds_a_database_itself
+      calls = stub_active_record(populated: false)
+
+      assert_raises(Constable::Error) { WorkerDatabases.after_fork!(0, mode: :reuse) }
+      assert_empty calls[:reconstructed], "a worker must not build anything"
+    end
+
+    def test_a_worker_says_to_run_prepare_when_there_is_nothing_to_use
+      stub_active_record(populated: false)
+
+      error = assert_raises(Constable::Error) { WorkerDatabases.after_fork!(2, mode: :reuse) }
+
+      assert_match(/constable prepare/, error.message)
+      assert_match(/worker 2/, error.message)
+    end
+
+    def test_a_worker_connects_when_the_database_is_prepared
       calls = stub_active_record(populated: true)
 
-      WorkerDatabases.after_fork!(0, mode: :reuse)
+      WorkerDatabases.after_fork!(1, mode: :reuse)
+
+      assert_empty calls[:reconstructed]
+    end
+
+    # The point of the mode: a prepared database is not rebuilt, so a large schema is not
+    # reloaded on every run -- and an app whose schema cannot load standalone still works.
+    def test_prepare_leaves_a_prepared_database_alone
+      calls = stub_active_record(populated: true)
+
+      WorkerDatabases.prepare!(0)
 
       assert_empty calls[:reconstructed]
     end
 
     # A database that exists but is empty is not prepared. Running a suite against no
     # tables is the worst of the available outcomes.
-    def test_reuse_rebuilds_an_empty_database
+    def test_prepare_rebuilds_an_empty_database
       calls = stub_active_record(populated: false)
 
-      WorkerDatabases.after_fork!(0, mode: :reuse)
+      WorkerDatabases.prepare!(0)
 
       refute_empty calls[:reconstructed]
     end
 
-    def test_reuse_renames_every_database_to_its_worker_sibling
+    # Every database the environment declares, not just the primary -- a multi-database app
+    # (Caseflow has a primary and an ETL) needs all of them pointed at the worker's copies.
+    # Checked through a worker rather than prepare!, which renames and then puts the names
+    # back, because the worker is where the rename has to stick.
+    def test_every_database_is_renamed_to_its_worker_sibling
       calls = stub_active_record(populated: true, databases: %w[primary etl])
 
       WorkerDatabases.after_fork!(3, mode: :reuse)
@@ -389,7 +422,7 @@ module Constable
     def test_a_worker_database_is_cloned_rather_than_rebuilt_from_schema
       calls = stub_postgres
 
-      WorkerDatabases.after_fork!(3, mode: :reuse)
+      WorkerDatabases.prepare!(3)
 
       assert(calls[:executed].any? do |sql|
         sql.include?(%(CREATE DATABASE "caseflow_test_3" TEMPLATE "caseflow_test"))
@@ -401,7 +434,7 @@ module Constable
     def test_the_template_is_disconnected_before_it_is_copied
       calls = stub_postgres
 
-      WorkerDatabases.after_fork!(1, mode: :reuse)
+      WorkerDatabases.prepare!(1)
 
       assert(calls[:executed].any? { |sql| sql.include?("pg_terminate_backend") },
              "Postgres will not copy a database anything is connected to")
@@ -410,7 +443,7 @@ module Constable
     def test_a_stale_worker_database_is_dropped_first
       calls = stub_postgres
 
-      WorkerDatabases.after_fork!(2, mode: :reuse)
+      WorkerDatabases.prepare!(2)
 
       assert(calls[:executed].any? { |sql| sql.include?(%(DROP DATABASE IF EXISTS "caseflow_test_2")) })
     end
@@ -419,7 +452,7 @@ module Constable
     def test_it_falls_back_to_the_schema_when_there_is_nothing_to_clone
       calls = stub_postgres(source_exists: false)
 
-      WorkerDatabases.after_fork!(0, mode: :reuse)
+      WorkerDatabases.prepare!(0)
 
       assert(calls[:executed].any? { |sql| sql.start_with?("schema:") })
     end
