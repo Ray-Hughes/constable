@@ -318,7 +318,29 @@ module Constable
         return false
       end
 
+      warn_about_shared_databases!
       worker_databases_current?(count)
+    end
+
+    # A database Constable could not shard is shared by every worker, and that is worth
+    # saying out loud before the run rather than leaving it to be deduced from the wreckage.
+    #
+    # The failures it causes do not look like a parallelism problem. They look like records
+    # disappearing mid-test: worker 2's `before(:suite)` cleans the shared legacy database
+    # while worker 1 is halfway through a test that just created rows in it. Measured on a
+    # real suite -- 53 `VacolsRecordNotFound` failures across four workers, every one of
+    # them passing serially.
+    def warn_about_shared_databases!
+      shared = WorkerDatabases.unshardable_databases
+      return if shared.empty?
+
+      Constable.warn!(
+        "#{shared.join(", ")} cannot be given to each worker, so all of them share it. " \
+        "Tests that write to it will interfere with each other, and the failures will not " \
+        "look like a parallelism problem -- they look like rows vanishing mid-test. Run " \
+        "specs that touch it serially (`--workers 1`), or `worker_databases: off`.",
+        kind: :parallel
+      )
     end
 
     # `:reuse` keeps the per-worker databases between runs, so they do not follow

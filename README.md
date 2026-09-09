@@ -433,6 +433,30 @@ worker = ENV["CONSTABLE_WORKER"] ? "_w#{ENV['CONSTABLE_WORKER']}" : ""
 cache  = Rails.root.join("tmp/browser_cache#{worker}")
 ```
 
+Some databases cannot be given to each worker at all — Oracle and anything else Rails does
+not manage (`database_tasks: false`). Constable does not try, and now says so at the start
+of a parallel run, because *skipped* and *safe* are different claims:
+
+```
+⚠ vacols (database_tasks: false) cannot be given to each worker, so all of them share it.
+  Tests that write to it will interfere with each other, and the failures will not look
+  like a parallelism problem -- they look like rows vanishing mid-test.
+```
+
+That warning is worth taking literally. On a real app with a legacy Oracle database, a
+four-worker run produced 163 failures that all passed serially; 53 of them were a bare
+`VacolsRecordNotFound`, because each worker's `before(:suite)` deleted from the one shared
+database while the others were midway through tests that had just written to it.
+
+**And a harder limit, if your app talks to one through a C driver: forking may not be
+possible at all.** The same app aborts roughly half its parallel runs with SIGABRT — no
+output on either stream, the crash report landing inside `libclntsh`, Oracle's client
+library catching a SIGSEGV in its own signal handler. It is not a Constable failure and
+there is nothing Constable can do about it: a process holding OCI handles is not reliably
+forkable. If you see bare exit code 134 and no output, check
+`~/Library/Logs/DiagnosticReports` (or your platform's equivalent) before assuming the test
+runner ate your suite, and run those specs with `worker_databases: off`.
+
 `CONSTABLE_WORKER` is the index and `CONSTABLE_WORKERS` the count; both are unset in the
 parent, so serial runs keep whatever name they had. Use `FileUtils.mkdir_p` rather than
 `Dir.mkdir ... unless File.directory?` while you are there — the second is a race, and if

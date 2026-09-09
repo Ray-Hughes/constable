@@ -23,23 +23,30 @@ module Constable
     # which is what the staleness check compares. Given it, the fake tracks which database
     # was last connected to, so a worker copy can answer differently from its source.
     def stub_active_record(with_test_databases: true, populated: false, databases: %w[primary],
-                           migrations: nil, populated_databases: nil)
+                           migrations: nil, populated_databases: nil, unmanaged: [])
       calls = { cleared: 0, removed: 0, schema: [], reconstructed: [], renamed: [] }
 
       Object.const_set(:ActiveRecord, Module.new) unless defined?(::ActiveRecord)
       handler = Object.new
       handler.define_singleton_method(:clear_all_connections!) { calls[:cleared] += 1 }
 
-      configs = databases.map { |name| FakeDbConfig.new(name, calls) }
-      # Rails' own behaviour, which is the whole point of these tests: when a pool is
-      # already open for this owner, establish_connection hands that pool back rather than
-      # opening the database the (renamed, same-object) config now names. Only dropping the
-      # connection first makes a rename take effect.
-      state = { database: nil }
+      # "name" or "name:adapter" -- an app with a legacy database alongside its own says
+      # the second form.
+      configs = databases.map do |entry|
+        name, adapter = entry.split(":")
+        FakeDbConfig.new(name, calls, adapter || "postgresql",
+                         database_tasks: !unmanaged.include?(name))
+      end
+      # Rails' own behaviour, which is the whole point of these tests. Pools belong to a
+      # connection class, not to the process: establishing on one class does not move
+      # another, and when a pool is already open for a class, establish_connection hands
+      # that pool back rather than opening the database a renamed config now names.
+      state = { pools: {}, current: nil }
       connection = Object.new
+      connection.define_singleton_method(:database) { state[:pools][state[:current]] }
       connection.define_singleton_method(:tables) do
         if populated_databases
-          populated_databases.include?(state[:database]) ? %w[users] : []
+          populated_databases.include?(database) ? %w[users] : []
         else
           populated ? %w[users] : []
         end
@@ -47,19 +54,22 @@ module Constable
       connection.define_singleton_method(:table_exists?) do |name|
         name.to_s == "schema_migrations" && !migrations.nil?
       end
-      connection.define_singleton_method(:select_rows) { |_sql| [migrations[state[:database]]] }
+      connection.define_singleton_method(:select_rows) { |_sql| [migrations[database]] }
 
       base = Class.new
       base.define_singleton_method(:connection_handler) { handler }
-      base.define_singleton_method(:connection) { connection }
+      base.define_singleton_method(:connection) do
+        state[:current] = self
+        connection
+      end
       base.define_singleton_method(:remove_connection) do
         calls[:removed] += 1
-        state[:database] = nil
+        state[:pools].delete(self)
         true
       end
       base.define_singleton_method(:establish_connection) do |*args|
         config = args.first
-        state[:database] ||= config.database if config.respond_to?(:database)
+        state[:pools][self] ||= config.database if config.respond_to?(:database)
         true
       end
       base.define_singleton_method(:configurations) do
@@ -90,11 +100,13 @@ module Constable
     # Stands in for an ActiveRecord::DatabaseConfigurations::HashConfig. Records the
     # rename, which is the part :reuse mode has to get right for a multi-database app.
     class FakeDbConfig
-      attr_reader :database
+      attr_reader :database, :adapter
 
-      def initialize(database, calls)
+      def initialize(database, calls, adapter = "postgresql", database_tasks: true)
         @database = database
         @calls = calls
+        @adapter = adapter
+        @database_tasks = database_tasks
       end
 
       def _database=(name)
@@ -102,8 +114,8 @@ module Constable
         @calls[:renamed] << name
       end
 
-      def database_tasks? = true
-      def adapter = "postgresql"
+      def name = @database
+      def database_tasks? = @database_tasks
     end
 
     def teardown_fake_active_record
@@ -113,6 +125,38 @@ module Constable
       ::ActiveRecord.send(:remove_const, :TestDatabases) if ::ActiveRecord.const_defined?(:TestDatabases, false)
       ::ActiveRecord.send(:remove_const, :Tasks) if ::ActiveRecord.const_defined?(:Tasks, false)
       Object.send(:remove_const, :ActiveRecord) if ::ActiveRecord.constants.empty?
+    end
+
+    # --- databases that cannot be sharded ------------------------------------------------
+    #
+    # Skipping them was always right -- appending "_3" to an Oracle service name names
+    # nothing -- but skipped and safe are different claims, and only the first was made.
+    # Every worker then shares that database, and a suite hook in one worker cleans it
+    # while another worker is midway through a test that just wrote to it. Measured: 53
+    # VacolsRecordNotFound failures across four workers, every one passing serially.
+
+    def test_a_legacy_database_that_cannot_be_sharded_is_named
+      stub_active_record(databases: %w[primary vacols:oracle_enhanced])
+
+      assert_equal ["vacols (oracle_enhanced)"], WorkerDatabases.unshardable_databases
+    end
+
+    # How a legacy database is usually declared, and the one Constable was missing: an app
+    # saying "Rails does not manage this" is not saying "each worker gets one".
+    def test_a_database_rails_does_not_manage_is_named_too
+      stub_active_record(databases: %w[primary vacols], unmanaged: %w[vacols])
+
+      assert_equal ["vacols (database_tasks: false)"], WorkerDatabases.unshardable_databases
+    end
+
+    def test_an_app_whose_databases_can_all_be_sharded_has_nothing_to_say
+      stub_active_record(databases: %w[primary etl])
+
+      assert_empty WorkerDatabases.unshardable_databases
+    end
+
+    def test_nothing_is_named_without_active_record
+      assert_empty WorkerDatabases.unshardable_databases
     end
 
     # --- switching database ------------------------------------------------------------

@@ -53,6 +53,32 @@ migration behind. Dropping the pool first is what makes a rename take effect.
 A forked worker never hit this, because `before_fork!` clears every connection before the
 fork. It only ever went wrong in the parent, which is why it survived this long.
 
+Looking at a database also no longer borrows `ActiveRecord::Base`'s connection at all. It
+gets a named subclass with a pool of its own, so `constable prepare` and the staleness
+check leave every connection the app holds exactly where they were. Anonymous would not do:
+a class with no name falls back to its superclass's connection specification name, which is
+Base again.
+
+### Databases that cannot be sharded are named out loud
+
+Oracle, and anything else with `database_tasks: false`, cannot be given to each worker.
+Constable already skipped them — but *skipped* and *safe* are different claims, and only
+the first was ever made. Every worker shares that database, and the failures that follow do
+not look like a parallelism problem:
+
+```
+| vacols (database_tasks: false) cannot be given to each worker, so all of them share it.
+  Tests that write to it will interfere with each other, and the failures will not look
+  like a parallelism problem -- they look like rows vanishing mid-test.
+```
+
+Measured on a real app: 163 failures across four workers, every one of them passing
+serially, 53 of them a bare `VacolsRecordNotFound` -- one shared Oracle database that each
+worker's `before(:suite)` deleted from while the others were mid-test. The README has the
+rest, including the harder limit that no warning can fix: an app holding OCI handles is not
+reliably forkable, and aborts a good half of its parallel runs from inside the Oracle
+client.
+
 
 ## [2.1.0]
 

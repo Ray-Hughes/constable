@@ -37,6 +37,13 @@ module Constable
 
     # Parent side, before the fork. A child inheriting a live connection is a corruption
     # risk in exactly the way an inherited SQLite handle is.
+    #
+    # `clear_all_connections!` and not `disconnect!`. Closing the pools outright was tried
+    # here, on the theory that returning a connection to the pool leaves the socket and the
+    # driver's C-side state for `fork` to copy into every child. It changed nothing
+    # measurable, and the crash it was meant to prevent turned out to predate it -- see
+    # the note on native drivers in the README. Rails does the same thing before its own
+    # fork, and matching it is the conservative choice.
     def before_fork!
       return false unless active_record?
 
@@ -139,8 +146,9 @@ module Constable
         end
         stale.uniq
       ensure
+        # Names only. Nothing here ever repointed ActiveRecord::Base, so there is no
+        # connection to put back -- which is the point.
         restore_database_names(original)
-        ::ActiveRecord::Base.establish_connection
       end
     rescue StandardError
       []
@@ -150,13 +158,52 @@ module Constable
     # Cheaper than diffing every version, and a worker that missed a migration differs in
     # both. nil when the question does not apply.
     def schema_fingerprint(db_config)
-      connect_to!(db_config)
-      connection = ::ActiveRecord::Base.connection
-      return nil unless connection.table_exists?("schema_migrations")
+      with_probe_connection(db_config) do |connection|
+        next nil unless connection.table_exists?("schema_migrations")
 
-      connection.select_rows("SELECT COUNT(*), MAX(version) FROM schema_migrations").first
+        connection.select_rows("SELECT COUNT(*), MAX(version) FROM schema_migrations").first
+      end
     rescue StandardError
       nil
+    end
+
+    # Databases this environment declares that cannot be given to each worker, so every
+    # worker shares the one copy.
+    #
+    # Constable skips them on purpose -- appending `_3` to an Oracle TNS service name names
+    # nothing -- but "skipped" and "safe" are different claims, and only the first was ever
+    # made. A legacy database that tests write to is shared mutable state across processes,
+    # and the failures it produces do not look like a parallelism problem: they look like
+    # records vanishing mid-test, in whichever spec happened to be running when another
+    # worker's suite hook cleaned the database they were both using.
+    #
+    # Measured on a real suite: 53 `VacolsRecordNotFound` failures across a four-worker
+    # run, every one of them passing serially, all from one shared Oracle database that
+    # each worker deleted from at startup.
+    def unshardable_databases
+      return [] unless active_record?
+
+      ::ActiveRecord::Base.configurations
+                          .configs_for(env_name: env_name, include_hidden: true)
+                          .filter_map { |db_config| share_reason(db_config) }
+    rescue StandardError
+      []
+    end
+
+    # Why a database stays shared, in the words of the setting that caused it. Both reasons
+    # matter and only one of them is about the adapter: `database_tasks: false` is how an
+    # app says "Rails does not manage this one", which is the usual way a legacy database is
+    # declared -- and it is exactly the database most likely to be shared, written to by
+    # tests, and cleaned by a suite hook in every worker at once.
+    #
+    # The config's *name* rather than its database, because a TNS descriptor is four lines
+    # of connection string and "vacols" is what anyone reading the warning calls it.
+    def share_reason(db_config)
+      name = db_config.respond_to?(:name) ? db_config.name : db_config.database
+      return "#{name} (database_tasks: false)" unless db_config.database_tasks?
+      return nil if shardable_adapter?(db_config)
+
+      "#{name} (#{db_config.adapter})"
     end
 
     # The same configs `each_worker_config` renames, left under their real names.
@@ -347,36 +394,50 @@ module Constable
     # Present and holding tables. A database that exists but is empty is not prepared, and
     # silently running a suite against no tables is the worst of the available outcomes.
     def populated?(db_config)
-      connect_to!(db_config)
-      ::ActiveRecord::Base.connection.tables.any?
+      with_probe_connection(db_config) { |connection| connection.tables.any? }
     rescue StandardError
       false
     end
 
-    # `establish_connection(db_config)` is not enough to change database here, and the way
-    # it fails is silent.
+    # A connection class of its own, so looking at a database never disturbs the app's.
     #
-    # These configs are renamed in place -- `db_config._database = "#{name}_3"` -- which is
-    # how Rails' own TestDatabases does it. But when the process already holds a pool for
-    # that same config object, establish_connection hands back the pool it has rather than
-    # opening the database the object now names. So the query runs, succeeds, and answers
-    # about the *source* database.
+    # Asking "is this worker database prepared, and has it run our migrations?" needs a
+    # connection, and the obvious way to get one is to point ActiveRecord::Base at it and
+    # then point it back. That works, right up until the app has a native driver attached.
     #
-    # That made `populated?` report "already prepared" for a database that did not exist
-    # (verified: a worker index with no file at all), which is `constable prepare` claiming
-    # to have done work it never did. Dropping the pool first is what makes the rename take
-    # effect.
+    # Measured on a real app with a legacy Oracle database: repointing Base in the parent
+    # before forking killed the whole run with SIGABRT, no output on either stream, the
+    # crash report landing inside libclntsh -- Oracle's client catching a SIGSEGV in its
+    # own handler and calling abort. Nothing about it says "your test runner opened a
+    # connection it did not need".
     #
-    # A forked worker does not hit this, because before_fork! clears every connection
-    # before the fork -- which is exactly why it went unnoticed in the place it matters
-    # most and surfaced only in the parent.
-    def connect_to!(db_config)
+    # A named subclass gets its own `connection_specification_name`, so its pool is its
+    # own: establishing and removing it leaves ActiveRecord::Base, and every other class
+    # with a connection, untouched. Anonymous would not do -- a class with no name falls
+    # back to its superclass's specification name, which is Base again.
+    def probe_class
+      base = ::ActiveRecord::Base
+      return @probe_class if defined?(@probe_class) && @probe_base.equal?(base)
+
+      klass = Class.new(base)
+      klass.abstract_class = true if klass.respond_to?(:abstract_class=)
+      # Naming it is not decoration: an unnamed class falls back to its superclass's
+      # connection specification name, which would put us right back on Base's pool.
+      remove_const(:ProbeConnection) if const_defined?(:ProbeConnection, false)
+      const_set(:ProbeConnection, klass)
+      @probe_base = base
+      @probe_class = klass
+    end
+
+    def with_probe_connection(db_config)
+      probe_class.establish_connection(db_config)
+      yield probe_class.connection
+    ensure
       begin
-        ::ActiveRecord::Base.remove_connection
+        probe_class.remove_connection
       rescue StandardError
         nil
       end
-      ::ActiveRecord::Base.establish_connection(db_config)
     end
 
     def env_name
