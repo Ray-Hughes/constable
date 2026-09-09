@@ -324,10 +324,31 @@ module Constable
         rescue Constable::Error
           raise
         rescue StandardError => e
-          # A helper that will not load is the suite's problem to fix, and it will say so
-          # loudly on the first file. Constable's job here is not to disappear.
-          Constable.warn!("could not load what .rspec requires (#{e.class}: #{e.message}). " \
-                          "Cold cases will run without it.", kind: :cold_case)
+          # Fatal, deliberately.
+          #
+          # This used to be a warning that ran the cold cases anyway, on the reasoning that
+          # Constable's job is not to disappear. That reasoning was wrong, and the way it
+          # was wrong is the exact failure this gem exists to prevent.
+          #
+          # A `rails_helper` that does not finish loading is not a suite missing one
+          # convenience. It is a suite missing its isolation: DatabaseCleaner's per-test
+          # transaction, FactoryBot, WebMock, every `spec/support` hook. The tests then run
+          # against a real database with nothing wrapping them, so their writes commit.
+          # Some pass. Others fail later on a unique index, in a different file, naming a
+          # row that a test three files ago was supposed to have rolled back.
+          #
+          # Observed exactly that: eight forked workers loading a helper that did
+          # `Dir.mkdir` on a shared tmp directory it had just checked for. The workers that
+          # lost the race raised Errno::EEXIST, took this branch, ran their files with no
+          # DatabaseCleaner at all, and left committed rows behind in their databases.
+          #
+          # A green run that was never isolated is worse than no run. Refuse it.
+          raise Constable::Error,
+                "could not load what .rspec requires (#{e.class}: #{e.message}).\n  " \
+                "Those files set up the suite -- database cleaning, factories, " \
+                "spec/support hooks.\n  " \
+                "Running cold cases without them would not isolate them, so this is " \
+                "fatal rather than a warning."
         end
 
         # What `configuration.requires=` does before requiring anything: puts `lib` and the

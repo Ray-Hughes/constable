@@ -181,5 +181,46 @@ module Constable
     def test_a_file_with_no_tests_produces_nothing_rather_than_erroring
       assert_empty statuses("test/g_test.rb", "class GTest < Minitest::Test\nend\n")
     end
+
+    # --- .rspec ------------------------------------------------------------------------
+
+    # A helper named in .rspec that raises must stop the run, not downgrade to a warning.
+    #
+    # This was a warning once, and it ran the cold cases anyway. What that produced, on a
+    # real suite: forked workers whose rails_helper died on Errno::EEXIST racing to mkdir
+    # a shared tmp directory, so DatabaseCleaner's per-test transaction was never
+    # registered in those workers. Their writes committed. Tests passed that had never
+    # been isolated, and later files died on unique indexes naming rows nobody could
+    # account for. A green run that was never isolated is the worst output this gem has.
+    def test_a_raising_dot_rspec_require_is_fatal
+      write_file(".rspec", "--require boom_helper\n")
+      write_file("spec/boom_helper.rb", 'raise Errno::EEXIST, "tmp/browser_cache_all"')
+      file = write_file("spec/h_spec.rb", "describe('x') { it('runs') { expect(1).to eq(1) } }")
+
+      error = assert_raises(Constable::Error) do
+        Dir.chdir(tmp_root) { ColdCase.run_file(file, config: Constable.config) }
+      end
+
+      assert_match(/could not load what .rspec requires/, error.message)
+      assert_match(/EEXIST/, error.message)
+      assert_match(/fatal rather than a warning/, error.message)
+    end
+
+    # The other half of the same guarantee: a helper that loads is loaded, and what it
+    # defines is there for the file. Without this, `.rspec` could "pass" by never being
+    # read at all -- which is the bug the fatal path above exists to keep honest.
+    def test_a_working_dot_rspec_require_is_loaded_before_the_file
+      write_file(".rspec", "--require ok_helper\n")
+      write_file("spec/ok_helper.rb", "def helper_was_loaded = :yes")
+      file = write_file("spec/i_spec.rb", <<~SPEC)
+        describe "x" do
+          it("sees the helper") { expect(helper_was_loaded).to eq(:yes) }
+        end
+      SPEC
+
+      results = Dir.chdir(tmp_root) { ColdCase.run_file(file, config: Constable.config) }
+
+      assert_equal([:passed], results.map(&:status))
+    end
   end
 end

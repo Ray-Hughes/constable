@@ -420,6 +420,21 @@ dissolves into `database is locked`, and on a client/server database tests quiet
 each other's rows. If your app has ActiveRecord but cannot shard, Constable runs serially
 and says why — slow is a trade-off, wrong is not.
 
+The database is not the only thing a worker needs to itself. Anything your suite keeps on
+disk per process — a browser cache, a download directory, a screenshot path — needs a name
+that differs per worker, or they race for it. Each worker is told which one it is:
+
+```ruby
+worker = ENV["CONSTABLE_WORKER"] ? "_w#{ENV['CONSTABLE_WORKER']}" : ""
+cache  = Rails.root.join("tmp/browser_cache#{worker}")
+```
+
+`CONSTABLE_WORKER` is the index and `CONSTABLE_WORKERS` the count; both are unset in the
+parent, so serial runs keep whatever name they had. Use `FileUtils.mkdir_p` rather than
+`Dir.mkdir ... unless File.directory?` while you are there — the second is a race, and if
+it runs inside `spec/support` it takes `rails_helper` down with it, which costs the loser
+its database cleaning rather than just its cache directory.
+
 ### Output
 
 stdout is reserved for results — not just Constable's own output, but the app's. Rails

@@ -359,6 +359,22 @@ module Constable
         pid = fork do
           reader.close
 
+          # Tell the app which worker it is.
+          #
+          # Anything a suite keeps on disk per process needs this: a browser cache, a
+          # download directory, a screenshot path, a scratch file. Without it every worker
+          # computes the same path and they race -- and the way that surfaces is not a
+          # tidy error. Observed on a real suite: eight workers running
+          # `Dir.mkdir(dir) unless File.directory?(dir)` in a spec/support file, the losers
+          # raising Errno::EEXIST *while loading rails_helper*, so those workers ran their
+          # files with no database cleaning at all.
+          #
+          # Deliberately its own name rather than TEST_ENV_NUMBER or parallel_tests'
+          # TEST_SUBCATEGORY: those are already wired into some apps' database.yml, and
+          # setting one here would rename databases behind WorkerDatabases' back.
+          ENV["CONSTABLE_WORKER"]  = worker_index.to_s
+          ENV["CONSTABLE_WORKERS"] = buckets.length.to_s
+
           # Before a single test runs: build this worker's own database and point the
           # process at it. Never falls back to the shared one -- that is the bug this
           # exists to prevent -- but the failure is reported home rather than raised.

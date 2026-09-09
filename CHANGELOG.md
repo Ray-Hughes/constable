@@ -5,6 +5,74 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [2.1.0]
+
+Both changes here come from one afternoon on a real suite: nineteen files, eight forked
+workers, and a run that reported 83 passed and 1 failed on a unique index for a row no
+test had made. The failing test was not the broken one. Nothing was wrong with it.
+
+### A helper named in `.rspec` that will not load is now fatal
+
+It used to be a warning, and the cold cases ran anyway. The reasoning written in the
+source was that Constable's job is not to disappear. That was wrong, and it is worth being
+precise about why, because the failure it produced is the one this project exists to
+prevent.
+
+`rails_helper` is not a convenience. It is where a suite registers DatabaseCleaner's
+per-test transaction, FactoryBot, WebMock, and every `spec/support` hook. A worker that
+fails to finish loading it does not run a slightly degraded suite — it runs an
+**unisolated** one, against a real database, with nothing wrapping any test. The writes
+commit. Some tests pass anyway. Later files die on unique indexes naming rows nobody can
+account for, in a different file, with a stack trace pointing at innocent code.
+
+What produced it: eight workers loading a `spec/support` file that did
+
+```ruby
+Dir.mkdir(cache_directory) unless File.directory?(cache_directory)
+```
+
+Two workers check, both see nothing, both create, and the loser raises `Errno::EEXIST` —
+while `rails_helper` is loading. Six workers were isolated. Two were not, and left
+committed rows behind in their databases.
+
+A green run that was never isolated is worse than no run at all, so this now raises:
+
+```
+could not load what .rspec requires (Errno::EEXIST: File exists @ dir_s_mkdir - tmp/browser_cache_all).
+  Those files set up the suite -- database cleaning, factories, spec/support hooks.
+  Running cold cases without them would not isolate them, so this is fatal rather than a warning.
+```
+
+This is a behaviour change, not a new check: the condition was always detected. If a run
+starts failing here, it was already producing results that did not mean what they said.
+
+### Workers are told which worker they are
+
+`CONSTABLE_WORKER` (the index) and `CONSTABLE_WORKERS` (the count) are set in each forked
+worker, and unset in the parent.
+
+Anything a suite keeps on disk per process needs a name that differs per worker — a
+browser cache, a download directory, a screenshot path, a scratch file — and until now
+there was no way to ask, so every worker computed the same path and raced for it. That is
+the root cause of the bug above rather than an unrelated nicety.
+
+```ruby
+worker = ENV["CONSTABLE_WORKER"] ? "_w#{ENV['CONSTABLE_WORKER']}" : ""
+cache  = Rails.root.join("tmp/browser_cache#{worker}")
+```
+
+Deliberately not `TEST_ENV_NUMBER` or `TEST_SUBCATEGORY`: both are already interpolated
+into some apps' `database.yml`, and setting either here would rename databases behind
+`WorkerDatabases`' back.
+
+### Tests
+
+The fork path had no end-to-end coverage at all, which is where most of this project's
+serious bugs have lived. It has some now: worker identity arriving in the child and not
+leaking into the parent, and both halves of `.rspec` handling — a helper that raises stops
+the run, and a helper that loads is actually loaded before the file.
+
+
 ## [2.0.0]
 
 A tidy-up release. The API you write — `investigate`, `witness`, `briefing`, `docket`,

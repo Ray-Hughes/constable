@@ -116,6 +116,56 @@ module Constable
       assert_equal 2, runner.results.size, "both results must make it back across the pipe"
     end
 
+    # A worker has to be able to say which worker it is.
+    #
+    # Anything a suite keeps on disk per process -- a browser cache, a download directory,
+    # a screenshot path -- needs a name that differs per worker, and there was no way to
+    # ask. Every worker computed the same path and raced for it. On a real suite that
+    # raced inside a spec/support file, which meant it raced while rails_helper was
+    # loading, which meant the workers that lost ran their files with no database cleaning
+    # at all.
+    def test_each_worker_is_told_which_worker_it_is
+      skip "fork is unavailable here" unless Process.respond_to?(:fork)
+
+      2.times do |i|
+        write_file("test/cases/models/worker_#{i}_case.rb", <<~RUBY)
+          class Worker#{i}Case < Constable::Case
+            investigate "knows its worker index" do
+              attest(%w[0 1].include?(ENV["CONSTABLE_WORKER"])).to eq(true)
+            end
+
+            investigate "knows how many workers there are" do
+              attest(ENV["CONSTABLE_WORKERS"]).to eq("2")
+            end
+          end
+        RUBY
+      end
+
+      _status, runner = run_suite(workers: 2)
+
+      failures = runner.results.select(&:failed?).map { |r| r.failure&.message }
+      assert_empty failures, "workers were not told their identity"
+      assert_equal 4, runner.results.size
+    end
+
+    # And the parent must not be left holding them: a value that outlives the fork would
+    # make a later serial run look like worker 0 of a parallel one.
+    def test_worker_identity_does_not_leak_into_the_parent
+      skip "fork is unavailable here" unless Process.respond_to?(:fork)
+
+      write_file("test/cases/models/leak_case.rb", <<~RUBY)
+        class LeakCase < Constable::Case
+          investigate("a") { attest(1).to eq(1) }
+          investigate("b") { attest(2).to eq(2) }
+        end
+      RUBY
+
+      run_suite(workers: 2)
+
+      assert_nil ENV.fetch("CONSTABLE_WORKER", nil)
+      assert_nil ENV.fetch("CONSTABLE_WORKERS", nil)
+    end
+
     def test_the_seed_replays_the_same_order
       write_file("test/cases/models/ordered_case.rb", <<~RUBY)
         class OrderedCase < Constable::Case
