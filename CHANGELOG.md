@@ -5,6 +5,62 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [2.1.2]
+
+### One file could cost every later file its shared examples
+
+`require` fires once per process. So a shared-examples file that several specs each
+`require_relative` is only ever executed by the first of them, and every later file depends
+on Constable carrying the registry forward. RSpec never has to do this: it loads every spec
+file before running any of them. Constable loads one at a time, which is what makes a cold
+case cheap, so the registry is carried by hand.
+
+It was carried by reference, and that is the bug. Anything during a file that replaced the
+world's registry meant the empty replacement became the thing we carried, and every file
+after it lost every shared example the suite had registered. The failure lands as
+
+```
+ArgumentError: Could not find shared examples "task requiring specific parent"
+```
+
+on a file that plainly requires its own definitions, three files away from whatever
+actually did it.
+
+Measured on a real suite: 65 files run together, 7 of them failing to load; the same files
+in smaller groups, all green. That pattern -- fine alone, broken in bulk -- is why it
+survived a full release cycle.
+
+Two changes make the carry robust: entries now accumulate into the registry Constable keeps
+rather than replacing it, and the capture happens the instant a file finishes loading --
+which is the only moment a `require`-once registration is reachable -- rather than at the
+end of the file, by which time a suite hook may have swapped the registry out from under it.
+
+Both are verified by regression tests that fail without them with the exact production
+error. **One real suite still reproduces this**, though: 7 of 65 files there continue to
+fail after both fixes, so something in that particular suite loses the registrations by a
+route neither change covers. Tracing showed the registrations landing in one registry while
+every later read used another; what performs that swap is not yet identified. Said plainly
+rather than left to be discovered.
+
+### A failing `before(:suite)` hook no longer reports a green run of nothing
+
+RSpec records a failed suite hook the way it records a failed load: by setting the quit
+flag, not by raising. Constable checked that flag straight after loading the file -- which
+is before the hooks have run -- so a hook that blew up was invisible. The file was selected,
+loaded, ran zero examples, and the summary said
+
+```
+CONSTABLE   0 tests · 0 cases
+✓ 0 passed   ✗ 0 failed
+```
+
+and exited **0**.
+
+Found on a real app whose DatabaseCleaner `before(:suite)` hook hit a closed connection: an
+entire file reported as a clean pass without running a line of it. The flag is now checked
+again after the hooks run, and the failure reaches the summary like any other.
+
+
 ## [2.1.1]
 
 Two bugs found by using 2.1.0's own new feature on a real suite. The first is the most

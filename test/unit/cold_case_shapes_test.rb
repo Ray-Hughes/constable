@@ -182,6 +182,140 @@ module Constable
       assert_empty statuses("test/g_test.rb", "class GTest < Minitest::Test\nend\n")
     end
 
+    # --- shared examples across files ---------------------------------------------------
+    #
+    # `require` fires once per process, so a shared-examples file that two specs both
+    # `require_relative` is only ever executed by the first of them. Every later file
+    # depends on Constable carrying the registry forward -- RSpec never has to, because it
+    # loads every spec file before running any of them.
+    #
+    # Carrying it by reference was not enough. Anything during a file that replaced the
+    # world's registry meant the empty replacement became what we carried, and every later
+    # file lost every shared example the suite had registered. Reproduced on a real suite:
+    # 65 files, 7 of them failing to load with `Could not find shared examples`, all of
+    # them passing when run in smaller groups.
+
+    def run_files(*paths)
+      paths.map { |path| ColdCase.run_file(path, config: Constable.config) }
+    end
+
+    def test_shared_examples_survive_a_file_that_replaces_the_registry
+      write_file("spec/sx_defs.rb", <<~SPEC)
+        shared_examples_for "a carried thing" do
+          it("from the shared block") { expect(1).to eq(1) }
+        end
+      SPEC
+      first = write_file("spec/sx_a_spec.rb", <<~SPEC)
+        describe "A" do
+          require_relative "sx_defs.rb"
+          it_behaves_like "a carried thing"
+        end
+      SPEC
+      # The middle file is the whole point: it throws the registry away, exactly as
+      # something in a real suite was doing.
+      wipe = write_file("spec/sx_wipe_spec.rb", <<~SPEC)
+        describe "Wipe" do
+          it "replaces the shared example registry" do
+            RSpec.world.instance_variable_set(
+              :@shared_example_group_registry,
+              RSpec::Core::SharedExampleGroup::Registry.new
+            )
+            expect(1).to eq(1)
+          end
+        end
+      SPEC
+      # `require_relative` here is a no-op -- the first file already ran it -- so this file
+      # can only work if the registration survived.
+      last = write_file("spec/sx_b_spec.rb", <<~SPEC)
+        describe "B" do
+          require_relative "sx_defs.rb"
+          it_behaves_like "a carried thing"
+        end
+      SPEC
+
+      results = run_files(first, wipe, last)
+
+      assert_equal [:passed], results[0].map(&:status)
+      assert_equal [:passed], results[2].map(&:status),
+                   "the last file lost the shared examples the first one registered: " \
+                   "#{results[2].map { |r| r.failure&.message }.compact.join(", ")}"
+    end
+
+    # The same loss, arriving the other way round: the file registers its shared examples
+    # while it loads, and something *after* the load -- a before(:suite) hook, the reporter,
+    # anything -- replaces the world's registry. Capturing only at the end of the file then
+    # captures the replacement, and the registrations are orphaned rather than carried.
+    #
+    # This is what a real suite was actually doing. Traced by logging object ids from both
+    # sides: the shared file registered into one registry and every later restore used a
+    # different one. Nothing lost them in transit; they were written somewhere nobody read.
+    def test_shared_examples_survive_a_registry_replaced_after_the_file_loads
+      write_file("spec/sx2_defs.rb", <<~SPEC)
+        shared_examples_for "a late-carried thing" do
+          it("from the shared block") { expect(1).to eq(1) }
+        end
+      SPEC
+      first = write_file("spec/sx2_a_spec.rb", <<~SPEC)
+        describe "A" do
+          require_relative "sx2_defs.rb"
+          it_behaves_like "a late-carried thing"
+
+        end
+
+        RSpec.configure do |c|
+          c.before(:suite) do
+            RSpec.world.instance_variable_set(
+              :@shared_example_group_registry,
+              RSpec::Core::SharedExampleGroup::Registry.new
+            )
+          end
+        end
+      SPEC
+      last = write_file("spec/sx2_b_spec.rb", <<~SPEC)
+        describe "B" do
+          require_relative "sx2_defs.rb"
+          it_behaves_like "a late-carried thing"
+        end
+      SPEC
+
+      results = run_files(first, last)
+
+      assert_equal [:passed], results[0].map(&:status)
+      assert_equal [:passed], results[1].map(&:status),
+                   "registrations were orphaned by a registry replaced after the load: " \
+                   "#{results[1].map { |r| r.failure&.message }.compact.join(", ")}"
+    end
+
+    # A `before(:suite)` hook that fails is a file that ran nothing, and it must say so.
+    #
+    # RSpec records a failed suite hook the way it records a failed load -- by setting the
+    # quit flag, not by raising. Constable checked that flag only after loading the file,
+    # which is before the hooks have run, so the failure was invisible: the file was
+    # selected, loaded, ran zero examples, and the summary reported
+    # "0 tests · 0 passed · 0 failed" and exited 0.
+    #
+    # Observed on a real app whose DatabaseCleaner `before(:suite)` hook hit a closed
+    # connection. A green build for a file that never ran a line is the worst thing this
+    # runner can print.
+    def test_a_failing_before_suite_hook_is_reported_rather_than_running_nothing
+      file = write_file("spec/suite_hook_spec.rb", <<~SPEC)
+        RSpec.configure do |c|
+          c.before(:suite) { raise "the suite hook exploded" }
+        end
+
+        describe "X" do
+          it("never gets to run") { expect(1).to eq(1) }
+        end
+      SPEC
+
+      results = ColdCase.run_file(file, config: Constable.config)
+
+      refute_empty results, "a file that ran nothing must still produce a result"
+      assert(results.any?(&:failed?), "the failure has to reach the summary")
+      assert_match(/suite hook exploded|before\(:suite\)/,
+                   results.map { |r| r.failure&.message.to_s }.join(" "))
+    end
+
     # --- .rspec ------------------------------------------------------------------------
 
     # A helper named in .rspec that raises must stop the run, not downgrade to a warning.

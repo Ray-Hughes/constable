@@ -120,12 +120,37 @@ module Constable
             with_engine do
               collector  = Collector.new
               load_error = capture_load(path)
+              # Immediately, while it still exists.
+              #
+              # Loading the file is what runs its `require_relative` of a shared-examples
+              # file, and `require` fires once per process -- so this instant is the only
+              # time those registrations are reachable. Waiting until the ensure below was
+              # not good enough: by then the world (or just its registry) could have been
+              # replaced, and the object holding the registrations was simply orphaned.
+              #
+              # Traced on a real suite by logging object ids from both sides: the shared
+              # file registered into registry A, and every restore Constable performed for
+              # the next sixty-odd files used registry B. Nothing was losing the entries in
+              # transit -- they were written somewhere nobody ever read.
+              remember_shared_examples!
               load_error ||= quit_flag_error(path)
               unless load_error
                 # After the file has loaded -- that load is what registers them -- and
                 # before its examples run. See #run_pending_before_suite_hooks.
                 run_pending_before_suite_hooks(::RSpec.configuration)
-                run_world(collector)
+
+                # And check again, because a `before(:suite)` hook can fail too -- RSpec
+                # records that the same way it records a failed load, by setting the quit
+                # flag rather than raising.
+                #
+                # Checking only after the load missed it entirely: the hooks had not run
+                # yet. What that produced was the worst output this runner has: the file
+                # was selected, loaded, ran nothing, and the summary said
+                # "0 tests · 0 passed · 0 failed" with exit code 0. Observed on a real app
+                # whose DatabaseCleaner `before(:suite)` hook hit a closed connection --
+                # a green build for a file that never ran a line.
+                load_error = quit_flag_error(path)
+                run_world(collector) unless load_error
               end
 
               ColdCase.warn_for_file(path, base_class_name, collector.examples.size, config: config)
@@ -421,11 +446,69 @@ module Constable
         # Constable loads one file at a time, which is what makes a cold case cheap, so
         # the registry has to be carried across by hand. Observed on a real suite: twelve
         # files failing to load, all of which pass in isolation.
+        # Accumulate, never replace.
+        #
+        # This used to hand `@shared_examples` whatever registry the world happened to be
+        # holding when the file finished. That is fine as long as it is the same object we
+        # put there -- and it is not, if anything during the file replaced it. One file
+        # doing that used to cost every *later* file every shared example the suite had
+        # registered, because the empty replacement became the thing we carried forward.
+        #
+        # What that looks like: `Could not find shared examples "..."` on a file that
+        # `require_relative`s its own definitions, because `require` fires once per process
+        # and the registration it made is no longer anywhere. Reproduced on a real suite --
+        # 65 files, 7 files failing to load, all of them passing when run in smaller groups.
+        #
+        # Merging instead makes the carry monotonic: entries only ever accumulate, so no
+        # single file can lose what an earlier one registered, whatever it does to the
+        # world. Nothing here needs to know which file misbehaves, which is the point --
+        # that was two hours of not finding out.
         def remember_shared_examples!
           world = ::RSpec.instance_variable_get(:@world)
           return unless world.respond_to?(:shared_example_group_registry)
 
-          @shared_examples = world.shared_example_group_registry
+          current = world.shared_example_group_registry
+          return if current.nil?
+
+          if @shared_examples.nil? || @shared_examples.equal?(current) ||
+             registry_empty?(@shared_examples)
+            @shared_examples = current
+          else
+            merge_shared_examples!(@shared_examples, current)
+          end
+        rescue StandardError
+          nil
+        end
+
+        # RSpec builds `@shared_example_groups` lazily, so a registry nothing has registered
+        # into yet holds nil rather than an empty Hash. Keeping that one and merging into it
+        # would drop everything the other side has, which is the bug this method exists to
+        # prevent, one level down.
+        def registry_empty?(registry)
+          groups = registry.instance_variable_get(:@shared_example_groups)
+          return true unless groups.respond_to?(:each)
+
+          groups.each_value.none? { |by_name| by_name.respond_to?(:any?) && by_name.any? }
+        rescue StandardError
+          true
+        end
+
+        # Both registries keep their groups in a Hash of Hashes: context => name => block.
+        # Copy anything the run registered into the one we keep, without disturbing what is
+        # already there -- a name registered earlier is the one a later file expects to
+        # find, and RSpec itself warns rather than allows a redefinition.
+        def merge_shared_examples!(kept, current)
+          kept_groups    = kept.instance_variable_get(:@shared_example_groups)
+          current_groups = current.instance_variable_get(:@shared_example_groups)
+          return unless kept_groups.respond_to?(:each) && current_groups.respond_to?(:each)
+
+          current_groups.each do |context, by_name|
+            next unless by_name.respond_to?(:each)
+
+            by_name.each do |name, block|
+              kept_groups[context][name] ||= block
+            end
+          end
         rescue StandardError
           nil
         end
