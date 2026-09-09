@@ -180,6 +180,72 @@ end
 # -----------------------------------------------------------------------------
 
 Constable.configure do |c|
+  # --- Settings. Uncomment what you want; each is shown at its default. --------
+
+  # Workers default to `auto` -- processor count minus a little headroom, so the
+  # machine stays usable while the suite runs. Pin it when a CI container lies
+  # about its core count, or to rule parallelism out while debugging.
+  #
+  # c.parallel_workers = 4
+
+  # How a parallel worker gets a database of its own. Sharing one is not a
+  # speed/safety trade, it is a correctness bug: on SQLite the run dissolves into
+  # "database is locked", and on a client/server database tests quietly see each
+  # other's rows, which is worse because it looks like it worked.
+  #
+  #   :schema   rebuild <database>_<index> from schema.rb every run. What Rails
+  #             does for `rails test`, and correct by construction -- the
+  #             databases cannot drift, because they are thrown away each time.
+  #             The default, and the wrong choice only when it is slow or
+  #             impossible.
+  #   :reuse    keep them between runs. Faster (a big schema is not replayed per
+  #             worker), and the ONLY option that works when your schema cannot
+  #             rebuild the database by itself -- true of any app with Postgres
+  #             custom types, since CREATE TYPE has no schema.rb representation.
+  #             Run `constable prepare` once to build them, and again after a
+  #             migration; keeping them current is your job.
+  #   :off      do not shard, so do not fork. An explicit serial run: no attempt,
+  #             no warning. Correct, and as slow as one core.
+  #
+  # c.worker_databases = :reuse
+
+  # The live stream while the suite runs. The summary is identical either way.
+  #   :concise   one glyph per test, grouped per case (default)
+  #   :expanded  a line per test: glyph, description, duration -- so you can see
+  #              which test is hanging while it hangs, not afterwards
+  #
+  # c.output = :expanded
+
+  # Put a test on the docket by itself when it passed last run and failed this
+  # one. Off by default, and the reason is what jailing does: a jailed test is
+  # SKIPPED on every later run. On automatically, a suite with order-dependent
+  # tests quietly stops running things nobody chose to stop running.
+  #
+  # c.jail_flakes = true
+
+  # Rerun a failure in isolation before believing it. A test that then passes is
+  # flaky rather than broken: it gets a warrant instead of failing the build, and
+  # stays loudly visible until someone deals with it.
+  #
+  # c.warrants = true
+
+  # CI: fail the build when the warning count is not trending down. Warnings are
+  # cold-case files and `unsafe` blocks -- allowed, but visible.
+  #
+  # c.fail_on_warnings = true
+
+  # Diff-based coverage: only lines changed in the current diff are held to it.
+  #
+  # c.coverage           = true
+  # c.coverage_threshold = 90
+
+  # Your existing RSpec/Minitest files, run verbatim as cold cases through their
+  # own engine. `constable import --from=rspec` writes this for you.
+  #
+  # c.cold_cases = ["spec/**/*_spec.rb"]
+
+  # --- Code. This can only be written here. -----------------------------------
+
   # One-time global setup, run once per process before the whole suite. For
   # configuring the world -- drivers, adapters, formats -- and deliberately not
   # for creating records that tests then share. See the note at the bottom of

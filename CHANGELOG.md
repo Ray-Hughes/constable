@@ -5,6 +5,30 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Known: cold cases do not run inside a parallel worker
+
+Reproducible on a real Postgres app, and diagnosed as far as this. A forked worker takes
+its bucket, loads its spec file cleanly and schedules the example group — and then
+reports no examples at all:
+
+```
+worker 0: bucket=1 kinds={:cold=>1}
+  running spec/models/organizations/dvc_team_spec.rb
+    load_error=nil groups=1 ordered=1 examples=0 incl={} excl={}
+```
+
+No load error, no exception, no filter, no signal — the worker exits 0 having produced
+nothing. The same file run serially in the same process passes 204/204, so it is specific
+to running a cold case after `fork`.
+
+**It fails safely.** Since 1.4.1 a run that schedules work and collects nothing falls back
+to a serial run and says so, rather than reporting `0 tests, 0 failed` and exiting 0.
+Everything runs; nothing is skipped. The cost is that a cold-case suite cannot yet use
+more than one core.
+
+Native cases are unaffected. `worker_databases: off` skips the attempt entirely.
+
+
 ## [1.4.1]
 
 ### A parallel run that ran nothing is no longer a pass
