@@ -421,8 +421,14 @@ module Constable
           # reason, and a run that scheduled nineteen files reports zero tests and exits
           # 0. A worker that dies has to say so.
           begin
-            bucket.each do |item|
+            # The position report after each item is what lets the parent finish the work
+            # if this worker dies partway. Results for an item are all written once the
+            # item is done, so "position n reported" means items 0...n are home and
+            # nothing from item n was ever sent -- the boundary is exact, and re-running
+            # from it cannot duplicate a result.
+            bucket.each_with_index do |item, position|
               run_item(item).each { |result| write_message(writer, :result, result.to_h) }
+              write_message(writer, :progress, position + 1)
             end
           rescue Exception => e # rubocop:disable Lint/RescueException
             write_message(writer, :worker_error, "#{e.class}: #{e.message}")
@@ -471,8 +477,44 @@ module Constable
       # results carry them home. Nothing that bends the rules is allowed to go missing
       # just because it happened in a subprocess.
       collected.each { |result| Constable.warnings.concat(Array(result.warnings)) }
-      collected
+      collected + finish_abandoned_work(buckets)
     end
+
+    # One worker dying used to cost its whole remaining bucket, silently.
+    #
+    # `worker_errors` was only ever read on the path where *nothing* came back, so a
+    # worker that died beside living ones was collected and never mentioned. The parent
+    # reported the results it happened to receive, called them the whole suite, and
+    # exited 0. Observed: a 192-test suite reporting "99 passed, 0 failed" -- green, with
+    # 93 tests that never ran.
+    #
+    # Now the parent knows what it scheduled and how far each worker actually got, so it
+    # can just run the rest itself. Serial, in this process, which is the one place that
+    # cannot also die without anyone noticing.
+    def finish_abandoned_work(buckets)
+      abandoned = buckets.each_with_index.flat_map do |bucket, index|
+        done = worker_progress[index]
+        done < bucket.size ? bucket[done..] : []
+      end
+      return [] if abandoned.empty?
+
+      Constable.warn!(
+        "#{abandoned.size} test#{"s" unless abandoned.size == 1} did not come back from " \
+        "a parallel worker, so #{abandoned.size == 1 ? "it was" : "they were"} run here " \
+        "instead -- everything ran, nothing was skipped. A worker died partway through " \
+        "its share#{worker_death_reason}.",
+        kind: :parallel
+      )
+      run_serial(abandoned)
+    end
+
+    def worker_death_reason
+      return "" if worker_errors.empty?
+
+      ": #{worker_errors.first}"
+    end
+
+    def worker_progress = (@worker_progress ||= Hash.new(0))
 
     def worker_errors = (@worker_errors ||= [])
 
@@ -574,6 +616,9 @@ module Constable
               @reporter.record(result)
             when :coverage
               @worker_coverage = Constable::Coverage.merge_raw(@worker_coverage, body)
+            when :progress
+              index = readers.index(reader)
+              worker_progress[index] = body.to_i if index
             when :worker_error
               # A worker that could not start. Collected rather than raised, so the parent
               # decides what to do once it knows whether any worker got going at all.

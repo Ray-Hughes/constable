@@ -5,6 +5,55 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [2.1.1]
+
+Two bugs found by using 2.1.0's own new feature on a real suite. The first is the most
+serious defect this project has shipped.
+
+### A worker that died took its share of the suite with it, silently
+
+A 192-test suite reporting **"99 passed, 0 failed"**, exit code 0. Ninety-three tests never
+ran, and nothing said so.
+
+One worker died partway through its bucket. The parent collected the results the other
+worker sent, found them non-empty, and reported them as the whole run. `worker_errors` --
+which had the reason, in full -- was only ever read on the path where *nothing* came back,
+so a worker dying beside a healthy one was recorded and then never mentioned.
+
+This is the exact failure mode the runner already had three separate defences against, all
+of which assume total failure. Partial failure walked straight past them.
+
+Each worker now reports its position after every item, so the parent knows what it
+scheduled and how far each worker actually got. Whatever a dead worker abandoned is run in
+the parent -- serially, in the one process that cannot also vanish unnoticed -- and the
+reason comes with it:
+
+```
+| 7 tests did not come back from a parallel worker, so they were run here instead --
+  everything ran, nothing was skipped. A worker died partway through its share:
+  SystemExit: Migrations are pending.
+```
+
+Results for an item are only written once that item finishes, so the boundary is exact and
+re-running from it cannot duplicate a result.
+
+### `establish_connection` was not changing database, and said nothing
+
+`WorkerDatabases` renames a config in place -- `db_config._database = "app_test_3"` --
+which is how Rails' own `TestDatabases` does it. But when the process already holds a pool
+for that same config object, `establish_connection` hands back the pool it has instead of
+opening the database the object now names. The query then succeeds and answers about the
+*source* database.
+
+Verified on a real app: `populated?` returned **true** for a SQLite worker database whose
+file did not exist. That is `constable prepare` reporting "already prepared" for work it
+never did -- and it is why 2.1.0's staleness check could not see a worker that was a
+migration behind. Dropping the pool first is what makes a rename take effect.
+
+A forked worker never hit this, because `before_fork!` clears every connection before the
+fork. It only ever went wrong in the parent, which is why it survived this long.
+
+
 ## [2.1.0]
 
 Both changes here come from one afternoon on a real suite: nineteen files, eight forked

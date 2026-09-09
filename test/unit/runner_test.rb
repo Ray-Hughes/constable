@@ -148,6 +148,63 @@ module Constable
       assert_equal 4, runner.results.size
     end
 
+    # --- a worker that dies beside living ones ------------------------------------------
+    #
+    # The worst bug this runner has had. `worker_errors` was only ever read on the path
+    # where *nothing* came back, so a worker that died next to healthy ones was collected
+    # and never mentioned: the parent reported the results it happened to receive, called
+    # them the whole suite, and exited 0. Measured on the test app -- 192 tests reporting
+    # "99 passed, 0 failed". Green, with 93 tests that never ran.
+
+    def test_work_a_dead_worker_abandoned_is_finished_by_the_parent
+      files = 3.times.map do |i|
+        write_file("spec/abandoned_#{i}_spec.rb", <<~SPEC)
+          describe "file #{i}" do
+            it("a") { expect(1).to eq(1) }
+            it("b") { expect(2).to eq(2) }
+          end
+        SPEC
+      end
+      items = files.map { |f| Runner::Item.new(path: f, kind: :cold) }
+
+      _status, runner = run_suite
+      # Worker 0 finished its one item; worker 1 died having finished none of its two.
+      runner.send(:worker_progress)[0] = 1
+      runner.send(:worker_progress)[1] = 0
+
+      results = runner.send(:finish_abandoned_work, [[items[0]], [items[1], items[2]]])
+
+      assert_equal 4, results.size, "both of the dead worker's files have to be run"
+      assert(results.all?(&:passed?))
+      assert(Constable.warnings.any? { |w| w.to_s.include?("did not come back") },
+             "silently making up the work is how the original bug looked from outside")
+    end
+
+    def test_nothing_is_rerun_when_every_worker_finished_its_share
+      file = write_file("spec/complete_spec.rb", "describe('x') { it('a') { expect(1).to eq(1) } }")
+      items = [Runner::Item.new(path: file, kind: :cold)]
+
+      _status, runner = run_suite
+      runner.send(:worker_progress)[0] = 1
+
+      assert_empty runner.send(:finish_abandoned_work, [items])
+    end
+
+    # The reason the worker died is the most useful thing the run knows, and it used to be
+    # thrown away whenever any other worker survived.
+    def test_the_reason_a_worker_died_reaches_the_warning
+      file = write_file("spec/reason_spec.rb", "describe('x') { it('a') { expect(1).to eq(1) } }")
+      items = [Runner::Item.new(path: file, kind: :cold)]
+
+      _status, runner = run_suite
+      runner.send(:worker_errors) << "SystemExit: Migrations are pending"
+      runner.send(:worker_progress)[0] = 0
+
+      runner.send(:finish_abandoned_work, [items])
+
+      assert(Constable.warnings.any? { |w| w.to_s.include?("Migrations are pending") })
+    end
+
     # And the parent must not be left holding them: a value that outlives the fork would
     # make a later serial run look like worker 0 of a parallel one.
     def test_worker_identity_does_not_leak_into_the_parent

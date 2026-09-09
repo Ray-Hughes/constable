@@ -23,28 +23,43 @@ module Constable
     # which is what the staleness check compares. Given it, the fake tracks which database
     # was last connected to, so a worker copy can answer differently from its source.
     def stub_active_record(with_test_databases: true, populated: false, databases: %w[primary],
-                           migrations: nil)
-      calls = { cleared: 0, schema: [], reconstructed: [], renamed: [] }
+                           migrations: nil, populated_databases: nil)
+      calls = { cleared: 0, removed: 0, schema: [], reconstructed: [], renamed: [] }
 
       Object.const_set(:ActiveRecord, Module.new) unless defined?(::ActiveRecord)
       handler = Object.new
       handler.define_singleton_method(:clear_all_connections!) { calls[:cleared] += 1 }
 
       configs = databases.map { |name| FakeDbConfig.new(name, calls) }
-      current = []
+      # Rails' own behaviour, which is the whole point of these tests: when a pool is
+      # already open for this owner, establish_connection hands that pool back rather than
+      # opening the database the (renamed, same-object) config now names. Only dropping the
+      # connection first makes a rename take effect.
+      state = { database: nil }
       connection = Object.new
-      connection.define_singleton_method(:tables) { populated ? %w[users] : [] }
+      connection.define_singleton_method(:tables) do
+        if populated_databases
+          populated_databases.include?(state[:database]) ? %w[users] : []
+        else
+          populated ? %w[users] : []
+        end
+      end
       connection.define_singleton_method(:table_exists?) do |name|
         name.to_s == "schema_migrations" && !migrations.nil?
       end
-      connection.define_singleton_method(:select_rows) { |_sql| [migrations[current.last]] }
+      connection.define_singleton_method(:select_rows) { |_sql| [migrations[state[:database]]] }
 
       base = Class.new
       base.define_singleton_method(:connection_handler) { handler }
       base.define_singleton_method(:connection) { connection }
+      base.define_singleton_method(:remove_connection) do
+        calls[:removed] += 1
+        state[:database] = nil
+        true
+      end
       base.define_singleton_method(:establish_connection) do |*args|
         config = args.first
-        current << config.database if config.respond_to?(:database)
+        state[:database] ||= config.database if config.respond_to?(:database)
         true
       end
       base.define_singleton_method(:configurations) do
@@ -98,6 +113,43 @@ module Constable
       ::ActiveRecord.send(:remove_const, :TestDatabases) if ::ActiveRecord.const_defined?(:TestDatabases, false)
       ::ActiveRecord.send(:remove_const, :Tasks) if ::ActiveRecord.const_defined?(:Tasks, false)
       Object.send(:remove_const, :ActiveRecord) if ::ActiveRecord.constants.empty?
+    end
+
+    # --- switching database ------------------------------------------------------------
+    #
+    # These configs are renamed in place -- `_database = "primary_3"` -- and when the
+    # process already holds a pool for that same object, establish_connection hands the old
+    # pool back. The query then succeeds and answers about the *source* database.
+    #
+    # Verified against a real app before this was fixed: `populated?` said true for a
+    # SQLite worker database whose file did not exist, which is `constable prepare`
+    # reporting "already prepared" for work it never did.
+
+    def test_a_worker_database_that_is_not_there_is_not_reported_as_prepared
+      calls = stub_active_record(populated_databases: %w[primary])
+      # A booted app already holds a connection, which is what makes the rename a no-op.
+      ::ActiveRecord::Base.establish_connection(::ActiveRecord::Base.configurations
+                                                  .configs_for(env_name: "test").first)
+
+      prepared = nil
+      WorkerDatabases.send(:each_worker_config, 3) do |db_config|
+        prepared = WorkerDatabases.send(:populated?, db_config)
+      end
+
+      refute prepared, "primary_3 holds no tables -- saying it does is prepare claiming " \
+                       "work it never did"
+      assert_operator calls[:removed], :>=, 1, "the pool has to be dropped for a rename to take"
+    end
+
+    def test_a_worker_database_that_is_there_is_reported_as_prepared
+      stub_active_record(populated_databases: %w[primary primary_3])
+
+      prepared = nil
+      WorkerDatabases.send(:each_worker_config, 3) do |db_config|
+        prepared = WorkerDatabases.send(:populated?, db_config)
+      end
+
+      assert prepared
     end
 
     # --- staleness --------------------------------------------------------------------

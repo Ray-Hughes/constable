@@ -150,7 +150,7 @@ module Constable
     # Cheaper than diffing every version, and a worker that missed a migration differs in
     # both. nil when the question does not apply.
     def schema_fingerprint(db_config)
-      ::ActiveRecord::Base.establish_connection(db_config)
+      connect_to!(db_config)
       connection = ::ActiveRecord::Base.connection
       return nil unless connection.table_exists?("schema_migrations")
 
@@ -347,10 +347,36 @@ module Constable
     # Present and holding tables. A database that exists but is empty is not prepared, and
     # silently running a suite against no tables is the worst of the available outcomes.
     def populated?(db_config)
-      ::ActiveRecord::Base.establish_connection(db_config)
+      connect_to!(db_config)
       ::ActiveRecord::Base.connection.tables.any?
     rescue StandardError
       false
+    end
+
+    # `establish_connection(db_config)` is not enough to change database here, and the way
+    # it fails is silent.
+    #
+    # These configs are renamed in place -- `db_config._database = "#{name}_3"` -- which is
+    # how Rails' own TestDatabases does it. But when the process already holds a pool for
+    # that same config object, establish_connection hands back the pool it has rather than
+    # opening the database the object now names. So the query runs, succeeds, and answers
+    # about the *source* database.
+    #
+    # That made `populated?` report "already prepared" for a database that did not exist
+    # (verified: a worker index with no file at all), which is `constable prepare` claiming
+    # to have done work it never did. Dropping the pool first is what makes the rename take
+    # effect.
+    #
+    # A forked worker does not hit this, because before_fork! clears every connection
+    # before the fork -- which is exactly why it went unnoticed in the place it matters
+    # most and surfaced only in the parent.
+    def connect_to!(db_config)
+      begin
+        ::ActiveRecord::Base.remove_connection
+      rescue StandardError
+        nil
+      end
+      ::ActiveRecord::Base.establish_connection(db_config)
     end
 
     def env_name
