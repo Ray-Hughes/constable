@@ -34,8 +34,8 @@ abort("The Rails environment is running in production mode!") if Rails.env.produ
 if defined?(ActiveRecord::Migration)
   begin
     ActiveRecord::Migration.maintain_test_schema!
-  rescue ActiveRecord::PendingMigrationError => e
-    abort("#{e.message}\n\nRun: bin/rails db:migrate RAILS_ENV=test")
+  rescue ActiveRecord::PendingMigrationError => error
+    abort("#{error.message}\n\nRun: bin/rails db:migrate RAILS_ENV=test")
   end
 end
 
