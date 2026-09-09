@@ -123,6 +123,13 @@ module Constable
 
     # Consecutive clean runs that earn an automatic release. Floors at 1 -- a period of
     # zero would mean "release on sight", which is not parole.
+    # Opt-in. See Config#jail_flakes? for why the default is off: jailing skips the test on
+    # every later run, and doing that to a test nobody nominated is how a suite quietly
+    # stops testing things.
+    def jail_flakes?
+      @config.respond_to?(:jail_flakes?) ? @config.jail_flakes? : false
+    end
+
     def parole_period
       period = @config.respond_to?(:parole_period) ? @config.parole_period.to_i : 0
       period.positive? ? period : 10
@@ -290,7 +297,7 @@ module Constable
 
       if jail_mode
         jail_failure(result)
-      elsif flake_flip?(result)
+      elsif flake_flip?(result) && jail_flakes?
         jail_for_flake(result)
       else
         result

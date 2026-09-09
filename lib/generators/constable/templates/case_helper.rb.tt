@@ -159,6 +159,7 @@ end
 #      c.worker_databases   = :schema # or :reuse (keep them between runs) / :off
 #      c.output             = :concise    # or :expanded -- a line per test, with timings
 #      c.fail_on_warnings   = false   # CI: fail when the warning count is not trending down
+#      c.jail_flakes        = false   # auto-jail a pass->fail flip (jailed = skipped)
 #      c.warrants           = false   # rerun a failure in isolation before believing it
 #      c.warrant_retries    = 5
 #      c.parole_period      = 10      # clean runs before a paroled test releases itself

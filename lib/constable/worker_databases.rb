@@ -105,6 +105,73 @@ module Constable
                           .zip(names).each { |config, name| config._database = name if name }
     end
 
+    # Postgres can copy a whole database in one statement:
+    #
+    #   CREATE DATABASE "caseflow_test_3" TEMPLATE "caseflow_test"
+    #
+    # That matters because it needs no schema.rb at all. An app whose schema cannot
+    # rebuild the database by itself -- custom types, functions, triggers -- can still get
+    # per-worker databases this way, cloned from the test database it already has. It is
+    # also far faster than replaying a large schema once per worker.
+    #
+    # Returns true when it cloned, false when this is not Postgres or the source is not
+    # there, so the caller can fall back to loading the schema.
+    def clone_database(db_config, index)
+      return false unless postgres?(db_config)
+
+      source = db_config.database.to_s.sub(/_#{index}\z/, "")
+      target = db_config.database.to_s
+      return false if source.empty? || source == target
+
+      maintenance_connection(db_config) do |connection|
+        return false unless database_exists?(connection, source)
+
+        # A template cannot be copied while anything is connected to it.
+        disconnect_everyone_from!(connection, source)
+        connection.execute(%(DROP DATABASE IF EXISTS "#{target}"))
+        connection.execute(%(CREATE DATABASE "#{target}" TEMPLATE "#{source}"))
+      end
+
+      true
+    rescue StandardError
+      # Cloning is the fast path, never the only one. Anything unexpected -- a permission,
+      # a Postgres version, a connection that will not drop -- falls back to the schema.
+      false
+    end
+
+    def postgres?(db_config)
+      db_config.respond_to?(:adapter) && db_config.adapter.to_s.include?("postgre")
+    end
+
+    # Postgres will not let you create a database while connected to the one you are
+    # copying, so the statements run against the cluster's own maintenance database.
+    def maintenance_connection(db_config)
+      previous = ::ActiveRecord::Base.connection_db_config
+      ::ActiveRecord::Base.establish_connection(db_config.configuration_hash.merge(database: "postgres"))
+      yield ::ActiveRecord::Base.connection
+    ensure
+      ::ActiveRecord::Base.establish_connection(previous)
+    end
+
+    def database_exists?(connection, name)
+      # Plain Ruby, not #present?: this runs inside a forked worker in somebody else's app,
+      # and quietly depending on ActiveSupport being loaded is how a fast path silently
+      # turns itself off.
+      value = connection.select_value("SELECT 1 FROM pg_database WHERE datname = #{connection.quote(name)}")
+      !value.nil?
+    rescue StandardError
+      false
+    end
+
+    def disconnect_everyone_from!(connection, name)
+      connection.execute(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity " \
+        "WHERE datname = #{connection.quote(name)} AND pid <> pg_backend_pid()"
+      )
+    rescue StandardError
+      nil
+    end
+
     # The :reuse half. Points every database this environment declares at its `_<index>`
     # sibling, and only builds the ones that are not there yet.
     #
@@ -120,6 +187,10 @@ module Constable
 
       each_worker_config(index) do |db_config|
         next if populated?(db_config)
+
+        # Clone first: it needs no schema.rb, which is the only thing that works for an
+        # app whose schema cannot rebuild the database, and it is faster besides.
+        next built << "#{db_config.database} (cloned)" if clone_database(db_config, index)
 
         ::ActiveRecord::Tasks::DatabaseTasks.reconstruct_from_schema(db_config, nil)
         built << db_config.database

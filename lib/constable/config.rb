@@ -22,6 +22,7 @@ module Constable
       "output" => "concise",
       "parallel_workers" => "auto",
       "worker_databases" => "schema",
+      "jail_flakes" => false,
       "tiers" => {
         "unit" => "test/cases/models/**/*",
         "integration" => "test/cases/controllers/**/*",
@@ -76,6 +77,19 @@ module Constable
 
     def cold_cases         = Array(@raw["cold_cases"])
     def warrants?          = truthy(@raw["warrants"])
+
+    # Should a test that passed last run and failed this one be put on the docket by
+    # itself? Off by default, and the reason is what jailing *does*: a jailed test is
+    # skipped on every later run. Turning that on automatically means a suite quietly
+    # stops running tests nobody chose to stop running.
+    #
+    # Observed on a real suite: a first `constable test` put 29 tests on a docket the user
+    # had never asked for, and every one of them was skipped from then on. A suite with
+    # order-dependent tests -- which is most large suites, and exactly the kind Constable
+    # is pitched at -- trips this constantly.
+    #
+    # `constable test --jail` still jails failures, because that is a thing you asked for.
+    def jail_flakes?       = truthy(@raw["jail_flakes"])
     # Negative retries are a typo for "off", not an instruction to count backwards.
     def warrant_retries    = [@raw["warrant_retries"].to_i, 0].max
     def auto_relink?       = truthy(@raw["auto_relink"])

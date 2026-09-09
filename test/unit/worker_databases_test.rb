@@ -330,5 +330,98 @@ module Constable
 
       assert_match(/no ActiveRecord databases to prepare/, error.message)
     end
+
+    # --- cloning -----------------------------------------------------------------------
+    #
+    # Postgres copies a whole database in one statement, which needs no schema.rb at all.
+    # That is the only thing that works for an app whose schema cannot rebuild the
+    # database by itself -- and it is what unblocks parallelism for one, since without it
+    # such an app runs serially forever.
+
+    def stub_postgres(source_exists: true)
+      calls = { executed: [] }
+      configs = [PostgresDbConfig.new("caseflow_test", calls)]
+      connection = Object.new
+      connection.define_singleton_method(:execute) { |sql| calls[:executed] << sql.to_s }
+      connection.define_singleton_method(:quote) { |v| "'#{v}'" }
+      connection.define_singleton_method(:select_value) { |_| source_exists ? 1 : nil }
+      connection.define_singleton_method(:tables) { [] }
+
+      Object.const_set(:ActiveRecord, Module.new) unless defined?(::ActiveRecord)
+      base = Class.new
+      base.define_singleton_method(:connection) { connection }
+      base.define_singleton_method(:connection_db_config) { configs.first }
+      base.define_singleton_method(:establish_connection) { |*| true }
+      base.define_singleton_method(:configurations) do
+        Object.new.tap { |c| c.define_singleton_method(:configs_for) { |**| configs } }
+      end
+      handler = Object.new
+      handler.define_singleton_method(:clear_all_connections!) { nil }
+      base.define_singleton_method(:connection_handler) { handler }
+      ::ActiveRecord.const_set(:Base, base)
+
+      tasks = Module.new
+      tasks.define_singleton_method(:reconstruct_from_schema) { |c, _| calls[:executed] << "schema:#{c.database}" }
+      ::ActiveRecord.const_set(:Tasks, Module.new) unless ::ActiveRecord.const_defined?(:Tasks, false)
+      ::ActiveRecord::Tasks.const_set(:DatabaseTasks, tasks)
+      ::ActiveRecord.const_set(:TestDatabases, Module.new)
+
+      calls
+    end
+
+    class PostgresDbConfig
+      attr_reader :database
+
+      def initialize(database, calls)
+        @database = database
+        @calls = calls
+      end
+
+      def _database=(name)
+        @database = name
+      end
+
+      def database_tasks? = true
+      def adapter = "postgresql"
+      def configuration_hash = { adapter: "postgresql", database: @database }
+    end
+
+    def test_a_worker_database_is_cloned_rather_than_rebuilt_from_schema
+      calls = stub_postgres
+
+      WorkerDatabases.after_fork!(3, mode: :reuse)
+
+      assert(calls[:executed].any? do |sql|
+        sql.include?(%(CREATE DATABASE "caseflow_test_3" TEMPLATE "caseflow_test"))
+      end,
+             "expected a template clone, got #{calls[:executed].inspect}")
+      refute(calls[:executed].any? { |sql| sql.start_with?("schema:") }, "schema.rb should not be needed")
+    end
+
+    def test_the_template_is_disconnected_before_it_is_copied
+      calls = stub_postgres
+
+      WorkerDatabases.after_fork!(1, mode: :reuse)
+
+      assert(calls[:executed].any? { |sql| sql.include?("pg_terminate_backend") },
+             "Postgres will not copy a database anything is connected to")
+    end
+
+    def test_a_stale_worker_database_is_dropped_first
+      calls = stub_postgres
+
+      WorkerDatabases.after_fork!(2, mode: :reuse)
+
+      assert(calls[:executed].any? { |sql| sql.include?(%(DROP DATABASE IF EXISTS "caseflow_test_2")) })
+    end
+
+    # No source to copy: fall back to the schema rather than inventing an empty database.
+    def test_it_falls_back_to_the_schema_when_there_is_nothing_to_clone
+      calls = stub_postgres(source_exists: false)
+
+      WorkerDatabases.after_fork!(0, mode: :reuse)
+
+      assert(calls[:executed].any? { |sql| sql.start_with?("schema:") })
+    end
   end
 end

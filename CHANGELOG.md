@@ -5,6 +5,51 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.4.0]
+
+Two problems from the same 1,277-file suite: a docket nobody asked for, and 110 minutes.
+
+### A flaky test is no longer jailed by itself
+
+**This is the important one, because jailed means skipped.** A first `constable test` on a
+real suite put **29 tests on a docket the user had never asked for** — each one recorded
+as *"passed, then failed with no code change"* — and every one of them was silently
+skipped from then on. A suite with order-dependent tests, which is most large suites and
+exactly what Constable is pitched at, trips that constantly.
+
+Automatic flake-jailing is now off by default:
+
+```yaml
+jail_flakes: false   # was: always on
+```
+
+`constable test --jail` still jails failures, because that is a thing you asked for.
+Turn the automatic route back on when you want it. Nothing stops being *reported* — a
+flaky test still fails, still shows up, still gets a warrant if warrants are on. It just
+does not remove itself from the suite.
+
+### Per-worker databases without a loadable schema
+
+The same suite ran **serially for 110 minutes on a 12-core machine**, because its schema
+cannot be loaded from `schema.rb` (Postgres custom types), so `worker_databases: off` was
+the only setting that worked.
+
+Postgres can copy a whole database in one statement, and that needs no schema at all:
+
+```sql
+CREATE DATABASE "caseflow_test_3" TEMPLATE "caseflow_test"
+```
+
+`worker_databases: reuse` now clones from the test database you already have, dropping a
+stale copy and disconnecting the template first. It falls back to loading the schema when
+there is nothing to clone, and to Postgres only — anything unexpected takes the old path
+rather than failing. It is also simply faster than replaying a large schema once per
+worker, so it is worth having on any Postgres app.
+
+For a suite that could only run serially, this is the difference between one core and all
+of them.
+
+
 ## [1.3.3]
 
 **1.3.2 was tagged twice.** The console fix in it was rebuilt after the gem had already
@@ -619,7 +664,8 @@ Initial release.
 - Diff-based coverage gate — only lines changed in the current diff are held to the
   threshold. `constable beat` for the full picture, `--html` for a browsable report.
 
-[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.3.3...HEAD
+[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/Ray-Hughes/constable/compare/v1.3.3...v1.4.0
 [1.3.3]: https://github.com/Ray-Hughes/constable/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/Ray-Hughes/constable/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Ray-Hughes/constable/compare/v1.3.0...v1.3.1

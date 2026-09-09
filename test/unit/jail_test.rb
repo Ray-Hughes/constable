@@ -114,7 +114,10 @@ module Constable
     def setup
       super
       @period  = 10
-      @config  = Config.new({ "parole_period" => @period }, root: tmp_root)
+      # jail_flakes is off by default -- jailing skips a test on every later run, and doing
+      # that to a test nobody nominated is how a suite quietly stops testing things. The
+      # flake-flip route is exercised here with it explicitly on.
+      @config  = Config.new({ "parole_period" => @period, "jail_flakes" => true }, root: tmp_root)
       @blotter = FakeBlotter.new(parole_period: @period)
       Constable.storage = @blotter
     end
@@ -129,6 +132,28 @@ module Constable
     end
 
     # --- route one: a flake-history flip ---------------------------------------
+    #
+    # Opt-in since 1.4.0. On a real suite the default put 29 tests on a docket the user
+    # had never asked for, and jailed means skipped, so the suite silently stopped running
+    # them.
+
+    def test_a_flake_flip_is_left_alone_by_default
+      @blotter.push_history("aaaa000000000001", :passed, :passed)
+      subject = jail(config: Config.new({ "parole_period" => @period }, root: tmp_root))
+
+      decided = subject.adjudicate(result(status: :failed))
+
+      assert_equal :failed, decided.status, "a failure is a failure, not a docket entry"
+      assert_empty subject.entries
+    end
+
+    def test_jail_mode_still_jails_a_failure_without_opting_in
+      subject = jail(config: Config.new({ "parole_period" => @period }, root: tmp_root))
+
+      decided = subject.adjudicate(result(status: :failed), jail_mode: true)
+
+      assert_equal :jailed, decided.status, "--jail is a thing you asked for"
+    end
 
     def test_a_test_that_flips_result_with_no_code_change_is_jailed
       @blotter.push_history("aaaa000000000001", :passed, :passed)

@@ -59,6 +59,14 @@ storage:
   url:                                 # postgres/mysql only, e.g.
                                        #   postgres://user:pass@host/constable_metadata
 
+# Put a test on the docket by itself when it passed last run and failed this one, with no
+# code change in between. Off by default, and the reason is what jailing *does*: a jailed
+# test is skipped on every later run. Turning that on automatically means a suite quietly
+# stops running tests nobody chose to stop running -- and a suite with order-dependent
+# tests, which is most large ones, trips it constantly. `constable test --jail` still
+# jails failures, because that is a thing you asked for.
+jail_flakes: false
+
 warrants: false          # opt-in flaky detector -- rerun a failure in isolation before believing it
 warrant_retries: 5       # reruns before declaring a warrant (flaky) or a genuine failure
 auto_relink: false       # auto-confirm high-confidence rename detection instead of suggesting it
