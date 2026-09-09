@@ -414,7 +414,11 @@ Each worker gets **its own database**, built from schema the way `rails test` do
 or kept between runs, with `worker_databases: reuse`, which is both faster and the only
 thing that works for an app whose schema cannot rebuild the database by itself (any app
 with Postgres custom types: `CREATE TYPE` has no `schema.rb` representation). Prepare
-those once with `constable prepare`.
+those once with `constable prepare`, and again after a migration — kept databases do not
+follow one on their own. Forgetting is caught rather than suffered: Constable compares
+what each worker database has migrated against the real test database before it forks, and
+runs serially (which uses the real one, so it is correct) rather than testing yesterday's
+schema.
 Sharing one would not be a speed/safety trade but a correctness bug: on SQLite the run
 dissolves into `database is locked`, and on a client/server database tests quietly see
 each other's rows. If your app has ActiveRecord but cannot shard, Constable runs serially

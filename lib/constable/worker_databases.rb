@@ -93,6 +93,84 @@ module Constable
       raise Constable::Error, "could not prepare worker #{index}: #{e.class}: #{e.message}"
     end
 
+    # The one mistake `:reuse` invites, caught before the fork rather than after.
+    #
+    # `:reuse` keeps the per-worker databases between runs, which is the whole point --
+    # and it means they do not follow migrations by themselves. Run a migration, run the
+    # suite, and every worker is now testing yesterday's schema. That does not fail
+    # cleanly: it fails as a missing column in whichever file happened to touch it, three
+    # files away from anything you changed, differently on each run because the file went
+    # to a different worker. Exactly the shape of bug that costs an afternoon.
+    #
+    # So compare what each worker database has migrated against what the real test
+    # database has, and refuse rather than guess. Two integers per database, in the parent,
+    # before anything forks.
+    #
+    # Returns the worker indexes that are out of date, empty when they are all current or
+    # when the question cannot be answered (no schema_migrations table, an adapter that
+    # will not connect) -- an unanswerable check must not block a run that would have
+    # worked.
+    def stale_workers(count)
+      return [] unless shardable?
+
+      expected = {}
+      original = database_names
+      begin
+        each_source_config do |db_config|
+          fingerprint = schema_fingerprint(db_config)
+          expected[db_config.database.to_s] = fingerprint if fingerprint
+        end
+        return [] if expected.empty?
+
+        stale = []
+        (0...count).each do |index|
+          names = database_names
+          begin
+            each_worker_config(index) do |db_config|
+              source = db_config.database.to_s.sub(/_#{index}\z/, "")
+              next unless expected.key?(source)
+
+              actual = schema_fingerprint(db_config)
+              stale << index if actual && actual != expected[source]
+            end
+          ensure
+            restore_database_names(names)
+          end
+        end
+        stale.uniq
+      ensure
+        restore_database_names(original)
+        ::ActiveRecord::Base.establish_connection
+      end
+    rescue StandardError
+      []
+    end
+
+    # What a database has migrated: how many migrations it has run and the latest one.
+    # Cheaper than diffing every version, and a worker that missed a migration differs in
+    # both. nil when the question does not apply.
+    def schema_fingerprint(db_config)
+      ::ActiveRecord::Base.establish_connection(db_config)
+      connection = ::ActiveRecord::Base.connection
+      return nil unless connection.table_exists?("schema_migrations")
+
+      connection.select_rows("SELECT COUNT(*), MAX(version) FROM schema_migrations").first
+    rescue StandardError
+      nil
+    end
+
+    # The same configs `each_worker_config` renames, left under their real names.
+    def each_source_config
+      ::ActiveRecord::Base.configurations
+                          .configs_for(env_name: env_name, include_hidden: true)
+                          .each do |db_config|
+        next unless db_config.database_tasks?
+        next unless shardable_adapter?(db_config)
+
+        yield db_config
+      end
+    end
+
     def database_names
       ::ActiveRecord::Base.configurations
                           .configs_for(env_name: env_name, include_hidden: true)

@@ -19,7 +19,11 @@ module Constable
     # The smallest thing that behaves like ActiveRecord for this module's purposes.
     # `populated:` decides whether the per-worker databases already hold tables, which is
     # the question :reuse mode turns on.
-    def stub_active_record(with_test_databases: true, populated: false, databases: %w[primary])
+    # `migrations:` maps a database name to what it has migrated -- [count, latest] --
+    # which is what the staleness check compares. Given it, the fake tracks which database
+    # was last connected to, so a worker copy can answer differently from its source.
+    def stub_active_record(with_test_databases: true, populated: false, databases: %w[primary],
+                           migrations: nil)
       calls = { cleared: 0, schema: [], reconstructed: [], renamed: [] }
 
       Object.const_set(:ActiveRecord, Module.new) unless defined?(::ActiveRecord)
@@ -27,13 +31,22 @@ module Constable
       handler.define_singleton_method(:clear_all_connections!) { calls[:cleared] += 1 }
 
       configs = databases.map { |name| FakeDbConfig.new(name, calls) }
+      current = []
       connection = Object.new
       connection.define_singleton_method(:tables) { populated ? %w[users] : [] }
+      connection.define_singleton_method(:table_exists?) do |name|
+        name.to_s == "schema_migrations" && !migrations.nil?
+      end
+      connection.define_singleton_method(:select_rows) { |_sql| [migrations[current.last]] }
 
       base = Class.new
       base.define_singleton_method(:connection_handler) { handler }
       base.define_singleton_method(:connection) { connection }
-      base.define_singleton_method(:establish_connection) { |*| true }
+      base.define_singleton_method(:establish_connection) do |*args|
+        config = args.first
+        current << config.database if config.respond_to?(:database)
+        true
+      end
       base.define_singleton_method(:configurations) do
         Object.new.tap do |c|
           c.define_singleton_method(:configs_for) { |**| configs }
@@ -85,6 +98,67 @@ module Constable
       ::ActiveRecord.send(:remove_const, :TestDatabases) if ::ActiveRecord.const_defined?(:TestDatabases, false)
       ::ActiveRecord.send(:remove_const, :Tasks) if ::ActiveRecord.const_defined?(:Tasks, false)
       Object.send(:remove_const, :ActiveRecord) if ::ActiveRecord.constants.empty?
+    end
+
+    # --- staleness --------------------------------------------------------------------
+    #
+    # The mistake `:reuse` invites. The copies are kept between runs, which is the point,
+    # and it means a migration does not reach them. Running anyway fails as a missing
+    # column in whichever file happened to land on the stale worker -- a different file
+    # each run, none of them the one you changed.
+
+    def test_worker_databases_that_match_the_test_database_are_not_stale
+      stub_active_record(migrations: {
+                           "primary" => [42, "20260908000000"],
+                           "primary_0" => [42, "20260908000000"],
+                           "primary_1" => [42, "20260908000000"]
+                         })
+
+      assert_empty WorkerDatabases.stale_workers(2)
+    end
+
+    def test_a_worker_that_missed_a_migration_is_reported
+      stub_active_record(migrations: {
+                           "primary" => [43, "20260909000000"],
+                           "primary_0" => [43, "20260909000000"],
+                           "primary_1" => [42, "20260908000000"]
+                         })
+
+      assert_equal [1], WorkerDatabases.stale_workers(2)
+    end
+
+    # Same count, different latest migration: two branches whose migrations interleaved.
+    # Counting alone would call this current, which is why the latest version is compared
+    # too.
+    def test_a_worker_at_the_same_count_but_a_different_migration_is_stale
+      stub_active_record(migrations: {
+                           "primary" => [42, "20260909000000"],
+                           "primary_0" => [42, "20260908000000"]
+                         })
+
+      assert_equal [0], WorkerDatabases.stale_workers(1)
+    end
+
+    # An unanswerable question must not block a run that would have worked.
+    def test_nothing_is_stale_when_there_is_no_schema_migrations_table
+      stub_active_record(migrations: nil)
+
+      assert_empty WorkerDatabases.stale_workers(2)
+    end
+
+    # The check renames configs to look at the copies, exactly as prepare! does, and the
+    # process it runs in is the parent -- which still has to be pointed at the real
+    # databases afterwards.
+    def test_checking_leaves_the_database_names_alone
+      stub_active_record(migrations: {
+                           "primary" => [42, "20260908000000"],
+                           "primary_0" => [42, "20260908000000"],
+                           "primary_1" => [42, "20260908000000"]
+                         })
+
+      WorkerDatabases.stale_workers(2)
+
+      assert_equal %w[primary], WorkerDatabases.database_names
     end
 
     # --- detection ------------------------------------------------------------------

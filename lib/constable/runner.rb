@@ -289,7 +289,7 @@ module Constable
       return [] if items.empty?
 
       count = worker_count(items)
-      if count > 1 && forkable? && parallel_safe?
+      if count > 1 && forkable? && parallel_safe?(count)
         run_parallel(items, count)
       else
         run_serial(items)
@@ -302,17 +302,45 @@ module Constable
     # which is worse. An app with no ActiveRecord has nothing to shard and is always safe.
     #
     # When we cannot shard, we run serially and say why. Slow is a trade-off; wrong is not.
-    def parallel_safe?
+    def parallel_safe?(count)
       # An explicit opt-out. No attempt, and no warning about one -- the user has already
       # told us they know.
       return false if @config.worker_databases == :off
       return true unless WorkerDatabases.active_record?
-      return true if WorkerDatabases.shardable?
+
+      unless WorkerDatabases.shardable?
+        Constable.warn!(
+          "parallel workers need one database per worker, and this app's ActiveRecord " \
+          "cannot provide them (active_record/test_databases did not load). Running " \
+          "serially instead -- pass --workers N once that is available.",
+          kind: :parallel
+        )
+        return false
+      end
+
+      worker_databases_current?(count)
+    end
+
+    # `:reuse` keeps the per-worker databases between runs, so they do not follow
+    # migrations by themselves. A run against stale copies does not fail cleanly -- it
+    # fails as a missing column in whichever file happened to touch it, on a different
+    # worker each run.
+    #
+    # Serial is the right fallback rather than a refusal, because the database a serial
+    # run uses is the real test database, and that one *is* current. So the suite still
+    # runs, correctly, and says exactly what to do to get its speed back.
+    def worker_databases_current?(count)
+      return true unless @config.worker_databases.to_s == "reuse"
+
+      stale = WorkerDatabases.stale_workers(count)
+      return true if stale.empty?
 
       Constable.warn!(
-        "parallel workers need one database per worker, and this app's ActiveRecord " \
-        "cannot provide them (active_record/test_databases did not load). Running " \
-        "serially instead -- pass --workers N once that is available.",
+        "worker database#{"s" if stale.length > 1} #{stale.join(", ")} " \
+        "#{stale.length > 1 ? "have" : "has"} not run the migrations the test database " \
+        "has. `worker_databases: reuse` keeps these between runs, which means they do " \
+        "not follow a migration on their own. Running serially instead -- " \
+        "`constable prepare` rebuilds them.",
         kind: :parallel
       )
       false

@@ -65,6 +65,29 @@ Deliberately not `TEST_ENV_NUMBER` or `TEST_SUBCATEGORY`: both are already inter
 into some apps' `database.yml`, and setting either here would rename databases behind
 `WorkerDatabases`' back.
 
+### A stale worker database drops the run to serial instead of running wrong
+
+`worker_databases: reuse` keeps the per-worker databases between runs, which is the point
+of it — and it means they do not follow migrations on their own. Run a migration, run the
+suite, and every worker is testing yesterday's schema.
+
+That does not fail cleanly. It fails as a missing column in whichever file happened to
+land on a stale worker, three files from anything you changed, on a different file each
+run because the scheduling moved. Constable now compares what each worker database has
+migrated against the real test database before it forks, and when they disagree:
+
+```
+⚠ worker database 3 has not run the migrations the test database has. `worker_databases:
+  reuse` keeps these between runs, which means they do not follow a migration on their
+  own. Running serially instead -- `constable prepare` rebuilds them.
+```
+
+Serial rather than a refusal, deliberately: the database a serial run uses is the real
+test database, and that one *is* current. The suite still runs, correctly, and says what
+to do to get its speed back. Two integers per database, in the parent, before anything
+forks; a question that cannot be answered (no `schema_migrations`, an adapter that will
+not connect) never blocks a run that would have worked.
+
 ### Tests
 
 The fork path had no end-to-end coverage at all, which is where most of this project's
