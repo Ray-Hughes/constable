@@ -5,28 +5,37 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
-### Known: cold cases do not run inside a parallel worker
+## [1.4.2]
 
-Reproducible on a real Postgres app, and diagnosed as far as this. A forked worker takes
-its bucket, loads its spec file cleanly and schedules the example group — and then
-reports no examples at all:
+### Cold cases run inside a parallel worker
+
+The defect recorded as known in 1.4.1, now understood and fixed. Two bugs, stacked, and
+the second one hid the first.
+
+**RSpec swallows errors in required files.** `Configuration#requires=` routes through
+`load_file_handling_errors`, which rescues anything raised while loading, reports it
+through a formatter, and sets `world.wants_to_quit = true`. Every later
+`ExampleGroup.run` then returns immediately. Constable points RSpec's streams at a
+throwaway `StringIO` — stdout belongs to the reporter — so that report went nowhere: the
+file loaded, the examples registered, and none of them ran. A forked worker produced no
+results, no error and no exception, and exited 0. Requires are now loaded directly, where
+an exception carries its own message and backtrace, and the quit flag is checked and
+surfaced if anything sets it anyway.
+
+**Not every database can be sharded.** With the error visible, the real cause was one
+line: worker setup renamed *every* database config to `<database>_<index>`, including
+connections that are not per-worker test data at all. Caseflow talks to a legacy Oracle
+system (VACOLS) alongside its own Postgres databases, and appending `_3` to an Oracle TNS
+service name produces:
 
 ```
-worker 0: bucket=1 kinds={:cold=>1}
-  running spec/models/organizations/dvc_team_spec.rb
-    load_error=nil groups=1 ordered=1 examples=0 incl={} excl={}
+OCIError: ORA-12162: TNS:net service name is incorrectly specified
 ```
 
-No load error, no exception, no filter, no signal — the worker exits 0 having produced
-nothing. The same file run serially in the same process passes 204/204, so it is specific
-to running a cold case after `fork`.
-
-**It fails safely.** Since 1.4.1 a run that schedules work and collects nothing falls back
-to a serial run and says so, rather than reporting `0 tests, 0 failed` and exiting 0.
-Everything runs; nothing is skipped. The cost is that a cold-case suite cannot yet use
-more than one core.
-
-Native cases are unaffected. `worker_databases: off` skips the attempt entirely.
+raised inside a `before(:suite)` hook — which is exactly what RSpec was swallowing. Only
+adapters that per-worker copies make sense for are renamed now (postgresql, postgis,
+mysql2, trilogy, sqlite3). An external system stays shared by every worker, which is what
+it is for.
 
 
 ## [1.4.1]
@@ -736,7 +745,8 @@ Initial release.
 - Diff-based coverage gate — only lines changed in the current diff are held to the
   threshold. `constable beat` for the full picture, `--html` for a browsable report.
 
-[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.4.2...HEAD
+[1.4.2]: https://github.com/Ray-Hughes/constable/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/Ray-Hughes/constable/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/Ray-Hughes/constable/compare/v1.3.3...v1.4.0
 [1.3.3]: https://github.com/Ray-Hughes/constable/compare/v1.3.2...v1.3.3

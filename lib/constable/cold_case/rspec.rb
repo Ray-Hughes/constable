@@ -120,6 +120,7 @@ module Constable
             with_engine do
               collector  = Collector.new
               load_error = capture_load(path)
+              load_error ||= quit_flag_error(path)
               unless load_error
                 # After the file has loaded -- that load is what registers them -- and
                 # before its examples run. See #run_pending_before_suite_hooks.
@@ -306,15 +307,74 @@ module Constable
           requires = rspec_option_requires
           return if requires.empty?
 
-          # `requires=` rather than plain Kernel#require: it is RSpec's own accessor, and
-          # it puts `lib` and the default path (`spec`) on the load path first, which is
-          # what makes a bare `require "rails_helper"` resolve.
-          configuration.requires = requires
+          # Deliberately NOT `configuration.requires =`, which is RSpec's own accessor.
+          # That routes through Configuration#load_file_handling_errors, which rescues
+          # anything raised while loading, reports it through a formatter, and sets
+          # `world.wants_to_quit`. Since stdout belongs to Constable's reporter, RSpec's
+          # streams are a throwaway StringIO, so that report goes nowhere -- and every
+          # later ExampleGroup.run returns immediately. The file loads, the examples
+          # register, and none of them run. A forked worker produced no results, no error
+          # and no exception, and exited 0.
+          #
+          # So the load path is set up the same way and the requires are done here, where
+          # an exception is an exception and carries its own message and backtrace.
+          add_spec_load_paths!(configuration)
+          requires.each { |path| require path }
+          configuration.instance_variable_set(:@requires, requires)
+        rescue Constable::Error
+          raise
         rescue StandardError => e
           # A helper that will not load is the suite's problem to fix, and it will say so
           # loudly on the first file. Constable's job here is not to disappear.
           Constable.warn!("could not load what .rspec requires (#{e.class}: #{e.message}). " \
                           "Cold cases will run without it.", kind: :cold_case)
+        end
+
+        # What `configuration.requires=` does before requiring anything: puts `lib` and the
+        # default path (`spec`) on the load path, which is what makes a bare
+        # `require "rails_helper"` resolve at all.
+        def add_spec_load_paths!(configuration)
+          default_path = configuration.default_path if configuration.respond_to?(:default_path)
+          ["lib", default_path].compact.uniq.each do |dir|
+            absolute = File.expand_path(dir, Constable.root)
+            $LOAD_PATH.unshift(absolute) if File.directory?(absolute) && !$LOAD_PATH.include?(absolute)
+          end
+        end
+
+        # RSpec does not let an error in a required file reach you.
+        # Configuration#load_file_handling_errors rescues anything raised while loading,
+        # reports it through `notify_non_example_exception`, and sets
+        # `world.wants_to_quit = true`. Every later ExampleGroup.run then returns
+        # immediately, so the file loads, the examples register, and none of them run.
+        #
+        # We point RSpec's output at a throwaway StringIO -- stdout belongs to the
+        # reporter -- so that report goes nowhere. The result was a forked worker that
+        # produced no results, no error and no exception, and exited 0. It took a probe
+        # inside the child to find that `wants_to_quit` was the difference.
+        #
+        # So: ask, and put the swallowed message back in front of the user.
+        def raise_if_loading_failed!(configuration, requires)
+          return unless ::RSpec.world.wants_to_quit
+
+          # Clear it, or every later file in this session inherits the flag and runs
+          # nothing either.
+          ::RSpec.world.wants_to_quit = false
+
+          raise Constable::Error,
+                "RSpec could not load #{requires.join(", ")} (from .rspec). " \
+                "#{swallowed_output(configuration)}".strip
+        end
+
+        # Whatever RSpec wrote about it before we could ask. Its streams are ours, so this
+        # is the only copy in existence.
+        def swallowed_output(configuration)
+          [configuration.error_stream, configuration.output_stream, configuration.deprecation_stream]
+            .uniq
+            .filter_map { |io| io.string.to_s.strip if io.respond_to?(:string) }
+            .reject(&:empty?)
+            .first.to_s
+        rescue StandardError
+          ""
         end
 
         # Parsed by RSpec itself, so `.rspec`, `~/.rspec`, `.rspec-local` and SPEC_OPTS are
@@ -370,6 +430,18 @@ module Constable
           configuration.reset_reporter if configuration.respond_to?(:reset_reporter)
           configuration.reset_filters  if configuration.respond_to?(:reset_filters)
           configuration.start_time = ::RSpec::Core::Time.now if configuration.respond_to?(:start_time=)
+        end
+
+        # Same swallowing, one level down: a `require` inside the spec file that fails is
+        # rescued by RSpec, flagged, and never surfaced. Without this the file reports as
+        # a clean run of zero tests.
+        def quit_flag_error(path)
+          return nil unless ::RSpec.world.wants_to_quit
+
+          ::RSpec.world.wants_to_quit = false
+          Constable::Error.new(
+            "RSpec stopped while loading #{path}. #{swallowed_output(::RSpec.configuration)}".strip
+          )
         end
 
         # A file that won't even parse is news, not a crash. Report it as one errored

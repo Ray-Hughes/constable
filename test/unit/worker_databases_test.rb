@@ -75,6 +75,7 @@ module Constable
       end
 
       def database_tasks? = true
+      def adapter = "postgresql"
     end
 
     def teardown_fake_active_record
@@ -455,6 +456,43 @@ module Constable
       WorkerDatabases.prepare!(0)
 
       assert(calls[:executed].any? { |sql| sql.start_with?("schema:") })
+    end
+
+    # --- adapters that cannot be sharded -----------------------------------------------
+
+    class OracleDbConfig
+      attr_reader :database
+
+      def initialize(database, calls)
+        @database = database
+        @calls = calls
+      end
+
+      def _database=(name)
+        @database = name
+        @calls[:renamed] << name
+      end
+
+      def database_tasks? = true
+      def adapter = "oracle_enhanced"
+      def configuration_hash = { adapter: "oracle_enhanced", database: @database }
+    end
+
+    # An app can hold connections Constable has no business renaming. Caseflow talks to a
+    # legacy Oracle system alongside its own Postgres databases, and appending `_3` to an
+    # Oracle TNS service name gives ORA-12162. Because that surfaced inside a
+    # `before(:suite)` hook, RSpec swallowed it and the worker ran nothing at all --
+    # nineteen files scheduled, zero results, no error.
+    def test_an_unshardable_adapter_is_left_alone
+      calls = stub_active_record(populated: true)
+      configs = ::ActiveRecord::Base.configurations.configs_for
+      configs << OracleDbConfig.new("vacols", calls)
+
+      WorkerDatabases.after_fork!(3, mode: :reuse)
+
+      assert_includes calls[:renamed], "primary_3"
+      refute_includes calls[:renamed], "vacols_3", "an Oracle service name is not a database to copy"
+      refute(calls[:renamed].any? { |n| n.start_with?("vacols") }, "VACOLS must stay shared")
     end
   end
 end

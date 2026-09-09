@@ -236,13 +236,32 @@ module Constable
     # Every database config for this environment, renamed to its per-worker sibling.
     # `_database=` is exactly how Rails' own TestDatabases does the renaming, and this
     # runs in a forked child, so the mutation dies with the worker.
+    # Adapters where "give each worker its own copy" is a thing that can be done at all.
+    #
+    # An app can hold connections Constable has no business renaming. Caseflow talks to a
+    # legacy Oracle system (VACOLS) alongside its own Postgres databases; appending `_3` to
+    # an Oracle TNS service name produces `ORA-12162: TNS:net service name is incorrectly
+    # specified`, and since that surfaces inside a `before(:suite)` hook, RSpec swallowed
+    # it and the worker ran nothing at all.
+    #
+    # An external system like that is shared by every worker on purpose: it is not
+    # per-worker test data, and there is no per-worker copy of it to make.
+    SHARDABLE_ADAPTERS = %w[postgresql postgis mysql2 trilogy sqlite3].freeze
+
+    def shardable_adapter?(db_config)
+      return false unless db_config.respond_to?(:adapter)
+
+      SHARDABLE_ADAPTERS.include?(db_config.adapter.to_s)
+    end
+
     def each_worker_config(index)
       configs = ::ActiveRecord::Base.configurations.configs_for(env_name: env_name,
                                                                 include_hidden: true)
       configs.each do |db_config|
-        db_config._database = "#{db_config.database}_#{index}"
         next unless db_config.database_tasks?
+        next unless shardable_adapter?(db_config)
 
+        db_config._database = "#{db_config.database}_#{index}"
         yield db_config
       end
     end
