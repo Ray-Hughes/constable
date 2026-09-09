@@ -7,6 +7,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 Version bumped to track `constable-rails` 1.4.3. No cop changes.
 
+## [2.0.0]
+
+Version bumped to track `constable-rails` 2.0.0. No cop changes; all seven cops are
+unchanged and their suite (97 runs) passes untouched.
+
 ## [1.4.2]
 
 Version bumped to track `constable-rails` 1.4.2. No cop changes.

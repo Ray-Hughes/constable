@@ -197,6 +197,8 @@ module Constable
     DESC
     option :alongside, type: :boolean, default: false, desc: "Write PATH_case.rb beside the original"
     option :"in-place", type: :boolean, default: false, desc: "Overwrite the file"
+    option :cold, type: :boolean, default: false,
+                  desc: "Move it verbatim as a cold case instead of converting"
     option :"show-source", type: :boolean, default: false, desc: "Print the rewritten source"
     def modernize(*paths)
       if paths.empty?
@@ -205,6 +207,7 @@ module Constable
       end
 
       mode = if options[:"in-place"] then :in_place
+             elsif options[:cold] then :cold
              elsif options[:alongside] then :alongside
              else :none
              end

@@ -333,6 +333,72 @@ module Constable
       refute_nil untouched_named(result, :rspec_mocks)
     end
 
+    # ---- --cold: move it without converting it --------------------------------------
+    #
+    # A conversion that comes back flagged is not runnable: the flagged constructs are
+    # left verbatim, so `let!` stays `let!` and the class body raises the moment it loads.
+    # That is deliberate -- what a `let!` should become is a decision. But it leaves the
+    # file stuck in spec/ when the goal is one tree, and a cold case is the answer that
+    # already exists.
+
+    def cold_result(source, path: "spec/models/user_spec.rb")
+      write_file(path, source)
+      Importer::Modernizer.run([path], config: Constable.config, root: tmp_root, write: :cold, report: false)
+                          .results.first
+    end
+
+    def test_cold_wraps_the_file_without_touching_it
+      body = <<~SPEC
+        describe User do
+          let!(:existing) { create(:user) }
+
+          it "works" do
+            expect(1).to eq(1)
+          end
+        end
+      SPEC
+      result = cold_result(body)
+
+      written = read(result.written_to)
+      assert_match(/< Constable::ColdCase::RSpec/, written)
+      assert_match(/let!\(:existing\)/, written, "the body must survive byte for byte")
+      assert_match(/expect\(1\)\.to eq\(1\)/, written, "nothing is converted")
+      refute_match(/attest/, written)
+    end
+
+    def test_cold_writes_alongside_with_a_case_name
+      result = cold_result("describe User do\nend\n")
+
+      assert_equal "spec/models/user_case.rb", result.written_to
+    end
+
+    def test_cold_names_the_class_after_the_file
+      result = cold_result("describe User do\nend\n", path: "spec/models/tag_spec.rb")
+
+      assert_match(/class LegacyTagSpec </, read(result.written_to))
+    end
+
+    def test_cold_says_where_the_file_came_from
+      result = cold_result("describe User do\nend\n")
+
+      assert_match(%r{Moved verbatim from spec/models/user_spec\.rb}, read(result.written_to))
+    end
+
+    def test_cold_refuses_to_overwrite
+      write_file("spec/models/user_case.rb", "# already here\n")
+      result = cold_result("describe User do\nend\n")
+
+      assert_match(/refusing to overwrite/, result.error.to_s)
+      assert_equal "# already here\n", read("spec/models/user_case.rb")
+    end
+
+    def test_the_wrapped_source_parses
+      body = "describe User do\n  let!(:x) { 1 }\n  it(\"works\") { expect(x).to eq(1) }\nend\n"
+      result = cold_result(body)
+
+      assert_parses(read(result.written_to))
+    end
+
     # ---- matchers Constable does not have ------------------------------------------
     #
     # The rewrite carries any matcher name straight across, so without this check the

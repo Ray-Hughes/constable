@@ -18,7 +18,7 @@ module Constable
 
     attr_reader :identity, :case_name, :description, :file, :line, :kind, :tier
     attr_accessor :status, :duration, :failure, :warnings, :retries, :jail_reason,
-                  :parole_day, :times_jailed, :seed, :coverage
+                  :parole_day, :times_jailed, :seed
 
     def initialize(identity:, case_name:, description:, file:, line:, kind: :native, tier: nil,
                    status: :passed, duration: 0.0, failure: nil, warnings: [], retries: [])

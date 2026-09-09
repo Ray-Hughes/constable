@@ -94,6 +94,34 @@ module Constable
       assert_match(/system tier/, error.message)
     end
 
+    # A file that raises while loading registers no investigations, so the selection comes
+    # back empty. Reporting "no tests matched" there buries the real error and blames the
+    # path -- for a file that is right there and broken. Seen for real on a half-converted
+    # case still containing `let!`.
+    def test_a_case_file_that_raises_on_load_reports_the_error_not_the_path
+      write_file("test/cases/models/broken_case.rb", <<~CASE)
+        class BrokenCase < Constable::Case
+          let!(:thing) { 1 }
+        end
+      CASE
+
+      selection = Selection.new(["test/cases/models/broken_case.rb"], config: Constable.config,
+                                                                      root: tmp_root, full: true)
+      runner = Runner.new(selection: selection, config: Constable.config,
+                          reporter: Reporter.new(io: StringIO.new, config: Constable.config,
+                                                 color: false),
+                          storage: Constable.storage, workers: 1)
+
+      status = runner.call
+
+      assert_equal 1, status, "a file that will not load has to fail the build"
+      result = runner.results.find { |r| r.file.include?("broken_case") }
+      refute_nil result, "the load failure should be reported as a result"
+      assert_match(/let!/, result.failure.message.to_s)
+    ensure
+      Object.send(:remove_const, :BrokenCase) if Object.const_defined?(:BrokenCase)
+    end
+
     # --- what must stay quiet ---------------------------------------------------------
 
     # An empty suite is a fact about the project, not a mistake in the command.

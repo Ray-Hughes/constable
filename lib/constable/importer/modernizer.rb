@@ -28,7 +28,7 @@ module Constable
       # :none      -- dry run. Report only. The default.
       # :alongside -- write foo_spec.rb's conversion to foo_case.rb, never clobbering.
       # :in_place  -- overwrite the original file.
-      WRITE_MODES = %i[none alongside in_place].freeze
+      WRITE_MODES = %i[none alongside in_place cold].freeze
 
       GROUP_METHODS       = %i[describe context xdescribe xcontext fdescribe fcontext feature].freeze
       EXAMPLE_METHODS     = %i[it specify example scenario].freeze
@@ -175,9 +175,60 @@ module Constable
           File.join(dir, "#{base}_case.rb")
         end
 
+        # `--cold`: move the file into the native tree without converting a line of it.
+        #
+        # A conversion that comes back flagged is not runnable -- the flagged constructs
+        # are left verbatim, so `let!` stays `let!` and the class body raises the moment it
+        # loads. That is deliberate: what a `let!` should become is a decision, not a
+        # rewrite. But it leaves a file stuck in spec/ when the goal is one tree.
+        #
+        # A cold case is the answer that already exists: one line at the top, the body
+        # untouched, run through real RSpec, results folded into the same report. This
+        # writes exactly that, so a port can move every file and convert the ones worth
+        # converting on its own schedule.
+        def cold_wrap(result, root)
+          target = alongside_path(result.path)
+          if File.exist?(target)
+            result.error = "refusing to overwrite #{target.delete_prefix("#{root}/")}"
+            return
+          end
+
+          FileUtils.mkdir_p(File.dirname(target))
+          File.write(target, cold_source(result))
+          result.written_to = target.delete_prefix("#{root}/")
+        end
+
+        # The original bytes, between a header line and a final `end`. Nothing inside is
+        # parsed, reindented or touched -- that is the whole promise of a cold case.
+        def cold_source(result)
+          <<~RUBY
+            # frozen_string_literal: true
+
+            # Moved verbatim from #{result.relative_path}. Runs through real RSpec, with its
+            # results folded into Constable's reporting, flake history and CI gate.
+            #
+            # Nothing inside has been converted, so every RSpec feature still works --
+            # `let!`, `before(:all)`, shared examples, rspec-mocks. Convert it with
+            # `constable modernize` when it is worth doing; there is no deadline.
+            class #{cold_class_name(result)} < Constable::ColdCase::RSpec
+            #{indent(result.original.to_s.rstrip)}
+            end
+          RUBY
+        end
+
+        def cold_class_name(result)
+          base = File.basename(result.path, ".rb").sub(/_(?:spec|test)\z/, "")
+          "Legacy#{base.split(%r{[_/]}).map(&:capitalize).join}Spec"
+        end
+
+        def indent(source)
+          source.lines.map { |line| line.strip.empty? ? line : "  #{line}" }.join
+        end
+
         private
 
         def persist(result, root, write)
+          return cold_wrap(result, root) if write == :cold
           return unless result.ok? && result.changed?
 
           case write

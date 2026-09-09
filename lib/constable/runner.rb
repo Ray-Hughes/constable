@@ -231,6 +231,12 @@ module Constable
     def refuse_empty_selection!(items)
       return unless items.empty?
       return unless @selection.explicit?
+      # A file that raised while loading registers no investigations, so the selection
+      # comes back empty and this guard would report "no tests matched" -- burying the
+      # actual error, which is already captured and about to be reported as a failure.
+      # "Your path is wrong" is the wrong thing to say about a file that is right there
+      # and broken.
+      return if load_errors.any?
 
       raise Constable::Error, @selection.empty_selection_message
     end

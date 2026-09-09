@@ -402,7 +402,7 @@ worse than one that resets.
 | `constable prepare [--workers N]` | Build the per-worker test databases `worker_databases: reuse` needs |
 | `constable prune [--dry-run]` | Forget docket rows and warrants for tests that no longer exist |
 | `constable import --from=rspec` | Adopt an existing suite as cold cases |
-| `constable modernize PATH` | Opt-in AST rewrite into the native DSL |
+| `constable modernize PATH [--cold]` | Opt-in AST rewrite into the native DSL. `--cold` moves it verbatim instead |
 
 Flags: `--full --unsafe --jail --warrants --coverage --seed N --workers N --verbose --tier T\n--expanded --concise --output MODE --no-color`.
 

@@ -5,27 +5,88 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
-## [1.4.3]
+## [2.0.0]
+
+A tidy-up release. The API you write — `investigate`, `witness`, `briefing`, `docket`,
+`attest` — has not changed, and no case file or config key needs editing. The major
+version is for one removed accessor and for the behaviour change in 1.4.0, both below.
+
+### `constable modernize --cold`
+
+A conversion that comes back flagged is **not runnable**: the flagged constructs are left
+verbatim, so `let!` stays `let!` and the class body raises the moment it loads. That is
+deliberate — what a `let!` should become is a decision, not a rewrite — but it leaves a
+file stranded in `spec/` when the goal is one tree.
+
+```console
+$ constable modernize spec/models/tag_spec.rb --cold
+```
+
+writes `spec/models/tag_case.rb` as a cold case: one line at the top, the body byte for
+byte, run through real RSpec. Move it into `test/cases/` and the file is ported without
+being converted. Verified end to end — a `let!`-using spec that cannot convert runs 9/9
+from `test/` untouched.
+
+So a port is now: `modernize` a file, convert it if it comes back clean, `--cold` it if it
+does not, and revisit later. Nothing has to stay behind.
+
+### A case file that will not load says why
+
+A half-converted case still containing `let!` reported:
+
+```
+no tests matched test/cases/tmp
+```
+
+A file that raises while loading registers no investigations, so the selection came back
+empty and the empty-selection guard — added in 1.0.0 to catch mistyped paths — claimed
+the path was wrong. For a file that was right there and broken. It now reports the real
+error:
+
+```
+NoMethodError: undefined method `let!' for TagCase:Class
+This file never ran. Nothing in it was tested.
+```
 
 ### `constable jail release --all`
 
 Emptying the docket took one command per test, which is unusable at the scale a docket
-actually reaches — before 1.4.0 a pass/fail flip jailed a test by itself, and one real
-suite put 29 on the docket from a single run. Nobody is typing 29 locators.
-
-```console
-$ constable jail release --all
-Released 29 tests. The docket is empty.
-Anything genuinely broken will fail on the next run, where you can see it.
-```
+reaches — before 1.4.0 a pass/fail flip jailed a test by itself, and one real suite put 29
+on the docket from a single run.
 
 Releasing is safe, and that is the point: a jailed test is *skipped*, so a docket full of
-tests nobody nominated is silently reducing what the suite covers. A genuinely broken test
-comes straight back as a failure, in the open.
+tests nobody nominated is silently reducing what the suite covers. A bare `release` with
+no locator stays a usage error rather than an implicit "everything".
 
-A bare `constable jail release` with no locator is still a usage error rather than an
-implicit "everything" — releasing the whole docket because an argument was forgotten is
-not a mistake worth allowing.
+### Removed: `Result#coverage`
+
+**Breaking, and why the major.** It was never written or read anywhere in the gem, and it
+did not survive `to_h`/`from_h` — so a value set on it vanished crossing the pipe from a
+parallel worker, silently, and only in parallel. An attribute that loses data is worse
+than no attribute. Coverage has always travelled separately and still does.
+
+### Also breaking, from 1.4.0
+
+`jail_flakes` defaults to **false**: a test that passed last run and failed this one is no
+longer jailed automatically. Jailing skips the test on every later run, and doing that to
+a test nobody nominated is how a suite quietly stops testing things. `--jail` is
+unaffected.
+
+### Test coverage
+
+The suite is now **1,025 runs**, up from 738 at 1.0.0. This release adds permanent tests
+for the three areas that had none and carried the most risk:
+
+- **`Result`** — the wire format between a worker and the parent. Every attribute is
+  asserted to survive a real `Marshal` round trip, because anything that does not is data
+  lost only in parallel runs, which is the worst way to find out. That is how the
+  `coverage` bug above was found.
+- **Cold-case shapes** — 17 real-world files run end to end through both engines: pending
+  and `xit`, `before`/`around` hooks, tags, aggregate failures, a raising hook, shared
+  examples, `RSpec.configure` inside a spec, deep nesting, the same file twice, and seven
+  Minitest arrangements. Every serious bug this project has had lived in these adapters.
+- **`Identity`** — stability under reformatting and comments, distinctness on real change,
+  unicode, cold-case keys, and the disambiguation added in 1.0.0.
 
 
 ## [1.4.2]
