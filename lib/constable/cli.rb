@@ -312,13 +312,48 @@ module Constable
         say "Paroled. It runs normally now; one failure sends it straight back."
       end
 
-      desc "release PATH:LINE", "Fully release a test, no supervision"
-      def release(locator)
+      desc "release [PATH:LINE]", "Fully release a test, no supervision"
+      long_desc <<~DESC
+        Takes one test off the docket. `--all` empties it.
+
+        Emptying is the right move after a docket that filled up on its own -- before
+        1.4.0 a pass/fail flip jailed a test automatically, and a suite with
+        order-dependent tests could put dozens on it that nobody chose. Releasing is safe:
+        anything genuinely broken fails again on the next run, in the open.
+      DESC
+      option :all, type: :boolean, default: false, desc: "Release every test on the docket"
+      def release(locator = nil)
+        return release_all if options[:all]
+
+        if locator.nil?
+          CLI.complain("release needs a PATH:LINE, or --all to empty the docket")
+          exit(EXIT_USAGE)
+        end
+
         act(locator) { |jail, identity| jail.release(identity) }
         say "Released."
       end
 
       no_commands do
+        # Emptying the docket in one go. Right after a docket that filled up on its own --
+        # before 1.4.0 a pass/fail flip jailed a test automatically, and a suite with
+        # order-dependent tests could put dozens on it that nobody chose. Releasing is
+        # safe: anything genuinely broken fails again on the next run, in the open.
+        def release_all
+          jail = Jail.new(config: Constable.config, storage: Constable.storage)
+          entries = jail.entries
+
+          if entries.empty?
+            say "The docket is already empty."
+            return 0
+          end
+
+          entries.each { |entry| jail.release(entry.identity) }
+          say "Released #{entries.size} #{entries.size == 1 ? "test" : "tests"}. The docket is empty."
+          say "Anything genuinely broken will fail on the next run, where you can see it."
+          0
+        end
+
         def act(locator)
           jail = Jail.new(config: Constable.config, storage: Constable.storage)
           refuse_ambiguous(locator, jail.candidates(locator), "on the docket")

@@ -72,6 +72,45 @@ module Constable
       assert_equal CLI::EXIT_USAGE, error.status
     end
 
+    # --- release --all ------------------------------------------------------------
+    #
+    # One at a time is unusable at the scale a docket actually reaches. Before 1.4.0 a
+    # pass/fail flip jailed a test automatically, and a real suite put 29 on the docket
+    # from a single run -- nobody is typing 29 locators.
+
+    def test_release_all_empties_the_docket
+      3.times { |i| jail_a_test(file: "test/cases/a_case.rb", line: i + 1, label: "ACase \"#{i}\"") }
+
+      capture { CLI::JailCommand.new([], { "all" => true }).release }
+
+      assert_empty @jail.entries
+    end
+
+    def test_release_all_says_how_many_it_freed
+      2.times { |i| jail_a_test(file: "test/cases/a_case.rb", line: i + 1, label: "ACase \"#{i}\"") }
+
+      output = capture { CLI::JailCommand.new([], { "all" => true }).release }
+
+      assert_match(/Released 2 tests/, output)
+    end
+
+    def test_release_all_on_an_empty_docket_is_not_an_error
+      output = capture { CLI::JailCommand.new([], { "all" => true }).release }
+
+      assert_match(/already empty/, output)
+    end
+
+    # A locator is still required without --all: releasing everything by accident because
+    # an argument was forgotten is not a mistake worth allowing.
+    def test_release_without_a_locator_or_all_is_a_usage_error
+      jail_a_test
+
+      error = assert_raises(SystemExit) { capture { CLI::JailCommand.new([], {}).release } }
+
+      assert_equal CLI::EXIT_USAGE, error.status
+      refute_empty @jail.entries, "nothing should have been released"
+    end
+
     # --- ambiguous targets ------------------------------------------------------
     #
     # A bare path naming several docket rows used to act on whichever row storage

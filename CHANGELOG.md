@@ -5,6 +5,29 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.4.3]
+
+### `constable jail release --all`
+
+Emptying the docket took one command per test, which is unusable at the scale a docket
+actually reaches — before 1.4.0 a pass/fail flip jailed a test by itself, and one real
+suite put 29 on the docket from a single run. Nobody is typing 29 locators.
+
+```console
+$ constable jail release --all
+Released 29 tests. The docket is empty.
+Anything genuinely broken will fail on the next run, where you can see it.
+```
+
+Releasing is safe, and that is the point: a jailed test is *skipped*, so a docket full of
+tests nobody nominated is silently reducing what the suite covers. A genuinely broken test
+comes straight back as a failure, in the open.
+
+A bare `constable jail release` with no locator is still a usage error rather than an
+implicit "everything" — releasing the whole docket because an argument was forgotten is
+not a mistake worth allowing.
+
+
 ## [1.4.2]
 
 ### Cold cases run inside a parallel worker
@@ -745,7 +768,8 @@ Initial release.
 - Diff-based coverage gate — only lines changed in the current diff are held to the
   threshold. `constable beat` for the full picture, `--html` for a browsable report.
 
-[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.4.2...HEAD
+[Unreleased]: https://github.com/Ray-Hughes/constable/compare/v1.4.3...HEAD
+[1.4.3]: https://github.com/Ray-Hughes/constable/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/Ray-Hughes/constable/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/Ray-Hughes/constable/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/Ray-Hughes/constable/compare/v1.3.3...v1.4.0

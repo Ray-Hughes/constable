@@ -393,7 +393,7 @@ worse than one that resets.
 | `constable test PATH[:LINE]` | One file, or one investigation at that line |
 | `constable test --unsafe` | Cold cases only |
 | `constable test --jail` | The full run, in jail mode |
-| `constable jail [run\|parole\|release]` | The docket |
+| `constable jail [run\|parole\|release]` | The docket. `release --all` empties it |
 | `constable warrants [release]` | Outstanding warrants |
 | `constable watchlist` | Everything under supervision right now |
 | `constable status` | How the suite is doing over time |
