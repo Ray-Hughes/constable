@@ -43,6 +43,7 @@ module Constable
   autoload :Failure,       "constable/result"
   autoload :Identity,      "constable/identity"
   autoload :Importer,      "constable/importer"
+  autoload :Insights,      "constable/insights"
   autoload :Investigation, "constable/investigation"
   autoload :Isolation,     "constable/isolation"
   autoload :Jail,          "constable/jail"

@@ -137,7 +137,7 @@ module Constable
       Constable.configuration.run_after_suite!
       @coverage_report = build_coverage_report if coverage?
 
-      persist(run_id, @results, @coverage_report)
+      persist(run_id, @results, @coverage_report, duration: duration)
       suggestions = rename_suggestions(@results)
 
       @reporter.finish(
@@ -936,7 +936,7 @@ module Constable
 
     # --- persistence and reporting --------------------------------------------
 
-    def persist(run_id, results, coverage_report)
+    def persist(run_id, results, coverage_report, duration: nil)
       results.each do |result|
         # The blotter is the evidence file. A result produced by an outage is not
         # evidence about the test, so it is not filed -- otherwise the next run reads
@@ -949,18 +949,26 @@ module Constable
 
       Constable::Coverage.record!(coverage_report, run_id, storage: @storage) if coverage_report
 
-      @storage.finish_run(run_id, totals: totals(results))
+      @storage.finish_run(run_id, totals: totals(results, duration))
     rescue StandardError => e
       Constable.warn!("could not write to the blotter: #{e.message}", kind: :storage)
     end
 
-    def totals(results)
+    # What the blotter keeps about a run as a whole.
+    #
+    # `duration` and `skipped` were missing here for a long time, so both columns existed
+    # in the schema and were never written -- which meant the store could say how many
+    # tests a suite had run but not how long any of it took. `constable metrics` is what
+    # made that visible: a lifetime runtime of zero.
+    def totals(results, duration = nil)
       {
         total: results.size,
         passed: results.count(&:passed?),
         failed: results.count(&:failed?),
         jailed: results.count(&:jailed?),
-        warranted: results.count(&:warranted?)
+        skipped: results.count(&:skipped?),
+        warranted: results.count(&:warranted?),
+        duration: duration
       }
     end
 

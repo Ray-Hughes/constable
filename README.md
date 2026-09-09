@@ -300,6 +300,31 @@ $ constable modernize spec/controllers/users_controller_spec.rb --alongside
 and leaves custom matchers and `shared_examples` alone, logging everything to
 `constable_modernize_report.md`. It writes nothing unless you ask it to.
 
+#### Porting a directory at a time
+
+A conversion only helps if the file ends up somewhere the runner looks. `--port` writes it
+into the native tree, mirroring the path:
+
+```console
+$ constable modernize spec/models --port
+spec/models/tag_spec.rb — 24 converted, 7 flagged
+    → test/cases/models/tag_case.rb (verbatim, as a cold case)
+spec/models/widget_spec.rb — 12 converted
+    → test/cases/models/widget_case.rb
+```
+
+`spec/models/widget_spec.rb` becomes `test/cases/models/widget_case.rb`, directories and
+all. A file that converts cleanly is written as a native case; **a flagged one is written
+verbatim as a cold case instead**, because a flagged conversion is not runnable — the
+flagged constructs are left as they were, so the class raises the moment it loads. Porting
+a broken file and calling it progress is worse than not moving it, so `--port` picks the
+form that runs and tells you which it used. `--port --cold` forces the verbatim form even
+for files that would convert.
+
+Nothing is ever overwritten: run a port twice and the second refuses, because a port gets
+run repeatedly while a suite is converted a directory at a time and any edit made after the
+first pass has to survive.
+
 Native and cold cases run side by side in one `constable test`. No big-bang cutover.
 
 ### Escape hatches, always visible
@@ -397,12 +422,15 @@ worse than one that resets.
 | `constable warrants [release]` | Outstanding warrants |
 | `constable watchlist` | Everything under supervision right now |
 | `constable status` | How the suite is doing over time |
+| `constable last [--limit N]` | The most recent run in detail: failures, slowest tests, slowest files |
+| `constable metrics [--limit N]` | Lifetime KPIs: runs, tests executed, pass rate, runtime, flakiest |
+| `constable insights` | What to fix first, and why -- every line tied to a measurement |
 | `constable beat [--html]` | Coverage: overall %, per-file, the unpatrolled list |
 | `constable history relink OLD NEW` | Carry history across a real body change |
 | `constable prepare [--workers N]` | Build the per-worker test databases `worker_databases: reuse` needs |
 | `constable prune [--dry-run]` | Forget docket rows and warrants for tests that no longer exist |
 | `constable import --from=rspec` | Adopt an existing suite as cold cases |
-| `constable modernize PATH [--cold]` | Opt-in AST rewrite into the native DSL. `--cold` moves it verbatim instead |
+| `constable modernize PATH [--port\|--cold]` | Opt-in AST rewrite into the native DSL. `--port` writes into `test/cases/`; `--cold` moves it verbatim |
 
 Flags: `--full --unsafe --jail --warrants --coverage --seed N --workers N --verbose --tier T\n--expanded --concise --output MODE --no-color`.
 
@@ -462,6 +490,67 @@ parent, so serial runs keep whatever name they had. Use `FileUtils.mkdir_p` rath
 `Dir.mkdir ... unless File.directory?` while you are there — the second is a race, and if
 it runs inside `spec/support` it takes `rails_helper` down with it, which costs the loser
 its database cleaning rather than just its cache directory.
+
+### Knowing what your suite is doing
+
+Testing already happens in a terminal, so the answers should too. Three commands read what
+the blotter has been recording all along -- nothing is collected specially, which means a
+suite that has been running for months already has months of answers in it.
+
+**`constable last`** -- the post-mortem for the run you just did:
+
+```
+LAST RUN
+────────
+  2026-09-09  full   seed 9172  896ms  192 passed, 0 failed
+
+SLOWEST FILES
+─────────────
+      3.0s (54%)  14 tests  test/cases/controllers/api/v1/tasks_case.rb
+```
+
+Per file, not just per test, because a file is the unit someone actually opens. The share
+is of total *test* time rather than wall-clock: with workers in play the tests add up to
+more than the run took, and a percentage of the clock can exceed 100%.
+
+**`constable metrics`** -- the lifetime view:
+
+```
+LIFETIME
+────────
+  67 runs  8816 tests executed  99.8% passed  4m 12s of runtime (61 of 67 runs timed)
+
+FLAKIEST
+────────
+  5/21 failed  LegacyTimingCase "treats a task due today as not yet overdue"
+
+NEVER PASSED
+────────────
+  9 runs  ReportCase "exports a quarterly summary"
+```
+
+Flakiest and never-passed are deliberately separate sections. A test that has never passed
+is not flaky, it is broken, and the two want opposite responses -- putting them in one list
+is how a flake report becomes noise. Runs recorded before durations were persisted have
+none, so the runtime figure says how many runs it actually covers rather than quietly
+understating the cost.
+
+**`constable insights`** -- what to fix first:
+
+```
+  spec/models/appeal_spec.rb is 31% of the suite's time (4m 02s across 205 tests)
+    Average 1.2s per test. A file this size is usually one expensive fixture or one
+    `before` doing real work for every example.
+
+  3 tests flip between pass and fail
+    Worst: TaskCase "reassigns to the next judge" -- 5 failures in 21 runs.
+    `constable test test/cases/task_case.rb:88 --warrants` reruns it in isolation.
+```
+
+Every line is tied to something measured -- a recorded duration, a counted status flip, a
+row on the docket -- and nothing prints on a hunch. A file is only named when it owns at
+least a tenth of the suite's time, because every suite has a slowest file and naming it at
+11% is noise. A report that cries wolf is one nobody reads twice.
 
 ### Output
 

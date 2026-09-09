@@ -265,6 +265,23 @@ constable modernize spec/controllers/users_controller_spec.rb
 | Minitest `def test_foo` | `investigate "foo" do ... end` |
 | Custom matchers / `shared_examples` | left untouched, logged in `constable_modernize_report.md` |
 
+### Write modes
+
+| Flag | Where the file lands |
+|---|---|
+| *(none)* | nowhere — reports only, writes nothing |
+| `--alongside` | `foo_case.rb` next to the original |
+| `--in-place` | overwrites the original |
+| `--port` | `test/cases/<mirrored path>_case.rb` — the native tree |
+| `--cold` | verbatim as a cold case, beside the original |
+| `--port --cold` | verbatim as a cold case, in the native tree |
+
+`--port` is how a suite actually moves: `spec/models/tasks/mdr_task_spec.rb` becomes `test/cases/models/tasks/mdr_task_case.rb`, directories created as needed. Without it a port is a conversion followed by several hundred `git mv`s.
+
+**A flagged conversion is written verbatim as a cold case, not as a native one.** Flagged constructs are left exactly as they were, so a flagged conversion raises the moment it loads — a ported `it { ... }` dies with `NoMethodError: undefined method 'it'`. Handing someone a broken file and calling it progress is worse than not moving it, so `--port` picks whichever form runs and reports which it used.
+
+Nothing is ever overwritten. A port gets run repeatedly while a suite is converted a directory at a time, so the second pass refuses rather than discarding edits made after the first.
+
 Native cases and cold cases run side by side in the same `constable test` invocation — no big-bang cutover.
 
 ## Built-in linter
@@ -331,6 +348,9 @@ Tables: `flake_history`, `jail_docket`, `warrants`.
 | `constable test --unsafe` | Every cold case only |
 | `constable test PATH:LINE --unsafe` | One specific cold case only |
 | `constable test --jail` | The full run, in **jail mode** |
+| `constable last` | The most recent run in detail — failures, slowest tests, slowest files |
+| `constable metrics` | Lifetime KPIs — runs, tests executed, pass rate, runtime, flakiest, never-passed |
+| `constable insights` | What to fix first, each line tied to a measurement |
 
 **Jail mode.** Any test that fails during a `--jail` run gets jailed instead of failing the build — recorded with a reason, file:line, and timestamp, still reported clearly (jailing isn't hiding, it's swapping "blocks the build" for "tracked and skipped"). The practical on-ramp for a large, currently-red legacy suite: run once in `--jail` for a clean baseline, then work the docket down. Outside `--jail`, a failure is just a failure.
 
@@ -389,6 +409,22 @@ Two different questions, two different commands:
 
 - **`constable watchlist`** — everything currently under supervision, in one view: jailed tests, paroled tests (with their clean-run count), and warranted tests. The single place to see "what's not fully trusted right now" without checking three separate commands. `constable jail` and `constable warrants` still exist as focused views scoped to just one of those categories.
 - **`constable status`** — a longer-running trend view: native-vs-cold-case percentage over time, flake history trend, slowest 10 tests historically. Answers "how's the suite doing," not "what's flagged right now."
+
+## Metrics — `last`, `metrics` and `insights`
+
+Three views over data the blotter already records. Nothing new is collected for them: the runner has always written per-test durations (to balance workers) and one `flake_history` row per test per run (to detect flakes). These ask those rows different questions. A suite that has been running for months already holds months of answers.
+
+- **`constable last`** — the run that just finished, in enough detail to act on without re-running it: when, how it was invoked, its seed, what failed, the slowest tests, and the slowest *files*. Per file matters because a file is the unit someone opens.
+- **`constable metrics`** — lifetime KPIs: total runs, tests executed, pass rate, accumulated runtime, the flakiest tests, and the tests that have never passed.
+- **`constable insights`** — the prescriptive layer: what to fix first, and why.
+
+Three rules these obey, all of them about not being ignored:
+
+1. **A percentage needs the right denominator.** A file's share of a run is measured against the sum of test durations, not wall-clock time. With workers the tests add up to more than the clock, and measuring against the clock produced "this file is 335% of the run."
+2. **A partial number says so.** Runs recorded before durations were persisted have none. The lifetime runtime reports how many runs it actually covers rather than summing the rest as free.
+3. **Flaky and broken are different sections.** A test that has never passed is not a flake, it is broken, and the two want opposite responses. Merging them is how a flake list becomes noise. For the same reason `insights` only names a slow file once it owns at least a tenth of the suite's time — every suite has a slowest file, and naming it at 11% teaches people to skip the report.
+
+Nothing in `insights` prints without a measurement behind it: a recorded duration, a counted status flip, a row on the docket.
 
 ## CLI / reporting
 

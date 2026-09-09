@@ -515,6 +515,111 @@ module Constable
         SQL
       end
 
+      # --- metrics ---------------------------------------------------------------
+      #
+      # Everything below reads what the blotter already records. Nothing new is collected
+      # to make these work, which is the point: a suite that has been running for months
+      # has months of answers sitting in this file, and until now nothing asked for them.
+
+      # Lifetime totals across every recorded run.
+      def lifetime
+        rows(query(<<~SQL, [])).first || {}
+          SELECT COUNT(*)      AS runs,
+                 SUM(total)    AS tests,
+                 SUM(passed)   AS passed,
+                 SUM(failed)   AS failed,
+                 SUM(duration) AS seconds,
+                 -- Runs recorded before durations were persisted have none, and a
+                 -- lifetime figure that quietly omits them would overstate how cheap the
+                 -- suite is. The caller says how many runs the number covers.
+                 SUM(CASE WHEN duration IS NULL THEN 0 ELSE 1 END) AS timed_runs,
+                 MIN(started_at) AS first_run,
+                 MAX(started_at) AS last_run
+          FROM runs
+        SQL
+      end
+
+      # Tests that have both passed and failed at the same identity -- the definition of a
+      # flake, and the reason identity is a content hash rather than a file:line.
+      def flakiest(limit: 10)
+        rows(query(<<~SQL, [limit.to_i]))
+          SELECT identity,
+                 MAX(label) AS label,
+                 MAX(file)  AS file,
+                 MAX(line)  AS line,
+                 COUNT(*)   AS runs,
+                 SUM(CASE WHEN status IN ('failed', 'errored') THEN 1 ELSE 0 END) AS failures
+          FROM flake_history
+          GROUP BY identity
+          HAVING SUM(CASE WHEN status IN ('failed', 'errored') THEN 1 ELSE 0 END) > 0
+             AND SUM(CASE WHEN status IN ('failed', 'errored') THEN 1 ELSE 0 END) < COUNT(*)
+          ORDER BY failures DESC, runs DESC
+          LIMIT ?
+        SQL
+      end
+
+      # Tests that fail the most, flaky or not. A test that has never passed is not a
+      # flake -- it is broken -- and the two want different responses.
+      def failure_leaders(limit: 10)
+        rows(query(<<~SQL, [limit.to_i]))
+          SELECT identity,
+                 MAX(label) AS label,
+                 MAX(file)  AS file,
+                 MAX(line)  AS line,
+                 COUNT(*)   AS runs,
+                 SUM(CASE WHEN status IN ('failed', 'errored') THEN 1 ELSE 0 END) AS failures
+          FROM flake_history
+          GROUP BY identity
+          HAVING SUM(CASE WHEN status IN ('failed', 'errored') THEN 1 ELSE 0 END) > 0
+          ORDER BY failures DESC, runs DESC
+          LIMIT ?
+        SQL
+      end
+
+      # Where a run's time actually went, by file. Per-test durations are what the runner
+      # already caches to balance workers; summed per file they answer a different and more
+      # useful question -- which file should someone look at first.
+      def slowest_files(run_id, limit: 10)
+        rows(query(<<~SQL, [run_id.to_i, limit.to_i]))
+          SELECT file,
+                 COUNT(*)      AS tests,
+                 SUM(duration) AS total,
+                 AVG(duration) AS average
+          FROM flake_history
+          WHERE run_id = ? AND duration IS NOT NULL AND file IS NOT NULL
+          GROUP BY file
+          ORDER BY total DESC
+          LIMIT ?
+        SQL
+      end
+
+      # The sum of every recorded test duration in a run.
+      #
+      # Not the same as the run's wall-clock time, and the difference matters: with workers
+      # in play the tests add up to more than the clock. Wall time is what you waited;
+      # this is what the suite cost. A share of one file's time is only meaningful against
+      # the latter -- measured against the clock it can exceed 100%, which it did.
+      def total_test_seconds(run_id)
+        row = rows(query(<<~SQL, [run_id.to_i])).first || {}
+          SELECT SUM(duration) AS seconds
+          FROM flake_history
+          WHERE run_id = ? AND duration IS NOT NULL
+        SQL
+        row[:seconds].to_f
+      end
+
+      # Every result recorded for one run, newest run first being the usual caller.
+      def results_for_run(run_id, limit: 5000)
+        rows(query(<<~SQL, [run_id.to_i, limit.to_i]))
+          SELECT identity, label, case_name, description, file, line, kind, tier,
+                 status, duration, failure_message
+          FROM flake_history
+          WHERE run_id = ?
+          ORDER BY duration DESC
+          LIMIT ?
+        SQL
+      end
+
       # --- coverage --------------------------------------------------------------
 
       # One snapshot per covered run. +files+ is a { path => percent } Hash (an Array of

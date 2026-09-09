@@ -28,7 +28,9 @@ module Constable
       # :none      -- dry run. Report only. The default.
       # :alongside -- write foo_spec.rb's conversion to foo_case.rb, never clobbering.
       # :in_place  -- overwrite the original file.
-      WRITE_MODES = %i[none alongside in_place cold].freeze
+      # :port      -- write into the native tree, mirroring the spec path.
+      # :port_cold -- the same destination, but verbatim as a cold case.
+      WRITE_MODES = %i[none alongside in_place cold port port_cold].freeze
 
       GROUP_METHODS       = %i[describe context xdescribe xcontext fdescribe fcontext feature].freeze
       EXAMPLE_METHODS     = %i[it specify example scenario].freeze
@@ -46,7 +48,7 @@ module Constable
       # `result.source` or as the documented `{ source:, flags:, converted: }` hash.
       Result = Struct.new(
         :path, :relative_path, :dialect, :class_name, :original, :source,
-        :converted, :flags, :untouched, :error, :write_mode, :written_to,
+        :converted, :flags, :untouched, :error, :write_mode, :written_to, :written_as,
         keyword_init: true
       ) do
         def ok?       = error.nil?
@@ -168,6 +170,23 @@ module Constable
           end.uniq
         end
 
+        # Where a ported file lands: spec/models/tasks/mdr_task_spec.rb becomes
+        # test/cases/models/tasks/mdr_task_case.rb.
+        #
+        # Converting a suite one file at a time only works if the converted file ends up
+        # somewhere the runner looks. `--alongside` leaves it in spec/, which means a port
+        # is a conversion followed by four hundred `git mv`s -- enough friction that nobody
+        # starts. This mirrors the path instead, so porting a directory is one command and
+        # `test/cases/` fills up as you go.
+        def port_path(path, root)
+          relative = path.delete_prefix("#{root}/")
+          # Drop the leading spec/ or test/, keep everything under it.
+          inner = relative.sub(%r{\A(?:spec|test)/}, "")
+          base = File.basename(inner, ".rb").sub(/_(?:spec|test)\z/, "")
+          File.join(root, "test/cases", File.dirname(inner), "#{base}_case.rb")
+              .gsub(%r{/\./}, "/")
+        end
+
         # Output path for :alongside -- users_controller_spec.rb -> users_controller_case.rb.
         def alongside_path(path)
           dir = File.dirname(path)
@@ -186,8 +205,9 @@ module Constable
         # untouched, run through real RSpec, results folded into the same report. This
         # writes exactly that, so a port can move every file and convert the ones worth
         # converting on its own schedule.
-        def cold_wrap(result, root)
-          target = alongside_path(result.path)
+        def cold_wrap(result, root, target = nil)
+          target ||= alongside_path(result.path)
+          result.written_as ||= :cold
           if File.exist?(target)
             result.error = "refusing to overwrite #{target.delete_prefix("#{root}/")}"
             return
@@ -229,23 +249,49 @@ module Constable
 
         def persist(result, root, write)
           return cold_wrap(result, root) if write == :cold
+          return cold_wrap(result, root, port_path(result.path, root)) if write == :port_cold
           return unless result.ok? && result.changed?
 
           case write
+          when :port
+            # A flagged conversion is not runnable -- the flagged constructs are left
+            # verbatim, so `let!` stays `let!` and the class raises the moment it loads.
+            # Writing one into test/cases/ would be handing someone a broken file and
+            # calling it progress. Verified: a ported `it { ... }` dies with
+            # `NoMethodError: undefined method 'it'`.
+            #
+            # So a port takes the file either way and picks the form that runs: converted
+            # when it can be, verbatim as a cold case when it cannot. Either way the file
+            # ends up in the native tree and the suite still passes, which is the whole
+            # point of porting a directory at a time.
+            if result.flagged?
+              cold_wrap(result, root, port_path(result.path, root))
+              result.written_as = :cold
+            else
+              write_to(result, port_path(result.path, root), root)
+              result.written_as = :native
+            end
           when :in_place
             File.write(result.path, result.source)
             result.written_to = result.relative_path
           when :alongside
-            target = alongside_path(result.path)
-            if File.exist?(target)
-              result.error = "refusing to overwrite #{target.delete_prefix("#{root}/")}; " \
-                             "move it aside, or use write: :in_place"
-            else
-              FileUtils.mkdir_p(File.dirname(target))
-              File.write(target, result.source)
-              result.written_to = target.delete_prefix("#{root}/")
-            end
+            write_to(result, alongside_path(result.path), root)
           end
+        end
+
+        # Never clobbers. A port is run repeatedly while a suite is converted a directory
+        # at a time, and the second run must not quietly overwrite edits made after the
+        # first.
+        def write_to(result, target, root)
+          if File.exist?(target)
+            result.error = "refusing to overwrite #{target.delete_prefix("#{root}/")}; " \
+                           "move it aside, or use write: :in_place"
+            return
+          end
+
+          FileUtils.mkdir_p(File.dirname(target))
+          File.write(target, result.source)
+          result.written_to = target.delete_prefix("#{root}/")
         end
       end
 

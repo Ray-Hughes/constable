@@ -138,6 +138,93 @@ module Constable
       exit(EXIT_CLEAN)
     end
 
+    desc "last", "Everything about the most recent run"
+    long_desc <<~DESC
+      The post-mortem: when it ran, how it was invoked, what failed, where the time went.
+
+      `constable status` is the trend and `constable metrics` is the lifetime view; this is
+      the single run you just did, in enough detail to act on without re-running it.
+    DESC
+    option :limit, type: :numeric, default: 5, desc: "How many slow tests and failures to list"
+    def last
+      storage = Constable.storage
+      run = storage.runs(limit: 1).first
+
+      if run.nil?
+        say "No runs recorded yet. Run: constable test --full"
+        exit(EXIT_CLEAN)
+      end
+
+      limit = options[:limit].to_i.clamp(1, 50)
+      results = storage.results_for_run(run[:id])
+
+      print_run_header(run)
+      print_run_failures(results, limit)
+      print_run_slowest(results, limit)
+      print_run_files(storage, run, limit)
+      exit(EXIT_CLEAN)
+    end
+
+    desc "metrics", "Lifetime KPIs for the suite"
+    long_desc <<~DESC
+      What the blotter knows after months of runs: how many there have been, how many tests
+      they executed, how much wall-clock time the suite has cost, and which tests have been
+      worth the least of it.
+
+      Nothing here is collected specially. Every number is read back out of the same rows
+      the runner already writes, which means a suite that has been running for a while
+      already has these answers -- nothing had asked for them until now.
+    DESC
+    option :limit, type: :numeric, default: 10, desc: "Rows per section"
+    def metrics
+      storage = Constable.storage
+      totals = storage.lifetime
+
+      if totals[:runs].to_i.zero?
+        say "No runs recorded yet. Run: constable test --full"
+        exit(EXIT_CLEAN)
+      end
+
+      limit = options[:limit].to_i.clamp(1, 50)
+      print_lifetime(totals)
+      print_flakiest(storage, limit)
+      print_failure_leaders(storage, limit)
+      exit(EXIT_CLEAN)
+    end
+
+    desc "insights", "What to fix first, and why"
+    long_desc <<~DESC
+      The prescriptive view. Every line is tied to something measured -- a recorded
+      duration, a counted status flip, a parsed construct -- and nothing is printed on a
+      hunch. A report that guesses gets ignored, and then so does the one that does not.
+    DESC
+    def insights
+      storage = Constable.storage
+      run = storage.runs(limit: 1).first
+
+      if run.nil?
+        say "No runs recorded yet. Run: constable test --full"
+        exit(EXIT_CLEAN)
+      end
+
+      findings = Insights.new(storage: storage, config: load_config, run: run).call
+
+      if findings.empty?
+        say "Nothing to suggest -- no flakes, no runaway files, nothing jailed."
+        exit(EXIT_CLEAN)
+      end
+
+      say "INSIGHTS"
+      say "─" * 8
+      say ""
+      findings.each do |finding|
+        say "  #{finding[:headline]}"
+        finding[:detail].to_s.split("\n").each { |line| say "    #{line}" }
+        say ""
+      end
+      exit(EXIT_CLEAN)
+    end
+
     desc "beat", "Coverage: overall %, per-file breakdown and the unpatrolled list"
     option :html, type: :boolean, default: false, desc: "Write a browsable HTML report"
     def beat
@@ -199,6 +286,8 @@ module Constable
     option :"in-place", type: :boolean, default: false, desc: "Overwrite the file"
     option :cold, type: :boolean, default: false,
                   desc: "Move it verbatim as a cold case instead of converting"
+    option :port, type: :boolean, default: false,
+                  desc: "Write into test/cases/, mirroring the spec path"
     option :"show-source", type: :boolean, default: false, desc: "Print the rewritten source"
     def modernize(*paths)
       if paths.empty?
@@ -206,7 +295,12 @@ module Constable
         exit(EXIT_USAGE)
       end
 
-      mode = if options[:"in-place"] then :in_place
+      # --port --cold is a real combination, not a conflict: it means "move this file into
+      # the native tree even though it cannot be converted", which is how a port finishes
+      # the last mile instead of stalling on the files that need a human.
+      mode = if options[:port] && options[:cold] then :port_cold
+             elsif options[:port] then :port
+             elsif options[:"in-place"] then :in_place
              elsif options[:cold] then :cold
              elsif options[:alongside] then :alongside
              else :none
@@ -224,12 +318,20 @@ module Constable
         say "#{result.relative_path} — #{describe_counts(counts)}"
         say(result.source) if options[:"show-source"]
 
+        if result.written_to
+          how = result.written_as == :cold ? " (verbatim, as a cold case)" : ""
+          say "    → #{result.written_to}#{how}"
+        end
+
         result.flags.each { |flag| say "    flagged #{flag[:location]}  #{flag[:reason]}" }
       end
 
       say "\nWrote #{run.written.size} file(s)." if run.written.any?
       say "Report: #{run.report_path}" if run.report_path
-      say "\nNothing was written. Re-run with --alongside or --in-place." if mode == :none
+      if mode == :none
+        say "\nNothing was written. Re-run with --port (into test/cases/), --alongside or " \
+            "--in-place."
+      end
       exit(run.ok? ? EXIT_CLEAN : EXIT_FAILED)
     end
 
@@ -602,6 +704,117 @@ module Constable
 
       def short_date(value)
         value.to_s[0, 10]
+      end
+
+      # --- last / metrics --------------------------------------------------------
+
+      def print_run_header(run)
+        pieces = [
+          "#{run[:passed].to_i} passed",
+          "#{run[:failed].to_i} failed",
+          ("#{run[:skipped].to_i} skipped" if run[:skipped].to_i.positive?),
+          ("#{run[:jailed].to_i} jailed" if run[:jailed].to_i.positive?)
+        ].compact
+
+        say_table("LAST RUN", [run]) do |r|
+          [short_date(r[:started_at]), format("%-5s", r[:mode]), "seed #{r[:seed]}",
+           human_seconds(r[:duration]), pieces.join(", ")]
+        end
+      end
+
+      def print_run_failures(results, limit)
+        # Both, because Result#failed? counts both -- an errored test is a failed one
+        # that did not get as far as an assertion.
+        failures = results.select { |r| %w[failed errored].include?(r[:status].to_s) }
+        return if failures.empty?
+
+        say_table("FAILED (#{failures.size})", failures.first(limit)) do |r|
+          [truncate_label(r[:label] || r[:description]), "#{r[:file]}:#{r[:line]}"]
+        end
+      end
+
+      def print_run_slowest(results, limit)
+        timed = results.select { |r| r[:duration] }
+        return if timed.empty?
+
+        say_table("SLOWEST TESTS", timed.first(limit)) do |r|
+          [format("%8s", human_seconds(r[:duration])), truncate_label(r[:label] || r[:description])]
+        end
+      end
+
+      # Per file rather than per test, because that is the unit someone actually opens.
+      def print_run_files(storage, run, limit)
+        files = storage.slowest_files(run[:id], limit: limit)
+        return if files.empty?
+
+        # Against the sum of test durations, not the clock: with workers the tests add up
+        # to more than the run took, and a percentage of wall time can exceed 100%.
+        total = storage.total_test_seconds(run[:id])
+        say_table("SLOWEST FILES", files) do |f|
+          share = total.positive? ? " (#{(f[:total].to_f * 100 / total).round}%)" : ""
+          [format("%8s", human_seconds(f[:total])) + share,
+           "#{f[:tests].to_i} tests", f[:file]]
+        end
+      end
+
+      def print_lifetime(totals)
+        runs = totals[:runs].to_i
+        tests = totals[:tests].to_i
+        passed = totals[:passed].to_i
+        rate = tests.positive? ? "#{(passed * 100.0 / tests).round(1)}%" : "n/a"
+
+        timed = totals[:timed_runs].to_i
+        runtime = if timed.zero?
+                    "runtime not recorded yet"
+                  elsif timed < runs
+                    "#{human_seconds(totals[:seconds])} of runtime (#{timed} of #{runs} runs timed)"
+                  else
+                    "#{human_seconds(totals[:seconds])} of runtime"
+                  end
+
+        say_table("LIFETIME", [totals]) do |_t|
+          ["#{runs} #{pluralize_word(runs, "run")}", "#{tests} tests executed",
+           "#{rate} passed", runtime]
+        end
+        say "  first run #{short_date(totals[:first_run])}, " \
+            "most recent #{short_date(totals[:last_run])}"
+        say ""
+      end
+
+      def print_flakiest(storage, limit)
+        flaky = storage.flakiest(limit: limit)
+        return if flaky.empty?
+
+        say_table("FLAKIEST", flaky) do |f|
+          ["#{f[:failures].to_i}/#{f[:runs].to_i} failed",
+           truncate_label(f[:label]), "#{f[:file]}:#{f[:line]}"]
+        end
+      end
+
+      def print_failure_leaders(storage, limit)
+        leaders = storage.failure_leaders(limit: limit)
+                         .select { |r| r[:failures].to_i == r[:runs].to_i }
+        return if leaders.empty?
+
+        say_table("NEVER PASSED", leaders) do |f|
+          ["#{f[:runs].to_i} #{pluralize_word(f[:runs].to_i, "run")}",
+           truncate_label(f[:label]), "#{f[:file]}:#{f[:line]}"]
+        end
+      end
+
+      def pluralize_word(count, word) = count == 1 ? word : "#{word}s"
+
+      def human_seconds(value)
+        seconds = value.to_f
+        return format("%.0fms", seconds * 1000) if seconds.positive? && seconds < 1
+        return format("%.1fs", seconds) if seconds < 60
+
+        format("%dm %02ds", seconds.to_i / 60, seconds.to_i % 60)
+      end
+
+      def truncate_label(label, width = 58)
+        text = label.to_s
+        text.length > width ? "#{text[0, width - 1]}…" : text
       end
 
       # The adoption number: what share of the suite is still opted out of native rules.
