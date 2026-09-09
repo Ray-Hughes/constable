@@ -331,6 +331,32 @@ module Constable
       assert_match(/CONSTABLE_STORAGE_URL/, helper, "it should say where storage does go")
     end
 
+    # config.yml doubles as the reference, so a setting that arrives with no explanation
+    # is a setting nobody will find. Each one has to carry a comment, and the ones that
+    # take a fixed set of values have to name them.
+    def test_every_setting_in_the_config_is_explained
+      install
+      config = generated(".constable/config.yml")
+
+      Config::DEFAULTS.each_key do |key|
+        line = config[/^#{key}:.*$/]
+        refute_nil line, "config.yml should set #{key}"
+        preceding = config.split(/^#{key}:/).first.lines.last(3).join
+        assert_match(/#/, "#{preceding}#{line}", "#{key} needs an explanation next to it")
+      end
+    end
+
+    def test_settings_with_fixed_choices_name_them
+      install
+      config = generated(".constable/config.yml")
+
+      { "worker_databases" => %w[schema reuse off],
+        "output" => %w[concise expanded] }.each do |key, values|
+        line = config[/^#{key}:.*$/]
+        values.each { |v| assert_match(/#{v}/, line, "#{key} should name #{v} on its own line") }
+      end
+    end
+
     # --- a Ruby-only setup ------------------------------------------------------------
     #
     # config.yml is optional: every setting except `storage` can be written in
@@ -379,7 +405,7 @@ module Constable
 
       config = generated(".constable/config.yml")
       assert_match(/Added by `rails generate constable:install` on a later upgrade/, config)
-      assert_match(/concise \| expanded/, config, "a bare key with no reasoning is not a reference")
+      assert_match(/one glyph per test/, config, "a bare key with no reasoning is not a reference")
     end
 
     def test_a_setting_the_file_already_sets_is_not_appended_again

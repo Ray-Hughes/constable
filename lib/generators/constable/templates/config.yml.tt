@@ -54,7 +54,10 @@ cold_cases: []
 # need one queryable store shared across many CI machines -- and always at a
 # separate database from the app's own, never its test connection.
 storage:
-  adapter: sqlite                      # sqlite (default) | postgres | mysql
+  adapter: sqlite                      # sqlite (default, and right for almost everyone)
+                                       #   postgres / mysql: only when many CI machines
+                                       #   need to share ONE blotter. Always a separate
+                                       #   database from your app's own.
   path: .constable/constable.sqlite3   # sqlite only
   url:                                 # postgres/mysql only, e.g.
                                        #   postgres://user:pass@host/constable_metadata
@@ -81,29 +84,45 @@ fail_on_warnings: false  # CI: fail the build when the warning count doesn't tre
 
 parallel_workers: auto   # or an explicit integer
 
-# How a parallel worker gets a database of its own. Sharing one is not a speed/safety
-# trade but a correctness bug: on SQLite the run dissolves into "database is locked", and
-# on a client/server database tests quietly see each other's rows.
+# How a parallel worker gets a database of its own.
 #
-#   schema  rebuild <database>_<index> from schema on every run. What Rails does for
-#           `rails test`, and correct by construction -- no drift is possible.
-#   reuse   connect to <database>_<index> when it is already there, and build it from
-#           schema only when it is not. Faster, because a large schema is not reloaded
-#           every run -- and the only option that works at all when the schema cannot
-#           rebuild the database by itself, which is true of any app with Postgres custom
-#           types (`CREATE TYPE` has no schema.rb representation, so a from-scratch load
-#           fails). Keeping those databases current becomes your job.
-#   off     do not shard, so do not fork. An explicit serial run: no attempt, no warning.
-worker_databases: schema   # schema | reuse | off
+# Sharing one is not a speed/safety trade, it is a correctness bug: on SQLite the run
+# dissolves into "database is locked", and on a client/server database tests quietly see
+# each other's rows, which is worse because it looks like it worked.
+#
+# Three options:
+#
+#   schema   Rebuild <database>_<index> from schema.rb on every run.
+#            What Rails itself does for `rails test`. Correct by construction -- the
+#            databases cannot drift, because they are thrown away and rebuilt. The right
+#            default, and the wrong choice only when it is slow or impossible.
+#
+#   reuse    Keep <database>_<index> between runs, building it only when it is missing.
+#            Two reasons to want this:
+#              * Speed. A large schema is not replayed once per worker per run. On
+#                Postgres the databases are cloned in one statement
+#                (CREATE DATABASE ... TEMPLATE), which is far faster than a schema load.
+#              * It is the ONLY option that works when your schema cannot rebuild the
+#                database by itself -- true of any app with Postgres custom types, since
+#                CREATE TYPE has no schema.rb representation and a from-scratch load
+#                fails on a dump that references types it never defines.
+#            The cost: keeping those databases current is now your job. Run
+#            `constable prepare` after a migration.
+#
+#   off      Do not shard, so do not fork. An explicit serial run: no attempt to build
+#            anything, and no warning about it. Correct, and as slow as one core.
+#
+worker_databases: schema   # schema (rebuild each run) | reuse (keep them) | off (serial)
 
-# How much the live stream says while the suite is running. The summary is identical
-# either way -- this only changes what you watch on the way there.
+# How much the live stream says while the suite is running. The summary at the end is
+# identical either way -- this only changes what you watch on the way there.
 #
-#   concise   one glyph per test, grouped into a run per case. A thousand tests stay
-#             inside one screen, and a wall of green is the point.
-#   expanded  a line per test: glyph, name, duration. Slower to read in bulk, but you
-#             can see which test is hanging while it hangs, rather than after.
-output: concise          # concise | expanded
+#   concise    One glyph per test, grouped into a run per case. A thousand tests stay
+#              inside one screen, and a wall of green is the point.
+#   expanded   A line per test: glyph, description, duration. Slower to read in bulk, but
+#              you can see which test is hanging while it hangs, rather than afterwards.
+#
+output: concise          # concise (one glyph per test) | expanded (a line per test)
 
 # Fallback path-based tier inference, used only when a case doesn't inherit from
 # a tiered base class. The base classes in test/case_helper.rb are the primary

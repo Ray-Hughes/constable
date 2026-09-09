@@ -352,8 +352,18 @@ module Constable
             exit!(0)
           end
 
-          bucket.each do |item|
-            run_item(item).each { |result| write_message(writer, :result, result.to_h) }
+          # Anything at all, not just Constable::Error. An uncaught exception in a forked
+          # child kills it silently: the parent sees a closed pipe, no results and no
+          # reason, and a run that scheduled nineteen files reports zero tests and exits
+          # 0. A worker that dies has to say so.
+          begin
+            bucket.each do |item|
+              run_item(item).each { |result| write_message(writer, :result, result.to_h) }
+            end
+          rescue Exception => e # rubocop:disable Lint/RescueException
+            write_message(writer, :worker_error, "#{e.class}: #{e.message}")
+            writer.close
+            exit!(0)
           end
 
           # A worker owns its own cold-case session, and it dies here. Fire the engine's
@@ -385,7 +395,13 @@ module Constable
       #
       # Nothing has run yet, so falling back to a serial run costs a restart, not
       # correctness.
-      return run_serially_after_worker_failure(items) if collected.empty? && worker_errors.any?
+      #
+      # The condition is deliberately "nothing came back", not "a worker said why". A
+      # child can die without managing to report -- and then a run that scheduled
+      # nineteen files says "0 tests, 0 failed" and exits 0, which is the worst thing a
+      # test runner can do. If work was scheduled and no result arrived, something is
+      # wrong whether or not anyone explained it.
+      return run_serially_after_worker_failure(items) if collected.empty? && !items.empty?
 
       # A warning raised inside a worker only ever reached that worker's memory, so the
       # results carry them home. Nothing that bends the rules is allowed to go missing
@@ -398,6 +414,7 @@ module Constable
 
     def run_serially_after_worker_failure(items)
       reason = worker_errors.first.to_s
+      reason = "the workers exited without reporting anything" if reason.empty?
 
       Constable.warn!(
         "no parallel worker could build its own test database, so the suite ran serially " \
@@ -411,7 +428,18 @@ module Constable
 
       # The blotter handle was closed before forking, and the pool was cleared. Both come
       # back on their next use, so there is nothing to reopen by hand.
-      run_serial(items)
+      results = run_serial(items)
+
+      # Belt and braces. If the serial fallback also produces nothing for work that was
+      # scheduled, the run is broken in a way no summary can honestly describe, and
+      # reporting a clean zero would be a lie.
+      if results.empty? && !items.empty?
+        raise Constable::Error,
+              "#{items.size} test file(s) were scheduled and none of them ran. " \
+              "The first worker said: #{reason}"
+      end
+
+      results
     end
 
     # Every message on the pipe is tagged, because results are not the only thing a worker
