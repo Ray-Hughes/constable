@@ -286,6 +286,8 @@ module Constable
     option :"in-place", type: :boolean, default: false, desc: "Overwrite the file"
     option :cold, type: :boolean, default: false,
                   desc: "Move it verbatim as a cold case instead of converting"
+    option :base, type: :string,
+                  desc: "Superclass for converted cases (e.g. UnitCase). Default: Constable::Case"
     option :port, type: :boolean, default: false,
                   desc: "Write into test/cases/, mirroring the spec path"
     option :"show-source", type: :boolean, default: false, desc: "Print the rewritten source"
@@ -306,7 +308,7 @@ module Constable
              else :none
              end
 
-      run = Importer.modernize(paths, config: load_config, write: mode)
+      run = Importer.modernize(paths, config: load_config, write: mode, base: options[:base])
 
       run.results.each do |result|
         if result.error

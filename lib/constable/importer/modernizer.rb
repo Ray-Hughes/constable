@@ -73,8 +73,17 @@ module Constable
 
       attr_reader :path, :relative_path, :root, :config
 
-      def initialize(path, config: Constable.config, root: nil, source: nil)
+      def initialize(path, config: Constable.config, root: nil, source: nil, base: nil)
         @config = config
+        # What a converted case inherits from.
+        #
+        # `Constable::Case` is correct but bare, and an app's tier classes are where the
+        # app puts everything a case needs -- FactoryBot, request helpers, auth. A file
+        # converted into the bare class compiles and then dies on `create`, which is
+        # exactly what happened porting a real directory: 84 tests, 15 of them
+        # `NoMethodError: undefined method 'create'`. So the superclass is a choice, and
+        # `--base UnitCase` makes it once for a whole port.
+        @base = base.nil? || base.to_s.empty? ? "Constable::Case" : base.to_s
         @root = (root || config&.root || Constable.root).to_s
         @path = File.absolute_path?(path.to_s) ? path.to_s : File.join(@root, path.to_s)
         @relative_path = @path.delete_prefix("#{@root}/")
@@ -108,7 +117,7 @@ module Constable
 
       class << self
         # The CLI entry point. `paths` may be files, directories or globs.
-        def run(paths, config: Constable.config, root: nil, write: :none, report: true)
+        def run(paths, config: Constable.config, root: nil, write: :none, report: true, base: nil)
           root = (root || config&.root || Constable.root).to_s
           write = (write || :none).to_sym
           unless WRITE_MODES.include?(write)
@@ -117,7 +126,7 @@ module Constable
           end
 
           results = expand(paths, root).map do |file|
-            result = new(file, config: config, root: root).call
+            result = new(file, config: config, root: root, base: base).call
             result.write_mode = write
             persist(result, root, write)
             result
@@ -429,9 +438,10 @@ module Constable
       def convert_to_case_class(node, send_node)
         args = send_node.children[2..] || []
         @class_name = case_class_name(args.first)
-        replace(block_head(node), "class #{@class_name} < Constable::Case")
+        replace(block_head(node), "class #{@class_name} < #{@base}")
         close_brace_block(node)
-        record_converted(:case_class, node, "#{source_of(send_node)} do", "class #{@class_name} < Constable::Case")
+        record_converted(:case_class, node, "#{source_of(send_node)} do",
+                         "class #{@class_name} < #{@base}")
         return if args.size <= 1
 
         note_untouched(:describe_metadata, node,
@@ -599,17 +609,24 @@ module Constable
         receiver, name, *args = node.children
 
         if %i[to not_to to_not].include?(name) && mock_expectation?(args.first)
-          return note_untouched(:rspec_mocks, node,
-                                "`#{first_line(node)}` is an RSpec message expectation. Constable ships no " \
-                                "mocking library -- keep rspec-mocks via a cold case, or replace it with a " \
-                                "stub object.")
+          # Flagged, not merely noted. "Untouched" leaves the construct alone *and lets the
+          # file convert*, which for rspec-mocks means writing a native case that dies on
+          # its first `allow` with `NoMethodError`. Measured while porting a real
+          # directory: six files converted cleanly and then failed at runtime for exactly
+          # this. A file that cannot run is not a conversion, so this blocks -- and `--port`
+          # then moves it verbatim as a cold case, where rspec-mocks still works.
+          return flag(:rspec_mocks, node,
+                      "`#{first_line(node)}` is an RSpec message expectation. Constable ships no " \
+                      "mocking library -- keep rspec-mocks via a cold case, or replace it with a " \
+                      "stub object.")
         end
 
         flag_unknown_matcher(node, args.first) if %i[to not_to to_not].include?(name)
 
         if MOCK_ENTRY_POINTS.include?(name) && receiver.nil?
-          note_untouched(:rspec_mocks, node,
-                         "`#{first_line(node)}` uses rspec-mocks. Constable has no equivalent; convert it by hand.")
+          flag(:rspec_mocks, node,
+               "`#{first_line(node)}` uses rspec-mocks. Constable has no equivalent, so this file cannot " \
+               "run as a native case; convert the stub by hand or keep the file as a cold case.")
           return
         end
 
@@ -710,9 +727,9 @@ module Constable
 
         @class_name = minitest_class_name(name_node)
         replace(name_node.loc.expression, @class_name) if @class_name != source_of(name_node)
-        replace(superclass.loc.expression, "Constable::Case")
+        replace(superclass.loc.expression, @base)
         record_converted(:case_class, node, "class #{source_of(name_node)} < #{source_of(superclass)}",
-                         "class #{@class_name} < Constable::Case")
+                         "class #{@class_name} < #{@base}")
         visit(body, in_case: true)
       end
 
@@ -903,9 +920,109 @@ module Constable
           out = +"# Constable modernize report\n\n"
           out << preamble
           out << headline
+          out << blockers
           @results.each { |result| out << file_section(result) }
           out
         end
+
+        # Written once here rather than repeated on every flagged line. The per-line reason
+        # is a pointer; this is the explanation, and at two thousand occurrences the
+        # difference between the two is whether the report is readable at all.
+        GUIDANCE = {
+          eager_let: <<~TEXT,
+            `let!` runs before **every** example in its group, whether that example refers to it
+            or not. That is two costs in one construct: the obvious one, where a group of forty
+            examples pays for a record thirty-nine of them never look at, and the quieter one,
+            where an example passes only because of setup it never mentions -- so the test does
+            not describe what it needs and cannot be read on its own.
+
+            There is no mechanical rewrite, because which of those two things you meant is a
+            decision only you can make. Both answers are short:
+
+            **The value is used by the examples** -- make it lazy, and it is created for the
+            examples that ask:
+
+            ```ruby
+            let!(:user) { create(:user) }   # every example pays
+            witness(:user) { create(:user) } # the ones that name `user` pay
+            ```
+
+            **The record has to exist whether or not it is named** (a row a query must find, a
+            fixture the subject looks up) -- say that out loud in a `briefing`:
+
+            ```ruby
+            briefing { create(:user, status: "archived") }
+            ```
+
+            Worth checking before you do either: a `let!` that no example in the group actually
+            depends on can simply be deleted. On a real suite that is a surprising share of them,
+            and deleting one is the fastest test you will ever write.
+          TEXT
+          eager_subject: <<~TEXT,
+            `subject!` is `let!` with a well-known name -- eager, so it runs for every example.
+            Split it: the side effect into a `briefing`, the value into `witness(:subject)`.
+          TEXT
+          one_liner_example: <<~TEXT,
+            `it { is_expected.to ... }` has no description, so a failure reports a file and a
+            line number and nothing about what was supposed to be true. Name it -- the sentence
+            is usually the assertion read aloud:
+
+            ```ruby
+            it { is_expected.to be_valid }
+            investigate("is valid with a name and an email") { attest(subject).to be_valid }
+            ```
+
+            These are quick, mechanical, and the single cheapest thing to work through: the
+            rewrite is one line each, and the payoff is a failure message that says what broke.
+          TEXT
+          is_expected: <<~TEXT,
+            `is_expected` reads RSpec's implicit subject. Constable converts an anonymous
+            `subject` block into `witness(:subject)` for you, so the assertion becomes
+            `attest(subject).to ...` -- the same test, naming the thing it is talking about.
+          TEXT
+          described_class: <<~TEXT,
+            `described_class` exists because `describe "some string"` might not name a class. A
+            native case *is* a class, so the indirection buys nothing and costs a reader the
+            jump back to the top of the file. Name the class directly.
+          TEXT
+          example_metadata: <<~TEXT,
+            `investigate` takes a plain string. A non-literal description (interpolation, a
+            constant) becomes a test whose name changes with its data, which is exactly what
+            makes history keying and rerun-by-name unreliable -- write the sentence out.
+
+            Metadata tags (`:focus`, `:vcr`, custom symbols) have no Constable equivalent:
+            filtering by tag is how a suite quietly stops running parts of itself. Say what the
+            tag meant in the case instead.
+          TEXT
+          rspec_mocks: <<~TEXT,
+            Constable ships no mocking library, on the grounds that a stub is a claim about
+            code you are not running and the cost of that claim being wrong is a green test
+            over a broken integration.
+
+            There is no rewrite, so a file using rspec-mocks is kept as a cold case, where
+            `allow`, `double` and friends all still work. That is not a holding pen -- cold
+            cases run alongside native ones indefinitely.
+
+            Where you do want to convert one: a hand-written stub object, or a real object in
+            a state that produces the behaviour, usually replaces `allow(...).to receive(...)`
+            and does not go stale when the real method changes shape.
+          TEXT
+          after_hook: <<~TEXT,
+            Most `after` blocks are redundant here. A native case rolls back its transaction and
+            restores DSL-level global state on its own, so an `after` that only undoes setup is
+            deleting work already done for you. Read it, and if that is all it does, delete it.
+          TEXT
+          before_all: <<~TEXT
+            `before(:all)` builds state once and hands the same objects to many examples. It is
+            faster right up until one example mutates one of them, and then you have a failure
+            that depends on order, appears on one machine, and is not reproducible from anything
+            written down.
+
+            Constable has no equivalent on purpose. Move the setup into `briefing` (per test,
+            inside a transaction that is rolled back) and, if that is genuinely too slow, make
+            the fixture cheaper -- `build_stubbed` over `create`, one record over five.
+          TEXT
+        }.freeze
 
         private
 
@@ -930,6 +1047,8 @@ module Constable
           case @write_mode
           when :in_place  then "in place -- the original files were overwritten"
           when :alongside then "alongside -- conversions were written to `*_case.rb` next to the originals"
+          when :port      then "port -- written into `test/cases/`, mirroring each spec path"
+          when :port_cold then "port (cold) -- moved into `test/cases/` verbatim, nothing converted"
           else "dry run -- no source file was written; this report is the only output"
           end
         end
@@ -944,6 +1063,36 @@ module Constable
           out << "| Files | Converted | Flagged | Left untouched | Failed |\n"
           out << "|---|---|---|---|---|\n"
           out << "| #{@results.size} | #{converted} | #{flagged} | #{untouched} | #{failed} |\n\n"
+          out
+        end
+
+        # What is actually standing between this suite and the native DSL, counted.
+        #
+        # A per-file flag list tells you nothing about a port: four hundred files produce
+        # thousands of lines and no sense of scale. Grouped, the shape is usually stark --
+        # on one real suite a single construct was 57% of every flag raised, which turns
+        # "convert the suite" from a slog into one decision applied repeatedly.
+        def blockers
+          counts = @results.flat_map { |r| Array(r.flags) }
+                           .group_by { |f| f[:kind] }
+                           .transform_values(&:size)
+                           .sort_by { |_, n| -n }
+          return "" if counts.empty?
+
+          total = counts.sum { |_, n| n }
+          out = +"## What is blocking conversion\n\n"
+          out << "| Construct | Count | Share |\n|---|---|---|\n"
+          counts.each do |kind, n|
+            out << "| `#{kind}` | #{n} | #{(n * 100.0 / total).round}% |\n"
+          end
+          out << "\n"
+
+          counts.each do |kind, n|
+            advice = GUIDANCE[kind]
+            next unless advice
+
+            out << "### `#{kind}` -- #{n} #{n == 1 ? "occurrence" : "occurrences"}\n\n#{advice}\n\n"
+          end
           out
         end
 

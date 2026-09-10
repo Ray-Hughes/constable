@@ -44,8 +44,8 @@ module Constable
 
     # The `constable modernize PATH` entry point. Dry run unless `write:` says otherwise;
     # see Modernizer::WRITE_MODES.
-    def modernize(paths, config: Constable.config, root: nil, write: :none, report: true)
-      Modernizer.run(paths, config: config, root: root, write: write, report: report)
+    def modernize(paths, config: Constable.config, root: nil, write: :none, report: true, base: nil)
+      Modernizer.run(paths, config: config, root: root, write: write, report: report, base: base)
     end
   end
 end

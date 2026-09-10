@@ -306,7 +306,16 @@ module Constable
       assert_includes result.source, "its(:name) { should eq(\"Ada\") }"
     end
 
-    def test_message_expectations_are_left_untouched_rather_than_renamed
+    # rspec-mocks blocks conversion rather than merely being noted.
+    #
+    # "Untouched" leaves the construct alone *and lets the file convert*, which for
+    # rspec-mocks means writing a native case that dies on its first `allow` with
+    # NoMethodError -- Constable ships no mocking library. Measured while porting a real
+    # directory: files converted cleanly and then failed at runtime for exactly this.
+    #
+    # A file that cannot run is not a conversion. Flagged, `--port` moves it verbatim as a
+    # cold case instead, where rspec-mocks still works.
+    def test_message_expectations_block_conversion_rather_than_being_renamed
       result = convert(<<~SPEC)
         describe User do
           it "notifies" do
@@ -317,10 +326,11 @@ module Constable
 
       assert_includes result.source, "expect(mailer).to receive(:deliver_later)"
       refute_includes result.source, "attest(mailer)"
-      assert_match(/no mocking library/, untouched_named(result, :rspec_mocks)[:reason])
+      assert_match(/no mocking library/, flag_named(result, :rspec_mocks)[:reason])
+      assert_predicate result, :flagged?
     end
 
-    def test_allow_is_logged_as_untouched
+    def test_allow_blocks_conversion
       result = convert(<<~SPEC)
         describe User do
           it "stubs" do
@@ -330,7 +340,8 @@ module Constable
       SPEC
 
       assert_includes result.source, "allow(clock).to receive(:now)"
-      refute_nil untouched_named(result, :rspec_mocks)
+      refute_nil flag_named(result, :rspec_mocks)
+      assert_predicate result, :flagged?
     end
 
     # ---- --cold: move it without converting it --------------------------------------

@@ -152,6 +152,24 @@ module Constable
 
       # How the actual is named in a message. Responses and classes get their own name;
       # everything else gets a bounded #inspect so a fat object can't drown the summary.
+      # How RSpec compares an expected value to an actual one, and why it is not `==`.
+      #
+      # `contain_exactly(VhaCamoAssignedTasksTab, ...)` is ordinary RSpec: a class matches
+      # its instances, because RSpec tries `===` before `==`. Comparing with `==` alone
+      # makes that assertion fail with "missing [the classes], unexpected [the instances]",
+      # which reads like the code broke rather than like the matcher is stricter than the
+      # one the test was written against.
+      #
+      # Found by porting a real directory: three files converted cleanly, ran, and failed
+      # on assertions that had passed under RSpec for years. A conversion that changes what
+      # a test means is worse than one that refuses to convert.
+      #
+      # `===` is what makes classes, Regexps and Ranges behave as expected here; `==` is
+      # tried as well because a few objects define equality without case equality.
+      def values_match?(expected, actual)
+        expected === actual || expected == actual # rubocop:disable Style/CaseEquality
+      end
+
       def describe(actual)
         return "the block" if actual.is_a?(Proc)
         return "response"  if response_like?(actual)
@@ -730,11 +748,14 @@ module Constable
 
       missing = expected.reject do |item|
         if actual.is_a?(Hash) && item.is_a?(Hash)
-          item.all? { |k, v| actual.key?(k) && actual[k] == v }
+          item.all? { |k, v| actual.key?(k) && Matchers.values_match?(v, actual[k]) }
         elsif actual.is_a?(Hash)
           actual.key?(item)
         else
-          actual.include?(item)
+          # `include?` is `==` all the way down, so a class never matches its instances.
+          # Same reasoning as contain_exactly above.
+          actual.include?(item) ||
+            (actual.respond_to?(:any?) && actual.any? { |element| Matchers.values_match?(item, element) })
         end
       end
       next true if missing.empty?
@@ -924,7 +945,7 @@ module Constable
       missing = expected.dup
       extra   = []
       items.each do |item|
-        index = missing.index { |candidate| candidate == item }
+        index = missing.index { |candidate| Matchers.values_match?(candidate, item) }
         index ? missing.delete_at(index) : extra << item
       end
       next true if missing.empty? && extra.empty?

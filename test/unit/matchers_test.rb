@@ -767,6 +767,38 @@ module Constable
       in_case { attest(FakeResponse.new(status: 422)).to have_http_status(:unprocessable_entity) }
     end
 
+    # ---- comparison fidelity -------------------------------------------------------
+    #
+    # RSpec compares an expected value to an actual one with `===` before `==`, which is
+    # why `contain_exactly(SomeClass)` matches an instance of it. Comparing with `==`
+    # alone made converted specs fail on assertions that had passed for years under RSpec
+    # -- measured while porting a real directory: three files, each reading as though the
+    # application had broken rather than the matcher being stricter than the one the test
+    # was written against.
+
+    def test_contain_exactly_matches_a_class_against_its_instances
+      in_case { attest([1, "a"]).to contain_exactly(Integer, String) }
+    end
+
+    def test_contain_exactly_still_matches_plain_values
+      in_case { attest([1, 2]).to contain_exactly(2, 1) }
+      assert_fails { in_case { attest([1, 2]).to contain_exactly(1, 3) } }
+    end
+
+    def test_match_array_inherits_the_same_comparison
+      in_case { attest([1, "a"]).to match_array([Integer, String]) }
+    end
+
+    def test_include_matches_a_class_against_its_instances
+      in_case { attest([1, "a"]).to include(String) }
+      assert_fails { in_case { attest([1, "a"]).to include(Float) } }
+    end
+
+    def test_include_still_matches_plain_values
+      in_case { attest([1, 2]).to include(2) }
+      in_case { attest("hello").to include("ell") }
+    end
+
     private
 
     # Runs the block with `self` set to the bare Expectations host, so the assertions read
