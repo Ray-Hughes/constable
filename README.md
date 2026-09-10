@@ -630,6 +630,28 @@ from one shared cache, never one written back to mid-matrix. Weighting from a bl
 moves between shards repartitions: measured across three local shards, one file ran in two
 of them and another ran in none.
 
+### Configuration: one home per setting
+
+`.constable/config.yml` holds every setting, and is the only place any of them is set.
+`test/case_helper.rb` holds code: the tier base classes, `before_suite`/`after_suite`,
+matcher definitions. Assigning a setting in `Constable.configure` raises and says to come
+here — settings had two homes once, which bought a precedence rule to learn and the same
+setting documented twice across two generated files.
+
+Nothing is lost by that. The file is run through ERB before it is parsed, exactly as Rails
+does for `database.yml`, so the one thing Ruby could do that YAML could not still works:
+
+```yaml
+parallel_workers: <%= ENV.fetch("CI_WORKERS", 4) %>
+worker_databases: <%= ENV["CI"] ? "reuse" : "off" %>
+```
+
+One caveat worth knowing: ERB is applied to the **whole file, comments included**. A `<%= %>`
+inside a `#` comment is still executed, so a commented-out example that raises will stop
+the config loading.
+
+A CLI flag still beats the file for a single run.
+
 ### Reading a run
 
 The last two sections are the ones you act on, and they are last on purpose: after a long

@@ -3,133 +3,106 @@
 require_relative "../helper"
 
 module Constable
-  # `Constable.configure` in test/case_helper.rb is the Ruby half of configuration. Until
-  # 1.1.0 it exposed four accessors that nothing in the codebase ever read: the generated
-  # case_helper.rb told you to write `c.parallel_workers = 4`, documented it, and silently
-  # ignored it.
+  # Settings have exactly one home: `.constable/config.yml`.
   #
-  # Precedence, and the reason for it:
+  # They used to have two. Fourteen of sixteen were settable both there and in
+  # `Constable.configure`, which bought a precedence rule to learn, the same setting
+  # documented twice across two generated files, and eighty-five lines of catalogue in the
+  # first file a new adopter opens.
   #
-  #   a CLI flag            one run, most specific
-  #   Constable.configure   code you deliberately ran
-  #   .constable/config.yml the project's declared default
-  #   Constable's defaults
+  # Nothing was lost by removing the second home. config.yml is run through ERB before it
+  # is parsed, exactly as Rails does for database.yml, so the one thing Ruby could do that
+  # YAML could not -- compute a value -- still works:
+  #
+  #     parallel_workers: <%= ENV.fetch("CI_WORKERS", 4) %>
+  #
+  # `Constable.configure` is now for code alone: before_suite, after_suite, matchers.
   class ConfigureOverridesTest < TestCase
     def teardown
       Constable.instance_variable_set(:@configuration, nil)
       super
     end
 
-    def configured(&)
-      Constable.configure(&)
-      Constable.config.apply_overrides!(Constable.configuration.overrides)
-      Constable.config
-    end
+    # --- one home ----------------------------------------------------------------------
 
-    # The two halves must stay in step, so a setting cannot be added to one and forgotten
-    # in the other. `storage` is the single documented exception.
-    def test_every_config_key_is_settable_in_ruby_except_the_documented_one
-      keys = Config::DEFAULTS.keys.map(&:to_sym).sort
-      covered = (Configuration::SETTINGS + Configuration::SETTINGS_ONLY_IN_YAML).sort
+    # Named individually rather than caught by method_missing, so assigning one says where
+    # it goes instead of failing with NoMethodError -- which reads as "no such setting".
+    def test_every_setting_says_where_it_goes_when_set_in_ruby
+      Config::DEFAULTS.each_key do |setting|
+        error = assert_raises(ConfigurationError, "c.#{setting} = should explain itself") do
+          Constable.configure { |c| c.public_send("#{setting}=", "anything") }
+        end
 
-      assert_equal keys, covered,
-                   "config.yml and Constable.configure must understand the same settings"
-    end
-
-    # Same shape as storage, different command: `constable modernize` never boots the app,
-    # so case_helper.rb has not run by the time it reads these. Verified before this was
-    # made to raise -- `c.modernize = {...}` was accepted and silently ignored while the
-    # YAML won, which is a setting that looks configurable and does nothing.
-    def test_setting_modernize_in_ruby_says_why_it_cannot_work
-      error = assert_raises(ConfigurationError) do
-        Constable.configure { |c| c.modernize = { "base" => "UnitCase" } }
+        assert_match(/config\.yml/, error.message)
       end
+    end
 
-      assert_match(/config\.yml/, error.message)
-      assert_match(/does not boot the application/, error.message)
+    def test_the_two_lists_stay_in_step
+      assert_equal Config::DEFAULTS.keys.map(&:to_sym).sort,
+                   (Configuration::SETTINGS + Configuration::SETTINGS_ONLY_IN_YAML).sort,
+                   "every setting must be accounted for in exactly one place"
     end
 
     # Ordering, not preference: the blotter is opened before case_helper.rb loads so the
-    # docket commands can work without booting the app. Accepting the setting and quietly
-    # using the old path is exactly the failure this release exists to stop.
-    def test_setting_storage_in_ruby_says_why_it_cannot_work
+    # docket commands can work without booting the app.
+    def test_storage_explains_its_own_reason
       error = assert_raises(ConfigurationError) do
         Constable.configure { |c| c.storage = { "path" => "somewhere.sqlite3" } }
       end
 
-      assert_match(%r{must be set in \.constable/config\.yml}, error.message)
       assert_match(/before case_helper\.rb loads/, error.message)
     end
 
-    def test_a_ruby_setting_overrides_the_file
-      write_config("parallel_workers: 2\n")
+    # `constable modernize` never boots the app at all -- that is what makes it read four
+    # hundred files in ten seconds.
+    def test_modernize_explains_its_own_reason
+      error = assert_raises(ConfigurationError) do
+        Constable.configure { |c| c.modernize = { "base" => "UnitCase" } }
+      end
 
-      assert_equal 7, configured { |c| c.parallel_workers = 7 }.parallel_workers
+      assert_match(/does not boot the application/, error.message)
     end
 
-    def test_a_setting_left_alone_defers_to_the_file
-      write_config("parole_period: 4\n")
+    def test_configure_still_takes_code
+      ran = []
+      Constable.configure do |c|
+        c.before_suite { ran << :before }
+        c.after_suite { ran << :after }
+      end
 
-      assert_equal 4, configured { |c| c.parallel_workers = 7 }.parole_period
+      Constable.configuration.run_before_suite!
+      Constable.configuration.run_after_suite!
+
+      assert_equal %i[before after], ran
     end
 
-    def test_settings_the_file_does_not_mention_still_work
-      assert_equal 3, configured { |c| c.parole_period = 3 }.parole_period
+    def test_nothing_is_merged_over_the_file_any_more
+      Constable.configure { |c| c.before_suite { nil } }
+
+      assert_empty Constable.configuration.overrides
     end
 
-    def test_output_mode_is_settable_in_ruby
-      assert_equal :expanded, configured { |c| c.output = :expanded }.output_mode
+    # --- ERB, which is what replaces computing a value in Ruby ---------------------------
+
+    def test_a_value_can_be_computed_in_the_file
+      ENV["CONSTABLE_TEST_WORKERS"] = "7"
+      write_config(%(parallel_workers: <%= ENV.fetch("CONSTABLE_TEST_WORKERS", 2) %>\n))
+
+      assert_equal 7, Constable.config.parallel_workers
+    ensure
+      ENV.delete("CONSTABLE_TEST_WORKERS")
     end
 
-    def test_booleans_survive_the_merge
-      assert_predicate configured { |c| c.warrants = true }, :warrants?
-      assert_predicate configured { |c| c.fail_on_warnings = true }, :fail_on_warnings?
+    def test_a_file_with_no_erb_is_unaffected
+      write_config("parallel_workers: 3\n")
+
+      assert_equal 3, Constable.config.parallel_workers
     end
 
-    # false is a value, not an absence -- the merge must not treat it as "unset".
-    def test_false_is_an_override_not_an_absence
-      write_config("warrants: true\n")
+    def test_erb_that_raises_says_which_file_it_was_reading
+      write_file(".constable/config.yml", "parallel_workers: <%= raise 'boom' %>\n")
 
-      refute_predicate configured { |c| c.warrants = false }, :warrants?
-    end
-
-    def test_nested_settings_merge_rather_than_replace_wholesale
-      write_config("tiers:\n  unit: test/cases/models/**/*\n  system: test/cases/system/**/*\n")
-
-      config = configured { |c| c.tiers = { "unit" => "test/cases/fast/**/*" } }
-
-      assert_equal "test/cases/fast/**/*", config.tiers["unit"]
-      assert_equal "test/cases/system/**/*", config.tiers["system"],
-                   "the file's other tiers should survive"
-    end
-
-    def test_arrays_are_replaced_not_concatenated
-      write_config("cold_cases:\n  - spec/legacy/**/*_spec.rb\n")
-
-      config = configured { |c| c.cold_cases = ["spec/models/**/*_spec.rb"] }
-
-      assert_equal ["spec/models/**/*_spec.rb"], config.cold_cases
-    end
-
-    # The values still go through the same clamping as the file's, so a typo in Ruby is no
-    # more dangerous than a typo in YAML.
-    def test_ruby_values_are_validated_like_file_values
-      assert_equal 100, configured { |c| c.coverage_threshold = 400 }.coverage_threshold
-      assert_equal 10, configured { |c| c.parole_period = 0 }.parole_period
-      assert_equal :concise, configured { |c| c.output = :sideways }.output_mode
-    end
-
-    def test_configuring_nothing_changes_nothing
-      write_config("parole_period: 6\n")
-
-      assert_equal 6, configured { |_c| nil }.parole_period
-    end
-
-    # The computed case, which is the whole reason to want Ruby at all.
-    def test_a_setting_can_be_computed
-      config = configured { |c| c.parallel_workers = (2 * 2) }
-
-      assert_equal 4, config.parallel_workers
+      assert_raises(StandardError) { Constable.reset! && Constable.config.parallel_workers }
     end
   end
 end

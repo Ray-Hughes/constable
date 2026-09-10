@@ -93,5 +93,34 @@ module Constable
 
       assert_equal 90, config.coverage_threshold
     end
+
+    def test_an_unrecognised_worker_database_mode_falls_back_to_schema
+      assert_equal :schema, load("worker_databases: sideways\n").worker_databases
+      assert_equal :reuse, load("worker_databases: reuse\n").worker_databases
+    end
+
+    # YAML 1.1 reads `off`, `no` and `false` as the boolean, so the obvious way to write
+    # this setting arrives as `false` rather than the string. Reading that as :schema
+    # would silently do the opposite of what the line says.
+    def test_yaml_booleans_are_read_as_off
+      assert_equal :off, load("worker_databases: off\n").worker_databases
+      assert_equal :off, load("worker_databases: no\n").worker_databases
+      assert_equal :off, load("worker_databases: false\n").worker_databases
+      assert_equal :off, load(%(worker_databases: "off"\n)).worker_databases
+    end
+
+    # config.yml is ERB-processed, the way Rails treats database.yml, so one file can say
+    # different things in CI and on a laptop without a second file to keep in sync.
+    def test_erb_is_evaluated
+      assert_equal 4, load(%(parallel_workers: <%= 2 + 2 %>\n)).parallel_workers
+    end
+
+    def test_erb_can_read_the_environment
+      with_env("CONSTABLE_TEST_WORKERS" => "3") do
+        yaml = %(parallel_workers: <%= ENV.fetch("CONSTABLE_TEST_WORKERS", 8) %>\n)
+
+        assert_equal 3, load(yaml).parallel_workers
+      end
+    end
   end
 end

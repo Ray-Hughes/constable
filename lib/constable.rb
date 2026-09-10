@@ -149,11 +149,20 @@ module Constable
   class Configuration
     # Every setting .constable/config.yml understands, settable in Ruby as well. A nil is
     # "not set here" rather than "set to nothing", so leaving one alone defers to the file.
-    SETTINGS = %i[
-      cold_cases warrants warrant_retries auto_relink parole_period
-      coverage coverage_threshold coverage_html fail_on_warnings parallel_workers
-      worker_databases jail_flakes output tiers
-    ].freeze
+    # Settings have exactly one home: .constable/config.yml.
+    #
+    # They used to have two. Fourteen of sixteen were settable both there and here, which
+    # meant a precedence rule to learn, the same setting documented twice across two
+    # generated files, and eighty-five lines of catalogue in the first file an adopter
+    # opens.
+    #
+    # Nothing is lost in expressiveness: config.yml is run through ERB before it is
+    # parsed, exactly as Rails does for database.yml, so a computed value still works --
+    #
+    #     parallel_workers: <%= ENV.fetch("CI_WORKERS", 4) %>
+    #
+    # What stays here is what a YAML file genuinely cannot hold: blocks of code.
+    SETTINGS = [].freeze
 
     # `storage` is the one setting that cannot live here, and the reason is ordering, not
     # preference: the blotter handle is opened before test/case_helper.rb is loaded,
@@ -162,30 +171,47 @@ module Constable
     #
     # Raising beats accepting the value and quietly using the old path -- silently
     # ignoring a setting somebody wrote is the failure mode this whole class was fixed for.
-    SETTINGS_ONLY_IN_YAML = %i[storage modernize].freeze
+    # Named individually so assigning one can say where it goes, rather than failing with
+    # NoMethodError -- which reads as "that setting does not exist".
+    SETTINGS_ONLY_IN_YAML = %i[
+      storage modernize cold_cases warrants warrant_retries auto_relink parole_period
+      coverage coverage_threshold coverage_html fail_on_warnings parallel_workers
+      worker_databases jail_flakes output tiers
+    ].freeze
 
-    attr_accessor(*SETTINGS, :seed)
+    attr_accessor :seed
 
-    # Same reason as storage, different command. `constable modernize` never boots the
-    # app -- that is why it reads four hundred files in ten seconds -- so case_helper.rb
-    # has not run by the time it needs these and never will.
-    #
-    # Verified before this was made to raise: `c.modernize = {...}` in case_helper was
-    # accepted and silently ignored, while the YAML won. A setting that looks configurable
-    # and does nothing is worse than one that refuses.
-    def modernize=(_value)
-      raise ConfigurationError,
-            "modernize must be set in .constable/config.yml, not Constable.configure. " \
-            "`constable modernize` does not boot the application -- it is an AST rewrite, " \
-            "and not booting is what makes it fast -- so case_helper.rb never runs for it."
+    SETTINGS_ONLY_IN_YAML.each do |setting|
+      define_method("#{setting}=") do |_value|
+        raise ConfigurationError, Configuration.yaml_only_message(setting)
+      end
     end
 
-    def storage=(_value)
-      raise ConfigurationError,
-            "storage must be set in .constable/config.yml, not Constable.configure. The " \
-            "blotter is opened before case_helper.rb loads, so that `constable jail` and " \
-            "`constable status` can read the docket without booting the app -- by the " \
-            "time this block runs the connection is already open."
+    # Two of these could never have worked here, for reasons worth keeping distinct from
+    # the general rule.
+    def self.yaml_only_message(setting)
+      case setting
+      when :storage then storage_message
+      when :modernize then modernize_message
+      else
+        "#{setting} is set in .constable/config.yml, not Constable.configure. Settings " \
+        "have one home so there is no precedence rule to learn, and the file is run " \
+        "through ERB, so a computed value still works. Constable.configure is for " \
+        "code: before_suite, after_suite, matchers."
+      end
+    end
+
+    def self.storage_message
+      "storage must be set in .constable/config.yml, not Constable.configure. The " \
+        "blotter is opened before case_helper.rb loads, so that `constable jail` and " \
+        "`constable status` can read the docket without booting the app -- by the time " \
+        "this block runs the connection is already open."
+    end
+
+    def self.modernize_message
+      "modernize must be set in .constable/config.yml, not Constable.configure. " \
+        "`constable modernize` does not boot the application -- it is an AST rewrite, " \
+        "and not booting is what makes it fast -- so case_helper.rb never runs for it."
     end
 
     def initialize
@@ -193,13 +219,9 @@ module Constable
       @after_suite_hooks  = []
     end
 
-    # Only the settings actually assigned, ready to merge over the file's values.
-    def overrides
-      SETTINGS.each_with_object({}) do |name, out|
-        value = public_send(name)
-        out[name.to_s] = value unless value.nil?
-      end
-    end
+    # Nothing to merge: settings live in the file. The loader still asks, and an empty
+    # hash is the honest answer.
+    def overrides = {}
 
     def before_suite(&block) = @before_suite_hooks << block
     def after_suite(&block)  = @after_suite_hooks << block

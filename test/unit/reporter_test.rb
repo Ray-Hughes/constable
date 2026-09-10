@@ -1051,14 +1051,6 @@ module Constable
       def io.tty? = true
       io
     end
-
-    def with_env(values)
-      previous = values.keys.to_h { |key| [key, ENV.fetch(key, nil)] }
-      values.each { |key, value| ENV[key] = value }
-      yield
-    ensure
-      previous.each { |key, value| ENV[key] = value }
-    end
   end
 end
 

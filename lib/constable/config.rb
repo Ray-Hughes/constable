@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "erb"
 require "yaml"
 require "etc"
 
@@ -68,7 +69,10 @@ module Constable
     def self.read_file(path)
       return {} unless File.exist?(path)
 
-      loaded = YAML.safe_load_file(path, permitted_classes: [], aliases: true)
+      # ERB first, exactly as Rails does for database.yml. It is what replaces setting a
+      # value in Ruby: `parallel_workers: <%= ENV.fetch("CI_WORKERS", 4) %>` computes at
+      # load time without needing a second home for settings.
+      loaded = YAML.safe_load(ERB.new(File.read(path)).result, permitted_classes: [], aliases: true)
       return {} if loaded.nil?
 
       unless loaded.is_a?(Hash)
@@ -154,8 +158,14 @@ module Constable
     #           no warning.
     WORKER_DATABASE_MODES = %i[schema reuse off].freeze
 
+    # `off` is a YAML 1.1 boolean, so `worker_databases: off` arrives here as `false`
+    # rather than the string -- as do `no` and `false`. All three mean the same thing to
+    # anyone writing them, so read them that way instead of falling through to :schema.
     def worker_databases
-      mode = @raw["worker_databases"].to_s.strip.downcase.to_sym
+      raw = @raw["worker_databases"]
+      return :off if raw == false
+
+      mode = raw.to_s.strip.downcase.to_sym
       WORKER_DATABASE_MODES.include?(mode) ? mode : :schema
     end
 

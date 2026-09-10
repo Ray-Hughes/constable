@@ -1,29 +1,23 @@
 # .constable/config.yml
 #
-# Optional. Everything here can also be written in Ruby, in test/case_helper.rb:
+# Every setting Constable has, and the only place any of them is set.
 #
-#     Constable.configure do |c|
-#       c.parallel_workers = ENV.fetch("CI_WORKERS", 4).to_i
-#       c.output           = :expanded
-#     end
+# There is deliberately no second home. Settings used to be settable here *and* in
+# `Constable.configure`, which bought a precedence rule to learn and the same setting
+# documented twice in two files. Assigning one in Ruby now raises and says to come here.
 #
-# ...which is the better home for anything computed, and the more familiar one if you
-# come from RSpec's spec_helper.rb. Ruby wins over this file; a CLI flag wins over both.
+# `test/case_helper.rb` is for code: tier base classes, `before_suite`/`after_suite`
+# hooks, matcher definitions. Things a YAML file cannot hold.
 #
-# Two reasons this file exists at all:
+# This file is run through ERB before it is parsed, exactly as Rails does for
+# database.yml, so a value that has to be computed still can be -- an env var with a
+# default, say. See the README for the syntax; it is not written out here because ERB is
+# applied to the whole file, comments included, so an example in a comment is live code.
 #
-#   1. `storage` cannot go anywhere else. The blotter is opened before case_helper.rb
-#      loads, so that `constable jail`, `warrants`, `watchlist` and `status` can read the
-#      docket without booting the app -- a broken app should not stop you reading the
-#      docket. Setting it in Ruby raises rather than being quietly ignored.
-#
-#   2. A settings file is greppable and diffable without executing anything, which is
-#      what you want for the values that differ per project or per branch.
-#
-# Every key Constable understands is below at its default, so this doubles as the
-# reference. Delete anything you have not changed; the behavior is identical either way.
-# Re-run `rails generate constable:install --skip` after upgrading and any settings added
-# since will be appended here, leaving your own values and comments alone.
+# A CLI flag beats this file for a single run. Every key below is shown at its default,
+# so this doubles as the reference -- delete anything you have not changed, the behaviour
+# is identical either way. Re-run `rails generate constable:install --skip` after
+# upgrading and any settings added since will be appended, leaving your values alone.
 
 # Glob paths to run as cold cases: original RSpec/Minitest files, driven verbatim
 # through their own real engine, with pass/fail/timing fed into Constable's
