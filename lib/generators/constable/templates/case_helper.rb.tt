@@ -93,6 +93,35 @@ module CaseFactories
   include FactoryBot::Syntax::Methods if defined?(FactoryBot::Syntax::Methods)
 end
 
+# Per-test cleanup your RSpec suite does in hooks.
+#
+# Native cases are not RSpec, so they do not run RSpec hooks. Anything your
+# `spec/support` does in an `after(:each)` -- resetting a memoized singleton,
+# clearing a fake, emptying a thread-local -- simply does not happen for them.
+#
+# That costs nothing while the two never meet, and becomes a real bug the moment a
+# native case and a cold case share a process, which is exactly what a half-ported
+# directory is. Observed on a real suite: a class-level `@system_user ||=` memo was
+# populated inside a native case's transaction, the transaction rolled back,
+# ActiveRecord reset that in-memory object to an unsaved record -- and the memo kept
+# pointing at it. The next cold case read `.id`, got nil, and failed on a not-null
+# constraint in a table it was not testing.
+#
+# So mirror that cleanup here, and include this in the tier classes below:
+#
+# module CaseCleanup
+#   def self.included(base)
+#     base.teardown do
+#       SomeSingleton.reset!
+#       Fakes::Service.clean!
+#     end
+#   end
+# end
+#
+# Reach for the underlying reset rather than your suite's helper where you can: a
+# helper defined in `spec/support` is not loaded until something pulls in
+# `rails_helper`, which is usually after the native cases that needed it.
+
 # No database, no request stack, no browser -- just Ruby. The fastest thing
 # Constable can run, and where most of a suite should live.
 class UnitCase < Constable::Case

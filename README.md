@@ -343,6 +343,29 @@ Nothing is ever overwritten: run a port twice and the second refuses, because a 
 run repeatedly while a suite is converted a directory at a time and any edit made after the
 first pass has to survive.
 
+#### One thing to check before you port a directory
+
+Native cases are not RSpec, so **they do not run RSpec hooks**. Whatever your
+`spec/support` does per test — resetting a memoized singleton, clearing a fake, emptying a
+thread-local — does not happen for a native case. That costs nothing while the two never
+meet, and becomes a bug the moment a half-ported directory puts both in one process.
+
+It surfaced on a real port exactly once, and took a while to read: a class-level
+`@system_user ||=` memo was populated inside a native case's transaction; the transaction
+rolled back; ActiveRecord reset that in-memory object to an unsaved record while the memo
+kept pointing at it. The next cold case read `.id`, got `nil`, and died on a not-null
+constraint in a table it had nothing to do with.
+
+Mirror that cleanup into your tier classes and it goes away:
+
+```ruby
+class UnitCase < Constable::Case
+  teardown { User.clear_memoized_singletons! }
+end
+```
+
+The generated `test/case_helper.rb` carries this note too.
+
 Native and cold cases run side by side in one `constable test`. No big-bang cutover.
 
 ### Escape hatches, always visible

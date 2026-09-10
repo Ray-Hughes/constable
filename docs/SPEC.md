@@ -287,6 +287,10 @@ Two modifiers finish the job:
 
 Nothing is ever overwritten. A port gets run repeatedly while a suite is converted a directory at a time, so the second pass refuses rather than discarding edits made after the first.
 
+**Native cases do not run RSpec hooks.** They are not RSpec. Any per-test cleanup a suite performs in `after(:each)` — resetting a memoized singleton, clearing a fake, emptying a thread-local — does not happen for a native case, and must be mirrored into the tier base classes (`teardown`) when a directory is partly ported.
+
+This is invisible until a native case and a cold case share a process, which is precisely what a half-ported directory is. Observed: a class-level `@system_user ||=` memo populated inside a native case's transaction; the rollback reset that in-memory object to an unsaved record; the memo kept pointing at it; the next cold case read `.id`, got `nil`, and failed on a not-null constraint elsewhere entirely. Prefer the underlying reset over a `spec/support` helper — those are not loaded until something requires `rails_helper`, typically after the native cases that dirtied the state.
+
 Native cases and cold cases run side by side in the same `constable test` invocation — no big-bang cutover.
 
 ## Built-in linter
