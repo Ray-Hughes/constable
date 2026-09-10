@@ -23,6 +23,16 @@ module Constable
       "parallel_workers" => "auto",
       "worker_databases" => "schema",
       "jail_flakes" => false,
+      # Defaults for `constable modernize`. A port is the same command run over and over
+      # against different directories, and repeating four flags each time is how one gets
+      # left off -- `--delete` without `--base` ports a whole directory into classes that
+      # inherit none of the app's tier setup.
+      "modernize" => {
+        "base" => nil,
+        "port" => false,
+        "delete" => false,
+        "batch" => nil
+      },
       "tiers" => {
         "unit" => "test/cases/models/**/*",
         "integration" => "test/cases/controllers/**/*",
@@ -31,6 +41,19 @@ module Constable
     }.freeze
 
     CONFIG_PATH = ".constable/config.yml"
+
+    # Settings for `constable modernize`, so a port can be configured once and run as
+    # `constable modernize PATH`. A flag on the command line always wins over the file --
+    # the file says what this project does by default, the flag says what this invocation
+    # does instead.
+    def modernize_base    = @raw.dig("modernize", "base")
+    def modernize_port?   = truthy(@raw.dig("modernize", "port"))
+    def modernize_delete? = truthy(@raw.dig("modernize", "delete"))
+
+    def modernize_batch
+      value = @raw.dig("modernize", "batch").to_i
+      value.positive? ? value : nil
+    end
 
     attr_reader :root, :raw
 

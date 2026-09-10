@@ -93,5 +93,59 @@ module Constable
 
       assert_equal "full suite", sel.reason
     end
+
+    # --- what counts as a test file -----------------------------------------------------
+    #
+    # Pointing at a directory used to glob `**/*.rb` and load whatever was in it. A support
+    # file produces no tests, which looks harmless and is not: one that calls
+    # `shared_examples_for` registers into a world the cold-case engine does not own and
+    # marks itself loaded, so the `require_relative` in the specs that need it becomes a
+    # no-op and every one of them dies with `Could not find shared examples`.
+    #
+    # Measured on a real port: seven files and seventy-eight tests lost to three support
+    # files in the directory. The same seven passed when the case files were listed
+    # explicitly -- which is why every reproduction attempt that named files rather than a
+    # directory worked perfectly, and why this took three attempts to find.
+
+    def test_a_directory_collects_test_files_and_not_their_support_files
+      write_file("test/cases/models/widget_case.rb", "class WidgetCase < Constable::Case; end\n")
+      write_file("test/cases/models/shared_examples.rb", <<~RUBY)
+        shared_examples_for "a thing" do
+          it("works") { expect(1).to eq(1) }
+        end
+      RUBY
+
+      paths = Selection.new(["test/cases/models"], config: Constable.config, root: tmp_root)
+                       .targets.map(&:path)
+
+      collected = paths.map { |path| path.delete_prefix("#{tmp_root}/") }
+
+      assert_includes collected, "test/cases/models/widget_case.rb"
+      refute_includes collected, "test/cases/models/shared_examples.rb"
+    end
+
+    # `test/cases/**/*.rb` is deliberately permissive so a case can live anywhere under it,
+    # so the same rule has to apply to a full-suite run or the bug just moves.
+    def test_a_full_run_skips_support_files_in_the_case_tree
+      write_file("test/cases/widget_case.rb", "class WidgetCase < Constable::Case; end\n")
+      write_file("test/cases/support_helpers.rb", "module SupportHelpers; end\n")
+
+      paths = Selection.new([], config: Constable.config, root: tmp_root, full: true)
+                       .targets.map(&:path)
+
+      refute(paths.any? { |path| path.end_with?("support_helpers.rb") })
+      assert(paths.any? { |path| path.end_with?("widget_case.rb") })
+    end
+
+    # A case that declares itself is a case whatever it is called -- the permissive glob
+    # exists for exactly that, and narrowing it purely by filename would break it.
+    def test_a_file_declaring_a_case_is_collected_whatever_its_name
+      write_file("test/cases/oddly_named.rb", "class OddlyNamed < Constable::Case; end\n")
+
+      paths = Selection.new(["test/cases"], config: Constable.config, root: tmp_root)
+                       .targets.map(&:path)
+
+      assert(paths.any? { |path| path.end_with?("oddly_named.rb") })
+    end
   end
 end

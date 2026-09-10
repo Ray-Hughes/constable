@@ -217,7 +217,11 @@ module Constable
                       "expect(response).to be_ok\n    " \
                       "end\n  " \
                       "end\n"
-      entry = untouched_named(result, :shared_examples)
+      # Flagged rather than merely noted: a converted file that still calls the
+      # shared-examples DSL is a native case invoking a method Constable does not have, and
+      # it dies on load. Blocking conversion is what sends it to a cold case instead, where
+      # the DSL still works.
+      entry = flag_named(result, :shared_examples)
 
       refute_nil entry
       assert_match(/plain Ruby module/, entry[:reason])
@@ -226,11 +230,15 @@ module Constable
       refute_includes kinds(result.converted), :investigate
     end
 
-    def test_it_behaves_like_is_left_untouched_and_logged
+    # Measured on a real port: two files converted cleanly and then died with
+    # `NoMethodError: undefined method 'it_behaves_like'`, taking their tests with them --
+    # 78 fewer tests ran than under rspec and the run still reported a pass.
+    def test_it_behaves_like_blocks_conversion
       result = convert("describe User do\n  it_behaves_like \"a thing\"\nend\n")
 
       assert_includes result.source, %(it_behaves_like "a thing")
-      refute_nil untouched_named(result, :shared_examples)
+      refute_nil flag_named(result, :shared_examples)
+      assert_predicate result, :flagged?
     end
 
     def test_custom_matcher_definitions_are_left_untouched_and_logged
@@ -694,8 +702,9 @@ module Constable
       assert_includes result.source, "attest {"
       assert_includes result.source, "before(:all) { seed_the_world }"
       assert_includes result.source, %(shared_examples "an authorized action" do)
-      assert_equal %i[eager_let described_class before_all one_liner_example].sort, kinds(result.flags).sort
-      assert_equal %i[describe_metadata shared_examples].sort, kinds(result.untouched).sort
+      assert_equal %i[eager_let described_class before_all one_liner_example shared_examples].sort,
+                   kinds(result.flags).sort
+      assert_equal %i[describe_metadata], kinds(result.untouched).uniq
     end
 
     def test_spec_helper_requires_are_pointed_at_case_helper
@@ -803,7 +812,8 @@ module Constable
       assert_includes report, "### Flagged -- NOT converted, still as written"
       assert_includes report, "**before_all**"
       assert_includes report, "**eager_let**"
-      assert_includes report, "### Left untouched"
+      # shared_examples moved from "left untouched" to "flagged" -- a converted file that
+      # still calls that DSL cannot run, so it has to block conversion rather than be noted.
       assert_includes report, "**shared_examples**"
       assert_includes report, "spec/models/user_spec.rb:4"
     end

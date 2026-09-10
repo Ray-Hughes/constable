@@ -200,7 +200,11 @@ module Constable
     end
 
     def native_files
-      @native_files ||= glob(NATIVE_GLOBS).reject { |f| @config.cold_case?(f) }
+      # Same rule as an explicit directory: `test/cases/**/*.rb` is deliberately permissive
+      # so a case can live anywhere under it, but a support file sitting in that tree is
+      # not a case and loading it as one has side effects. See #files_under.
+      @native_files ||= glob(NATIVE_GLOBS).select { |f| test_file?(f) }
+                                          .reject { |f| @config.cold_case?(f) }
                                           .select { |f| native_by_content?(f) }
     end
 
@@ -233,8 +237,37 @@ module Constable
       end
     end
 
+    # Every Ruby file under a directory is not a test file.
+    #
+    # This globbed `**/*.rb`, so pointing at a directory swept up whatever else lived
+    # there -- shared-example definitions, helper modules, factories -- and loaded them as
+    # cases. Loading one produces no tests, which looks harmless, and is not: a support
+    # file that calls `shared_examples_for` registers into a world the cold-case engine
+    # does not own, and marks itself loaded, so the `require_relative` in the specs that
+    # actually need it becomes a no-op and every one of them dies with
+    # `Could not find shared examples`.
+    #
+    # Measured on a real port: seven files and seventy-eight tests lost to three support
+    # files sitting in the directory. The same seven passed when the case files were named
+    # explicitly, which is what took so long to see -- every reproduction attempt that
+    # listed files rather than a directory worked perfectly.
     def files_under(dir)
-      Dir.glob(File.join(dir, "**", "*.rb"))
+      Dir.glob(File.join(dir, "**", "*.rb")).select { |file| test_file?(file) }
+    end
+
+    # Named like a test, or declaring a case class. Anything else in the directory is
+    # something the tests use, not something to run.
+    def test_file?(file)
+      return true if File.basename(file).match?(/_(?:case|spec|test)\.rb\z/)
+
+      declares_case?(file)
+    end
+
+    def declares_case?(file)
+      head = File.foreach(file).first(40).join
+      head.include?("Constable::ColdCase") || head.match?(/<\s*(?:\w+::)*(?:Constable::)?Case\b/)
+    rescue StandardError
+      false
     end
 
     def glob(patterns)

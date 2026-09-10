@@ -137,3 +137,18 @@ tiers:
   unit:        "test/cases/models/**/*"
   integration: "test/cases/controllers/**/*"
   system:      "test/cases/system/**/*"
+
+# Defaults for `constable modernize`, so a port is one command rather than five flags.
+#
+# A port is the same invocation run repeatedly against different directories, and
+# repeating the flags each time is how one eventually gets left off -- `delete` without
+# `base` moves a whole directory into classes that inherit none of your tier setup, and
+# the first sign of it is `NoMethodError: undefined method 'create'`. Set them once.
+#
+# A flag on the command line still wins: the file says what this project does by default,
+# the flag says what this invocation does instead.
+modernize:
+  base:   null    # superclass for converted cases, e.g. UnitCase. null means Constable::Case
+  port:   false   # write into test/cases/, mirroring the spec path
+  delete: false   # remove each original once its port has been written
+  batch:  null    # port this many files per run; null means all of them

@@ -26,6 +26,9 @@ module Constable
     # The summary's frame. 60 columns wide, as published in the spec.
     RULE_WIDTH = 60
     HEAVY_RULE = ("━" * RULE_WIDTH).freeze
+    # Separates entries inside a section. Shorter than the frame so it reads as a divider
+    # within the block rather than as the end of it.
+    THIN_RULE = ("─" * (RULE_WIDTH - 4)).freeze
 
     INDENT        = "  "
     ENTRY_INDENT  = "    "
@@ -587,11 +590,20 @@ module Constable
       return if failures.empty?
 
       section("FAILURES")
-      each_entry(failures) { |result| failure_entry(result) }
+      # Numbered and ruled off from each other. A failure carrying a forty-line backtrace
+      # runs straight into the next one otherwise, and there is no way to tell -- scrolling
+      # through it -- which message belongs to which test.
+      failures.each_with_index do |result, index|
+        writeln(INDENT + paint(THIN_RULE, :dim)) if index.positive?
+        writeln if index.positive?
+        failure_entry(result, index + 1, failures.size)
+      end
     end
 
-    def failure_entry(result)
-      writeln(INDENT + paint("#{GLYPHS[:failed]} #{result.case_name}", COLORS[:failed]))
+    def failure_entry(result, position = nil, total = nil)
+      counter = position ? paint("#{position}/#{total}  ", :dim) : ""
+      writeln(INDENT + counter + paint("#{GLYPHS[result.status] || GLYPHS[:failed]} " \
+                                       "#{result.case_name}", COLORS[:failed]))
       writeln(ENTRY_INDENT + paint(%("#{result.description}"), :dim))
       writeln(ENTRY_INDENT + paint(result.location, :dim))
 

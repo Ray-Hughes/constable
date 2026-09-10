@@ -152,7 +152,7 @@ module Constable
     SETTINGS = %i[
       cold_cases warrants warrant_retries auto_relink parole_period
       coverage coverage_threshold coverage_html fail_on_warnings parallel_workers
-      worker_databases jail_flakes output tiers
+      worker_databases jail_flakes output tiers modernize
     ].freeze
 
     # `storage` is the one setting that cannot live here, and the reason is ordering, not

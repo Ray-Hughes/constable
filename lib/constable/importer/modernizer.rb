@@ -669,11 +669,21 @@ module Constable
                          "as `investigate \"...\" do attest(subject.#{attribute}).to ... end`.")
       end
 
+      # Flagged, not noted -- the same lesson rspec-mocks taught.
+      #
+      # "Untouched" leaves the construct alone *and lets the file convert*, so the result
+      # is a native case whose body calls a method Constable does not have. Measured on a
+      # real port: two files converted cleanly and then died with
+      # `NoMethodError: undefined method 'it_behaves_like'`, taking their tests with them
+      # -- 78 fewer tests ran than under rspec, and the summary called it a pass.
+      #
+      # Blocked, `--port` moves the file verbatim as a cold case, where the whole
+      # shared-examples DSL still works.
       def handle_shared_definition(node, send_node)
-        note_untouched(:shared_examples, node,
-                       "`#{source_of(send_node)}` left untouched. Constable has no shared-examples DSL on " \
-                       "purpose -- shared behaviour is a plain Ruby module in test/support that each case " \
-                       "`include`s. Extract it by hand.")
+        flag(:shared_examples, node,
+             "`#{source_of(send_node)}` defines shared examples. Constable has no shared-examples DSL " \
+             "on purpose -- shared behaviour is a plain Ruby module in test/support that each case " \
+             "`include`s -- so this file cannot run as a native case until it is extracted by hand.")
       end
 
       def handle_matcher_definition(node, send_node)
@@ -718,8 +728,10 @@ module Constable
         end
 
         if SHARED_USES.include?(name) && receiver.nil?
-          note_untouched(:shared_examples, node,
-                         "`#{first_line(node)}` pulls in shared examples. Replace with a plain module `include`.")
+          flag(:shared_examples, node,
+               "`#{first_line(node)}` pulls in shared examples, which Constable has no DSL for. This file " \
+               "cannot run as a native case; replace it with a plain module `include`, or keep the file " \
+               "as a cold case.")
           return
         end
 
@@ -1080,6 +1092,24 @@ module Constable
             Metadata tags (`:focus`, `:vcr`, custom symbols) have no Constable equivalent:
             filtering by tag is how a suite quietly stops running parts of itself. Say what the
             tag meant in the case instead.
+          TEXT
+          shared_examples: <<~TEXT,
+            Constable has no shared-examples DSL, deliberately: `include` already composes
+            behaviour, it respects ancestry, it shows up in `.ancestors`, an editor can jump to
+            the definition, and there is no second set of scoping rules to learn on top of
+            Ruby's own.
+
+            A file using them therefore cannot run as a native case, and is kept as a cold case
+            where `it_behaves_like` and friends all still work. To convert one, move the shared
+            block into a module under `test/support` and `include` it:
+
+            ```ruby
+            module BehavesLikeATask
+              def self.included(base)
+                base.investigate("requires a parent") { ... }
+              end
+            end
+            ```
           TEXT
           rspec_mocks: <<~TEXT,
             Constable ships no mocking library, on the grounds that a stub is a claim about

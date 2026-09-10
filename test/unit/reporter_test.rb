@@ -306,7 +306,7 @@ module Constable
 
           FAILURES
           ────────
-          ✗ SessionsCase
+          1/1  ✗ SessionsCase
             "expires after inactivity"
             spec/cases/sessions_case.rb:12
             400ms
@@ -624,13 +624,18 @@ module Constable
       assert_includes output, "      constable test spec/cases/sessions_case.rb:12\n"
     end
 
-    def test_multiple_failures_are_separated_by_a_blank_line
+    # A blank line is not enough once a failure carries a forty-line backtrace: the next
+    # one begins somewhere in the middle of the scroll and there is no telling which
+    # message belongs to which test. Numbered, and ruled off from each other.
+    def test_multiple_failures_are_numbered_and_ruled_off_from_each_other
       results = [build_result(description: "one", status: :failed, failure: build_failure(message: "first")),
                  build_result(description: "two", status: :failed, failure: build_failure(message: "second"))]
 
       reporter.finish(results: results, duration: 1.0, warnings: [])
 
-      assert_includes output, "      constable test spec/cases/sessions_case.rb:12\n\n  ✗ SessionsCase\n    \"two\"\n"
+      assert_includes output, "1/2  ✗ SessionsCase"
+      assert_includes output, "2/2  ✗ SessionsCase"
+      assert_includes output, "  #{"─" * 56}\n"
     end
 
     # --- parole violations --------------------------------------------------------------

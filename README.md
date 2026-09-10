@@ -372,6 +372,22 @@ breaks whatever still points at it.
 Directories the port empties are removed. Only when empty, so nothing it did not take can
 go with them.
 
+Set the flags once instead of typing them every time. In `.constable/config.yml`:
+
+```yaml
+modernize:
+  base:   UnitCase
+  port:   true
+  delete: true
+  batch:  20
+```
+
+Then a port is `constable modernize spec/models`, and a flag on the command line still
+wins — the file says what this project does by default, the flag says what this invocation
+does instead. This matters more than convenience: `delete` without `base` moves a whole
+directory into classes that inherit none of your tier setup, and the first sign of it is
+`NoMethodError: undefined method 'create'`.
+
 **`--limit` is not that.** It caps how many rows are printed and changes nothing about what
 is ported — the two are deliberately separate flags, because conflating them with
 `--delete` in play would delete files someone believed they had excluded.

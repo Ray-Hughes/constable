@@ -311,11 +311,19 @@ module Constable
         exit(EXIT_USAGE)
       end
 
+      config = load_config
+      # A flag beats the file. The file says what this project does by default; the flag
+      # says what this invocation does instead.
+      port = options.key?("port") ? options[:port] : config.modernize_port?
+      delete = options.key?("delete") ? options[:delete] : config.modernize_delete?
+      base = options[:base] || config.modernize_base
+      batch = options[:batch] || config.modernize_batch
+
       # --port --cold is a real combination, not a conflict: it means "move this file into
       # the native tree even though it cannot be converted", which is how a port finishes
       # the last mile instead of stalling on the files that need a human.
-      mode = if options[:port] && options[:cold] then :port_cold
-             elsif options[:port] then :port
+      mode = if port && options[:cold] then :port_cold
+             elsif port then :port
              elsif options[:"in-place"] then :in_place
              elsif options[:cold] then :cold
              elsif options[:alongside] then :alongside
@@ -324,7 +332,7 @@ module Constable
 
       # Only a port moves a file, so only a port can finish the move. Deleting a spec
       # after an --alongside or a dry run would remove a test nothing had copied.
-      if options[:delete] && !%i[port port_cold].include?(mode)
+      if delete && !%i[port port_cold].include?(mode)
         CLI.complain("--delete only makes sense with --port; nothing else moves the file.")
         exit(EXIT_USAGE)
       end
@@ -333,12 +341,12 @@ module Constable
       # --delete` wants to see the deletions, not perform them.
       mode = :none if options[:plan]
 
-      run = Importer.modernize(paths, config: load_config, write: mode, base: options[:base],
-                                      delete_original: options[:delete] && !options[:plan],
-                                      batch: options[:batch])
+      run = Importer.modernize(paths, config: config, write: mode, base: base,
+                                      delete_original: delete && !options[:plan],
+                                      batch: batch)
 
       if options[:plan]
-        print_port_plan(run)
+        print_port_plan(run, delete: delete, base: base)
         exit(run.ok? ? EXIT_CLEAN : EXIT_FAILED)
       end
 
@@ -875,9 +883,9 @@ module Constable
 
       # --- port plan ---------------------------------------------------------------
 
-      def print_port_plan(run)
+      def print_port_plan(run, delete:, base:)
         plan = PortPlan.new(run.results, storage: Constable.storage, root: Constable.root,
-                                         delete: options[:delete], base: options[:base])
+                                         delete: delete, base: base)
 
         print_plan_headline(plan)
         print_plan_files(plan)
