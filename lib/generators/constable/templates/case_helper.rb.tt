@@ -110,9 +110,11 @@ end
 # What belongs here is what a YAML file cannot express.
 
 Constable.configure do |c|
-  # A value computed at boot:
+  # Settings do not go here. Every one of them lives in .constable/config.yml, and
+  # assigning one on this block raises rather than being quietly ignored. If you came
+  # here wanting a value computed at boot, that file is run through ERB:
   #
-  # c.parallel_workers = ENV.fetch("CI_WORKERS", 4).to_i
+  #     parallel_workers: <%%= ENV.fetch("CI_WORKERS", 4) %>
 
   # Run once per process, before the whole suite. For configuring the world -- drivers,
   # adapters, formats -- and deliberately not for creating records that tests then share.

@@ -156,6 +156,21 @@ module Constable
       assert_match(/# Constable::Matchers\.define\(:be_created\)/, helper)
     end
 
+    # Every setting lives in config.yml now, so `c.<setting> =` raises. A commented
+    # example is still an instruction -- someone uncomments it -- so the helper must not
+    # contain one, live or commented, for any setting.
+    def test_case_helper_shows_no_setter_that_would_raise
+      install
+      helper = generated("test/case_helper.rb")
+
+      offenders = Constable::Configuration::SETTINGS_ONLY_IN_YAML.select do |setting|
+        helper.match?(/\bc\.#{Regexp.escape(setting)}\s*=/)
+      end
+
+      assert_empty offenders,
+                   "case_helper.rb shows #{offenders.join(", ")}, which Constable.configure rejects"
+    end
+
     # The two rules the helper exists to explain.
     def test_case_helper_explains_the_missing_before_all_and_per_test_memoization
       install
