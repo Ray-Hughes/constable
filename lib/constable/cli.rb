@@ -861,6 +861,10 @@ module Constable
           say "  nothing written (add --port, --alongside or --in-place)"
         end
         say "  #{failed.size} file(s) could not be processed" if failed.any?
+        if Array(run.carried).any?
+          say "  #{Array(run.carried).size} support file(s) copied alongside " \
+              "(required by relative path)"
+        end
         if run.remaining.to_i.positive?
           say "  #{paint("#{run.remaining} file(s) left in this directory -- run the same command " \
                          "again for the next batch", :cyan)}"

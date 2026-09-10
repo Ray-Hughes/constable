@@ -64,7 +64,8 @@ module Constable
       end
 
       # An aggregate over one `constable modernize` invocation.
-      Run = Struct.new(:results, :report, :report_path, :write_mode, :remaining, keyword_init: true) do
+      Run = Struct.new(:results, :report, :report_path, :write_mode, :remaining, :carried,
+                       keyword_init: true) do
         def ok?       = results.all?(&:ok?)
         def failed    = results.reject(&:ok?)
         def flagged   = results.select(&:flagged?)
@@ -142,6 +143,10 @@ module Constable
             result
           end
 
+          # A ported file's relative requires have to resolve from where it now lives.
+          carried = %i[port port_cold].include?(write) ? carry_companions(results, root) : []
+          prune_empty_directories(results, root) if delete_original
+
           text = report_for(results, write_mode: write)
           report_path = nil
           if report
@@ -149,7 +154,7 @@ module Constable
             File.write(report_path, text)
           end
           Run.new(results: results, report: text, report_path: report_path, write_mode: write,
-                  remaining: remaining)
+                  remaining: remaining, carried: carried)
         end
 
         # `constable modernize` is useless without the parser gem, but Constable itself
@@ -297,6 +302,55 @@ module Constable
           when :alongside
             write_to(result, alongside_path(result.path), root)
           end
+        end
+
+        # Files a ported spec requires by relative path, brought along with it.
+        #
+        # `require_relative "task_shared_examples.rb"` resolves against the file's own
+        # directory. Move the spec and leave its companion behind and that path no longer
+        # exists -- the ported file dies on LoadError before it runs a line. Observed on a
+        # real port: sixty-five files moved, two support files left in spec/, and every
+        # file that required one of them broken.
+        #
+        # Copied rather than moved, deliberately. A companion may still be required by
+        # specs that have not been ported yet -- a --batch port guarantees it -- and a
+        # duplicated support file is harmless where a deleted one breaks whatever still
+        # points at it. Tidying that up is a decision for whoever finishes the port.
+        def carry_companions(results, root)
+          carried = []
+          results.select(&:written?).each do |result|
+            companions_for(result).each do |source|
+              target = File.join(root, File.dirname(result.written_to), File.basename(source))
+              next if File.exist?(target)
+
+              FileUtils.mkdir_p(File.dirname(target))
+              FileUtils.cp(source, target)
+              carried << target.delete_prefix("#{root}/")
+            end
+          end
+          carried.uniq
+        end
+
+        def companions_for(result)
+          dir = File.dirname(result.path)
+          result.original.to_s.scan(/require_relative\s+["']([^"']+)["']/).flatten.filter_map do |ref|
+            candidate = File.expand_path(ref.end_with?(".rb") ? ref : "#{ref}.rb", dir)
+            candidate if File.file?(candidate)
+          end
+        end
+
+        # Directories the port emptied. Only ever removed when empty, so nothing that was
+        # not ported can be lost with them.
+        def prune_empty_directories(results, root)
+          results.filter_map(&:removed_original)
+                 .map { |relative| File.dirname(File.join(root, relative)) }
+                 .uniq
+                 .sort_by { |dir| -dir.length }
+                 .each do |dir|
+                   Dir.rmdir(dir) while Dir.exist?(dir) && Dir.empty?(dir) && dir != root
+                 rescue StandardError
+                   nil
+                 end
         end
 
         # Finishes the move.

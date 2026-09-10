@@ -213,5 +213,74 @@ module Constable
       assert_equal 3, run.results.size
       assert_equal 0, run.remaining.to_i
     end
+
+    # --- companions: what a ported file requires by relative path -----------------------
+    #
+    # `require_relative "task_shared_examples.rb"` resolves against the file's own
+    # directory. Move the spec, leave the companion, and the path no longer exists -- the
+    # ported file dies on LoadError before running a line. Observed on a real port: 65
+    # files moved, two support files left behind, and every file requiring one broken.
+
+    def spec_with_companion
+      write_file("spec/models/shared_examples.rb", <<~RUBY)
+        shared_examples_for "a thing" do
+          it("works") { expect(1).to eq(1) }
+        end
+      RUBY
+      write_file("spec/models/widget_spec.rb", <<~SPEC)
+        describe "Widget" do
+          require_relative "shared_examples.rb"
+          it_behaves_like "a thing"
+        end
+      SPEC
+    end
+
+    def test_a_required_companion_is_carried_to_the_destination
+      spec_with_companion
+
+      run = Importer.modernize(["spec/models"], config: Constable.config, root: tmp_root,
+                                                write: :port, report: false)
+
+      assert_path_exists File.join(tmp_root, "test/cases/models/shared_examples.rb"),
+                         "the ported file requires this by relative path"
+      assert_includes run.carried, "test/cases/models/shared_examples.rb"
+    end
+
+    # Copied, not moved. Specs that have not been ported yet may still require it -- a
+    # --batch port guarantees some will -- and a duplicated support file is harmless where
+    # a deleted one breaks whatever still points at it.
+    def test_a_companion_is_copied_rather_than_moved
+      spec_with_companion
+
+      Importer.modernize(["spec/models"], config: Constable.config, root: tmp_root,
+                                          write: :port, report: false, delete_original: true)
+
+      assert_path_exists File.join(tmp_root, "spec/models/shared_examples.rb")
+      refute_path_exists File.join(tmp_root, "spec/models/widget_spec.rb")
+    end
+
+    # A port that empties a directory should not leave the directory behind.
+    def test_directories_the_port_emptied_are_removed
+      write_file("spec/models/nested/thing_spec.rb", <<~SPEC)
+        describe "Thing" do
+          it("works") { expect(1).to eq(1) }
+        end
+      SPEC
+
+      Importer.modernize(["spec/models"], config: Constable.config, root: tmp_root,
+                                          write: :port, report: false, delete_original: true)
+
+      refute_path_exists File.join(tmp_root, "spec/models/nested")
+    end
+
+    # Only when empty. Anything the port did not take keeps its directory.
+    def test_a_directory_still_holding_something_is_left_alone
+      spec_with_companion
+
+      Importer.modernize(["spec/models"], config: Constable.config, root: tmp_root,
+                                          write: :port, report: false, delete_original: true)
+
+      assert_path_exists File.join(tmp_root, "spec/models")
+    end
   end
 end

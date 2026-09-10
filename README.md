@@ -362,6 +362,16 @@ SUMMARY
   45 file(s) left in this directory -- run the same command again for the next batch
 ```
 
+A port takes a file's local dependencies with it. `require_relative "shared_examples.rb"`
+resolves against the file's own directory, so moving the spec and leaving the companion
+behind breaks it — the ported file dies on `LoadError` before running a line. Companions
+are **copied**, not moved: specs you have not ported yet may still require them (a `--batch`
+port guarantees some will), and a duplicated support file is harmless where a deleted one
+breaks whatever still points at it.
+
+Directories the port empties are removed. Only when empty, so nothing it did not take can
+go with them.
+
 **`--limit` is not that.** It caps how many rows are printed and changes nothing about what
 is ported — the two are deliberately separate flags, because conflating them with
 `--delete` in play would delete files someone believed they had excluded.
