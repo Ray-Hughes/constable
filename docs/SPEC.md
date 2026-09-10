@@ -355,6 +355,7 @@ Tables: `flake_history`, `jail_docket`, `warrants`.
 |---|---|
 | `constable test` | Everything — native + cold cases (git-diff-scoped locally, `--full` for the whole suite; CI always uses `--full`) |
 | `constable test PATH[:LINE]` | One file, or one specific `investigate` at that line |
+| `constable test --timeout N` | Fail a file that produces no result in N seconds |
 | `constable test --only=cold` | Every cold case only |
 | `constable test PATH:LINE --only=cold` | One specific cold case only |
 | `constable test --only=native` | Skip the legacy suite entirely |

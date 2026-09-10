@@ -45,6 +45,23 @@ tests in it than the code had.
 keeps, and says how many in its summary. With `--delete`, which is the documented default,
 the source is gone and nothing is needed.
 
+### A hung test stopped the whole suite, with nothing to show for it
+
+There was no timeout anywhere. A test that never returns does not fail -- it parks the run,
+and the only symptom is a terminal that sits there. Measured on a real suite: 58 minutes of
+wall clock against 10 minutes of CPU, no output, nothing recorded, and no way to tell which
+file was responsible. Most often it is a browser-driven system test waiting on something
+that never arrives.
+
+`--timeout N`, or `timeout:` in config.yml, fails that file by name and lets the run finish.
+Off by default, because raising into a running test is a real intervention and can leave
+state behind. Against a run that would otherwise never end, it is the better trade.
+
+Usually the engine catches the interrupt first and reports it as the example failing, which
+is better than a file-level result because it names the exact test. Either way the message
+says what the limit was and what to do about it, rather than "Timeout::ExitException:
+execution expired".
+
 ### `--only`, replacing `--unsafe`
 
 There was no way to say "skip the legacy suite", which is the thing you want while working

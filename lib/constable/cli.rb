@@ -59,6 +59,8 @@ module Constable
     option :warrants, type: :boolean, desc: "Turn the flaky detector on for this run"
     option :coverage, type: :boolean, desc: "Record coverage for this run"
     option :seed,     type: :numeric, desc: "Replay a previous run's order"
+    option :timeout,  type: :numeric,
+                      desc: "Fail a file that produces no result in N seconds instead of hanging"
     option :workers,  type: :numeric, desc: "Parallel workers (default: config, or auto)"
     option :show,     type: :string,  desc: "Expand collapsed sections: --show warnings"
     option :shard,    type: :string,  desc: "Run one slice of the suite: --shard 3/8 (for a CI matrix)"
@@ -94,7 +96,8 @@ module Constable
         workers: options[:workers],
         verbose: options[:verbose],
         shard: shard_from(options[:shard]),
-        shard_by_time: options[:"shard-by-time"]
+        shard_by_time: options[:"shard-by-time"],
+        timeout: options[:timeout]
       )
 
       exit(runner.call)

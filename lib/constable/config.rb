@@ -10,6 +10,7 @@ module Constable
   # tier base classes, one-time global setup) lives in test/case_helper.rb instead.
   class Config
     DEFAULTS = {
+      "timeout" => 0,
       "storage" => { "adapter" => "sqlite", "path" => ".constable/constable.sqlite3", "url" => nil },
       "warrants" => false,
       "warrant_retries" => 5,
@@ -238,6 +239,13 @@ module Constable
                               File.fnmatch?(glob.to_s, path.to_s, File::FNM_PATHNAME | File::FNM_EXTGLOB)
       end
       nil
+    end
+
+    # Seconds before a single file is declared hung and failed. 0 is off, which is the
+    # default: killing a test mid-flight is a real intervention and should be asked for.
+    def timeout
+      seconds = @raw["timeout"].to_i
+      seconds.positive? ? seconds : 0
     end
 
     def cold_case_except = Array(@raw["cold_case_except"])

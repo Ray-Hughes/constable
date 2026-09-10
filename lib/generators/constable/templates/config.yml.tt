@@ -78,6 +78,22 @@ coverage_html: false     # generate a browsable report by default
 
 fail_on_warnings: false  # CI: fail the build when the warning count doesn't trend down
 
+# Seconds before a file that has produced no result is declared hung, failed by name, and
+# the run allowed to continue. 0 is off.
+#
+# A test that never finishes does not fail -- it stops the suite, and the symptom is a
+# terminal that sits there. No output, nothing recorded, and no way to tell which file did
+# it. That is the failure this exists for, and it is most often a browser-driven feature
+# spec waiting on something that never arrives.
+#
+# Off by default because interrupting a running test is a real intervention: it raises into
+# whatever the test was doing and can leave state behind. Against a run that would otherwise
+# never end, a named failure and a finished suite is the better trade.
+#
+# 300 is a reasonable starting point for a suite with system tests in it; a per-run
+# `--timeout 60` is the quicker way to find out which file is hanging.
+timeout: 0
+
 parallel_workers: auto   # or an explicit integer
 
 # How a parallel worker gets a database of its own.

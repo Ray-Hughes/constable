@@ -189,7 +189,7 @@ module Constable
     SETTINGS_ONLY_IN_YAML = %i[
       storage modernize cold_cases warrants warrant_retries auto_relink parole_period
       coverage coverage_threshold coverage_html fail_on_warnings parallel_workers
-      worker_databases jail_flakes output tiers
+      worker_databases jail_flakes output tiers timeout
     ].freeze
 
     # Which engine a cold file runs under, declared rather than guessed. Without this the

@@ -248,6 +248,7 @@ tier base classes and the two things Constable deliberately does not have.
 ```console
 $ constable test              # only what your current git diff touches
 $ constable test --full       # everything. this is what CI runs
+$ constable test --timeout 60  # fail a file that hangs, instead of hanging the run
 $ constable test --only=native   # skip the legacy suite
 $ constable test --only=cold     # run only the legacy suite
 $ constable last              # everything about the most recent run
@@ -650,6 +651,7 @@ worse than one that resets.
 | `constable test --full` | The whole suite. CI always uses this |
 | `constable test PATH[:LINE]` | One file, or one investigation at that line |
 | `constable test --only=MODE` | Narrow by what runs it: `native`, `cold`, `rspec`, `minitest` |
+| `constable test --timeout N` | Fail a file that produces no result in N seconds |
 | `constable test --jail` | The full run, in jail mode |
 | `constable test --shard i/n` | One slice of the suite, for a CI matrix |
 | `constable jail [run\|parole\|release]` | The docket. `release --all` empties it |

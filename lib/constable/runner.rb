@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "securerandom"
+require "timeout"
 
 module Constable
   # Executes a selection and turns it into results.
@@ -21,6 +22,9 @@ module Constable
 
     # One unit of work. Native items are a single investigation; cold items are a whole
     # file, because their engine owns the granularity inside it.
+    # What an engine writes when our interrupt reaches it before we do.
+    TIMEOUT_MESSAGE = /Timeout::(?:Error|ExitException)|execution expired/
+
     class Item
       attr_reader :investigation, :path, :kind
 
@@ -40,7 +44,8 @@ module Constable
 
     def initialize(selection:, config: Constable.config, reporter: nil, storage: nil,
                    seed: nil, jail_mode: false, jail_run: false, warrants: nil, coverage: nil,
-                   workers: nil, verbose: false, shard: nil, shard_by_time: false, io: $stdout)
+                   workers: nil, verbose: false, shard: nil, shard_by_time: false,
+                   timeout: nil, io: $stdout)
       @selection  = selection
       @config     = config
       @storage    = storage || Constable.storage
@@ -53,6 +58,7 @@ module Constable
       @verbose    = verbose
       @shard      = shard
       @shard_by_time = shard_by_time
+      @timeout    = (timeout || config.timeout).to_i
       @io         = io
       @reporter   = reporter || Reporter.new(io: io, config: config)
       @results    = []
@@ -796,8 +802,77 @@ module Constable
 
     # --- running one item ------------------------------------------------------
 
+    # A test that never finishes takes the whole run with it, and the symptom is not a
+    # failure -- it is a terminal that sits there. Caseflow's suite hangs on a browser-driven
+    # feature spec after an hour of wall clock and ten minutes of CPU: nothing to read,
+    # nothing recorded, no way to know which file did it.
+    #
+    # So a hung item is a failed item. Timeout.timeout raises into the blocked thread, which
+    # interrupts a socket read, a select, or a condition-variable wait -- the three shapes
+    # this takes in practice. It is a blunt instrument and can leave state behind, which is
+    # why it is off unless asked for; against a run that never ends, a named failure and a
+    # finished suite is the better trade.
     def run_item(item)
+      return run_item!(item) unless @timeout.positive?
+
+      begin
+        explain_timeouts(Timeout.timeout(@timeout) { run_item!(item) }, item)
+      rescue Timeout::Error
+        [timed_out(item)]
+      end
+    end
+
+    # Usually the engine catches the interrupt before we do -- RSpec and Minitest both treat
+    # it as the example failing, which is better than our own result because it lands on the
+    # exact test rather than the file. What they write is "Timeout::ExitException: execution
+    # expired", which says nothing about the limit, why it exists, or what to do next.
+    def explain_timeouts(results, item)
+      results.each do |result|
+        next unless result.failure&.message&.match?(TIMEOUT_MESSAGE)
+
+        result.failure = Failure.new(
+          message: timeout_explanation(item),
+          context: result.failure.context,
+          backtrace: result.failure.backtrace
+        )
+      end
+    end
+
+    def timeout_explanation(item)
+      relative = item_file(item)
+      "Timed out. No result after #{@timeout}s, so --timeout stopped it -- without that " \
+        "limit this run would not have ended on its own.\n\n" \
+        "If the file is genuinely this slow, raise the limit. If it is hung, run it alone " \
+        "to see where it stops:\n  constable test #{relative}"
+    end
+
+    def run_item!(item)
       item.cold? ? run_cold(item) : [run_native(item)]
+    end
+
+    # Only a cold item carries a path; a native one knows its file through its investigation.
+    def item_file(item)
+      path = item.cold? ? item.path : item.investigation&.file
+      path.to_s.delete_prefix("#{Constable.root}/")
+    end
+
+    def timed_out(item)
+      relative = item_file(item)
+      Result.new(
+        identity: item.cold? ? Identity.for_cold_case(item.path, "timeout") : item.investigation.identity,
+        case_name: File.basename(item_file(item).to_s),
+        description: "timed out after #{@timeout}s",
+        file: relative,
+        line: item.cold? ? 0 : item.investigation.line.to_i,
+        kind: item.kind,
+        status: :errored,
+        failure: Failure.new(
+          message: "No result after #{@timeout}s. The run would not have ended on its own.\n\n" \
+                   "Raise the limit for a genuinely slow file, or run it alone to see where " \
+                   "it stops:\n  constable test #{relative}",
+          backtrace: []
+        )
+      ).tap { |result| result.seed = @seed }
     end
 
     def run_cold(item)

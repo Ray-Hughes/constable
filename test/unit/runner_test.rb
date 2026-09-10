@@ -19,6 +19,76 @@ module Constable
       [runner.call, runner]
     end
 
+    # --- timeout ------------------------------------------------------------------------
+
+    # A test that never finishes does not fail, it stops the suite -- and the symptom is a
+    # terminal that sits there with nothing recorded and no way to tell which file did it.
+    def test_a_hanging_test_is_failed_by_name_rather_than_hanging_the_run
+      write_file("test/cases/models/hangs_case.rb", <<~RUBY)
+        class HangsCase < Constable::Case
+          investigate "never returns" do
+            Queue.new.pop
+          end
+        end
+      RUBY
+
+      status, runner = run_suite(timeout: 2)
+
+      assert_equal 1, status
+      result = runner.results.find { |r| r.file.include?("hangs_case") }
+
+      refute_nil result, "a hung test must appear in the results"
+      refute_predicate result, :passed?
+      assert_match(/No result after 2s/, result.failure.message)
+    end
+
+    # The whole point is that the rest of the suite still runs and still reports.
+    #
+    # Its own class name on purpose: a Ruby constant outlives the test that defined it, so
+    # reusing HangsCase here leaves the second test running the first one's already-loaded
+    # class -- which does not hang, and quietly proves nothing.
+    def test_the_run_finishes_and_other_tests_still_report
+      write_file("test/cases/models/stalls_case.rb", <<~RUBY)
+        class StallsCase < Constable::Case
+          investigate "never returns" do
+            Queue.new.pop
+          end
+        end
+      RUBY
+      write_file("test/cases/models/fine_case.rb", <<~RUBY)
+        class FineCase < Constable::Case
+          investigate "passes" do
+            attest(1 + 1).to eq(2)
+          end
+        end
+      RUBY
+
+      _status, runner = run_suite(timeout: 2)
+
+      assert_predicate runner.results.find { |r| r.file.include?("fine_case") }, :passed?
+    end
+
+    # Off unless asked for: interrupting a running test can leave state behind, so it is a
+    # choice rather than something that happens to everyone by default.
+    def test_no_timeout_by_default
+      assert_equal 0, Constable.config.timeout
+    end
+
+    def test_a_slow_test_under_the_limit_is_left_alone
+      write_file("test/cases/models/slow_case.rb", <<~RUBY)
+        class SlowCase < Constable::Case
+          investigate "takes a moment" do
+            unsafe { sleep 0.2 }
+            attest(true).to be_truthy
+          end
+        end
+      RUBY
+
+      _status, runner = run_suite(timeout: 30)
+
+      assert_predicate runner.results.find { |r| r.file.include?("slow_case") }, :passed?
+    end
+
     # Regression: a case file that raised on load was collected into an array that was
     # never rendered, so a whole file of tests vanished from the run without a word.
     def test_a_case_file_that_cannot_be_loaded_is_reported_as_a_failure
