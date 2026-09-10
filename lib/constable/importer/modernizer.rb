@@ -49,6 +49,7 @@ module Constable
       Result = Struct.new(
         :path, :relative_path, :dialect, :class_name, :original, :source,
         :converted, :flags, :untouched, :error, :write_mode, :written_to, :written_as,
+        :removed_original,
         keyword_init: true
       ) do
         def ok?       = error.nil?
@@ -117,7 +118,8 @@ module Constable
 
       class << self
         # The CLI entry point. `paths` may be files, directories or globs.
-        def run(paths, config: Constable.config, root: nil, write: :none, report: true, base: nil)
+        def run(paths, config: Constable.config, root: nil, write: :none, report: true, base: nil,
+                delete_original: false)
           root = (root || config&.root || Constable.root).to_s
           write = (write || :none).to_sym
           unless WRITE_MODES.include?(write)
@@ -129,6 +131,7 @@ module Constable
             result = new(file, config: config, root: root, base: base).call
             result.write_mode = write
             persist(result, root, write)
+            remove_original(result, root) if delete_original
             result
           end
 
@@ -286,6 +289,28 @@ module Constable
           when :alongside
             write_to(result, alongside_path(result.path), root)
           end
+        end
+
+        # Finishes the move.
+        #
+        # A port that leaves the original behind has not moved anything: both files are
+        # now collected, so the suite runs those tests twice and the adoption number never
+        # moves -- it counts both the file in test/cases/ and the spec it was made from.
+        #
+        # Deliberately conditional on the write having actually happened. A refused
+        # overwrite, a parse failure, a flagged file that could not be ported -- none of
+        # those delete anything, because the one unrecoverable mistake available here is
+        # removing a test that was never copied.
+        def remove_original(result, root)
+          return unless result.written_to
+          return if result.error
+          return if File.expand_path(result.path) ==
+                    File.expand_path(File.join(root, result.written_to.to_s))
+
+          File.delete(result.path)
+          result.removed_original = result.relative_path
+        rescue StandardError => e
+          result.error = "ported, but could not remove #{result.relative_path}: #{e.message}"
         end
 
         # Never clobbers. A port is run repeatedly while a suite is converted a directory

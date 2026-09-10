@@ -280,6 +280,11 @@ constable modernize spec/controllers/users_controller_spec.rb
 
 **A flagged conversion is written verbatim as a cold case, not as a native one.** Flagged constructs are left exactly as they were, so a flagged conversion raises the moment it loads — a ported `it { ... }` dies with `NoMethodError: undefined method 'it'`. Handing someone a broken file and calling it progress is worse than not moving it, so `--port` picks whichever form runs and reports which it used.
 
+Two modifiers finish the job:
+
+- **`--base CLASS`** — the superclass for converted cases. Default `Constable::Case`, which is correct but bare: an app's tier classes (`UnitCase` and friends) are where FactoryBot, request helpers and auth are included. Porting a real directory without it produced 15 `NoMethodError: undefined method 'create'` out of 84 tests.
+- **`--delete`** — removes each original once its port has been written. Without it both files are collected, the suite runs those tests twice, and the adoption percentage never moves because it counts the ported file *and* its source. Only ever deletes a file that was actually written; a refused overwrite, a parse failure or an unportable file keeps its original, since the one unrecoverable mistake available here is deleting a test nothing copied.
+
 Nothing is ever overwritten. A port gets run repeatedly while a suite is converted a directory at a time, so the second pass refuses rather than discarding edits made after the first.
 
 Native cases and cold cases run side by side in the same `constable test` invocation — no big-bang cutover.

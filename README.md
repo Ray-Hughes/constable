@@ -321,6 +321,24 @@ a broken file and calling it progress is worse than not moving it, so `--port` p
 form that runs and tells you which it used. `--port --cold` forces the verbatim form even
 for files that would convert.
 
+Add `--delete` to finish the move:
+
+```console
+$ constable modernize spec/models/organizations --port --base UnitCase --delete
+    → test/cases/models/organizations/dvc_team_case.rb (verbatim, as a cold case), original removed
+```
+
+Without it both files are collected, so the suite runs those tests twice and the adoption
+number never moves — it counts the ported file *and* the spec it came from. `--delete` only
+removes an original that was actually written: a refused overwrite, a parse failure or a
+file that could not be ported keeps its source, because the one unrecoverable mistake here
+is deleting a test nothing copied.
+
+`--base` matters more than it looks. Without it a converted case inherits `Constable::Case`
+and none of your tier classes — which is where FactoryBot, request helpers and auth live.
+Porting a real directory without it produced fifteen `NoMethodError: undefined method
+'create'` out of eighty-four tests.
+
 Nothing is ever overwritten: run a port twice and the second refuses, because a port gets
 run repeatedly while a suite is converted a directory at a time and any edit made after the
 first pass has to survive.
@@ -430,7 +448,7 @@ worse than one that resets.
 | `constable prepare [--workers N]` | Build the per-worker test databases `worker_databases: reuse` needs |
 | `constable prune [--dry-run]` | Forget docket rows and warrants for tests that no longer exist |
 | `constable import --from=rspec` | Adopt an existing suite as cold cases |
-| `constable modernize PATH [--port\|--cold]` | Opt-in AST rewrite into the native DSL. `--port` writes into `test/cases/`; `--cold` moves it verbatim |
+| `constable modernize PATH [--port --base C --delete]` | Opt-in AST rewrite into the native DSL. `--port` writes into `test/cases/`, `--base` sets the superclass, `--delete` removes the original, `--cold` moves it verbatim |
 
 Flags: `--full --unsafe --jail --warrants --coverage --seed N --workers N --verbose --tier T\n--expanded --concise --output MODE --no-color`.
 

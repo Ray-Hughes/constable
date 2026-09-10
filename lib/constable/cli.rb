@@ -286,6 +286,8 @@ module Constable
     option :"in-place", type: :boolean, default: false, desc: "Overwrite the file"
     option :cold, type: :boolean, default: false,
                   desc: "Move it verbatim as a cold case instead of converting"
+    option :delete, type: :boolean, default: false,
+                    desc: "With --port: remove the original after it has been written"
     option :base, type: :string,
                   desc: "Superclass for converted cases (e.g. UnitCase). Default: Constable::Case"
     option :port, type: :boolean, default: false,
@@ -308,7 +310,15 @@ module Constable
              else :none
              end
 
-      run = Importer.modernize(paths, config: load_config, write: mode, base: options[:base])
+      # Only a port moves a file, so only a port can finish the move. Deleting a spec
+      # after an --alongside or a dry run would remove a test nothing had copied.
+      if options[:delete] && !%i[port port_cold].include?(mode)
+        CLI.complain("--delete only makes sense with --port; nothing else moves the file.")
+        exit(EXIT_USAGE)
+      end
+
+      run = Importer.modernize(paths, config: load_config, write: mode, base: options[:base],
+                                      delete_original: options[:delete])
 
       run.results.each do |result|
         if result.error
@@ -322,7 +332,8 @@ module Constable
 
         if result.written_to
           how = result.written_as == :cold ? " (verbatim, as a cold case)" : ""
-          say "    → #{result.written_to}#{how}"
+          moved = result.removed_original ? ", original removed" : ""
+          say "    → #{result.written_to}#{how}#{moved}"
         end
 
         result.flags.each { |flag| say "    flagged #{flag[:location]}  #{flag[:reason]}" }

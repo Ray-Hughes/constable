@@ -90,5 +90,62 @@ module Constable
       assert_match(/Constable::ColdCase::RSpec/,
                    File.read(File.join(tmp_root, result.written_to)))
     end
+
+    # --- --delete: finish the move ------------------------------------------------------
+    #
+    # A port that leaves the original behind has not moved anything. Both files are then
+    # collected, so the suite runs those tests twice and the adoption number never moves:
+    # it counts the file in test/cases/ and the spec it was made from.
+
+    def port_and_delete(path)
+      Importer.modernize([path], config: Constable.config, root: tmp_root,
+                                 write: :port, report: false, delete_original: true).results.first
+    end
+
+    def test_delete_removes_the_original_once_it_has_been_written
+      write_file("spec/models/widget_spec.rb", <<~SPEC)
+        describe "Widget" do
+          it("adds up") { expect(1 + 1).to eq(2) }
+        end
+      SPEC
+
+      result = port_and_delete("spec/models/widget_spec.rb")
+
+      assert_path_exists File.join(tmp_root, "test/cases/models/widget_case.rb")
+      refute_path_exists File.join(tmp_root, "spec/models/widget_spec.rb")
+      assert_equal "spec/models/widget_spec.rb", result.removed_original
+    end
+
+    # The one unrecoverable mistake available here is deleting a test that was never
+    # copied, so every path that did not write keeps the original.
+    def test_a_refused_overwrite_never_deletes_the_original
+      write_file("spec/models/widget_spec.rb", <<~SPEC)
+        describe "Widget" do
+          it("adds up") { expect(1 + 1).to eq(2) }
+        end
+      SPEC
+      port("spec/models/widget_spec.rb")
+
+      # Recreate the source the first port consumed, then port again into the existing target.
+      write_file("spec/models/widget_spec.rb", <<~SPEC)
+        describe "Widget" do
+          it("adds up") { expect(1 + 1).to eq(2) }
+        end
+      SPEC
+      result = port_and_delete("spec/models/widget_spec.rb")
+
+      assert_match(/refusing to overwrite/, result.error.to_s)
+      assert_path_exists File.join(tmp_root, "spec/models/widget_spec.rb")
+      assert_nil result.removed_original
+    end
+
+    def test_a_file_that_cannot_be_parsed_is_never_deleted
+      write_file("spec/models/broken_spec.rb", "describe 'x' do\n  it 'y' do\n")
+
+      result = port_and_delete("spec/models/broken_spec.rb")
+
+      assert_path_exists File.join(tmp_root, "spec/models/broken_spec.rb")
+      assert_nil result.removed_original
+    end
   end
 end
