@@ -126,6 +126,42 @@ module Constable
       assert_in_delta 4.0, storage.total_test_seconds(run_id), 0.001
     end
 
+    # --- estimating a port -------------------------------------------------------------
+    #
+    # A test's recorded duration times its body. A run also boots Rails, loads files and
+    # cleans between examples -- wall-clock time nobody's duration contains. Estimating
+    # from test bodies alone understated a real directory by 4.6x.
+    #
+    # Modelled per test rather than as a multiplier, because a multiplier is wrong at both
+    # ends: a single-file run is nearly all boot, a full run is nearly all tests. Taking a
+    # ratio across both produced 17.8x, which then over-estimated the same directory by
+    # four times.
+
+    def test_overhead_is_measured_per_test_from_the_largest_run
+      # 30 tests, 3s of bodies, 33s on the clock: 1s of overhead each.
+      results = Array.new(30) { |i| result(identity: "t#{i}", duration: 0.1) }
+      finished_run(duration: 33.0, results: results)
+
+      overhead = storage.overhead_per_test(minimum_tests: 10)
+
+      assert_in_delta 1.0, overhead[:seconds], 0.01
+      assert_equal 30, overhead[:sample]
+    end
+
+    # A single-file run is almost entirely Rails boot, so its per-test overhead is wildly
+    # unrepresentative. The largest run is the one where boot is amortised.
+    def test_a_tiny_run_is_not_used_to_measure_overhead
+      finished_run(duration: 12.0, results: [result(identity: "solo", duration: 0.1)])
+
+      assert_nil storage.overhead_per_test(minimum_tests: 10)
+    end
+
+    def test_nothing_is_estimated_when_no_run_recorded_a_duration
+      finished_run(duration: nil, results: Array.new(30) { |i| result(identity: "t#{i}") })
+
+      assert_nil storage.overhead_per_test(minimum_tests: 10)
+    end
+
     # --- insights ----------------------------------------------------------------------
 
     def insights_for(run_id)

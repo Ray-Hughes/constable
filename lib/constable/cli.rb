@@ -286,6 +286,9 @@ module Constable
     option :"in-place", type: :boolean, default: false, desc: "Overwrite the file"
     option :cold, type: :boolean, default: false,
                   desc: "Move it verbatim as a cold case instead of converting"
+    option :limit, type: :numeric, desc: "With --plan: how many files to list (default 25)"
+    option :plan, type: :boolean, default: false,
+                  desc: "Show what a --port would do -- destinations, forms, blockers, runtime -- and write nothing"
     option :delete, type: :boolean, default: false,
                     desc: "With --port: remove the original after it has been written"
     option :base, type: :string,
@@ -317,8 +320,17 @@ module Constable
         exit(EXIT_USAGE)
       end
 
+      # A plan never writes, whatever else was asked for. Someone who types `--plan --port
+      # --delete` wants to see the deletions, not perform them.
+      mode = :none if options[:plan]
+
       run = Importer.modernize(paths, config: load_config, write: mode, base: options[:base],
-                                      delete_original: options[:delete])
+                                      delete_original: options[:delete] && !options[:plan])
+
+      if options[:plan]
+        print_port_plan(run)
+        exit(run.ok? ? EXIT_CLEAN : EXIT_FAILED)
+      end
 
       run.results.each do |result|
         if result.error
@@ -717,6 +729,96 @@ module Constable
 
       def short_date(value)
         value.to_s[0, 10]
+      end
+
+      # --- port plan ---------------------------------------------------------------
+
+      def print_port_plan(run)
+        plan = PortPlan.new(run.results, storage: Constable.storage, root: Constable.root,
+                                         delete: options[:delete], base: options[:base])
+
+        print_plan_headline(plan)
+        print_plan_files(plan)
+        print_plan_blockers(plan)
+        print_plan_runtime(plan)
+        print_plan_footer(plan)
+      end
+
+      def print_plan_headline(plan)
+        say_table("PORT PLAN", [plan]) do |p|
+          ["#{p.entries.size} files", "#{p.native} convert", "#{p.cold} move verbatim",
+           "base #{p.base || "Constable::Case"}"]
+        end
+      end
+
+      def print_plan_files(plan)
+        # A port is usually a whole directory, so the default shows enough of it to check
+        # the destinations look right without printing four hundred lines.
+        limit = (options[:limit] || 25).to_i.clamp(1, 1000)
+        say_table("WHAT MOVES WHERE", plan.entries.first(limit)) do |e|
+          form = e.form == :cold ? "verbatim" : "converted"
+          [format("%-9s", form), e.source, "→", e.destination]
+        end
+        return unless plan.entries.size > limit
+
+        say "  ... and #{plan.entries.size - limit} more (--limit N to see them)"
+        say ""
+      end
+
+      def print_plan_blockers(plan)
+        return if plan.blockers.empty?
+
+        total = plan.blockers.sum { |_, n| n }
+        say_table("WHY THE VERBATIM ONES CANNOT CONVERT", plan.blockers.first(6)) do |kind, n|
+          [format("%5d", n), format("%3d%%", (n * 100.0 / total).round), kind.to_s]
+        end
+      end
+
+      # The estimate is of the tests, not of the port, and it only exists for files this
+      # blotter has actually seen run. Saying "unknown" for the rest is the honest answer;
+      # extrapolating from the measured ones would invent a number and present it in the
+      # same typeface as a measured one.
+      def print_plan_runtime(plan)
+        if plan.measured.empty?
+          say "ESTIMATED RUNTIME"
+          say "─" * 17
+          say "  no recorded durations for these files yet -- run them once and ask again"
+          say ""
+          return
+        end
+
+        say_table("ESTIMATED RUNTIME", [plan]) do |p|
+          if p.projected_seconds
+            [human_seconds(p.projected_seconds), "across #{p.total_tests} tests",
+             "measured from #{p.measured.size} of #{p.entries.size} files"]
+          else
+            ["#{human_seconds(p.total_seconds)} of test time", "across #{p.total_tests} tests",
+             "measured from #{p.measured.size} of #{p.entries.size} files"]
+          end
+        end
+
+        if plan.projected_seconds
+          say "  #{human_seconds(plan.total_seconds)} of that is the test bodies. The rest is boot, " \
+              "file loading, suite"
+          say "  hooks and cleaning between examples -- #{format("%.2fs", plan.overhead[:seconds])} " \
+              "per test, measured from your largest"
+          say "  recorded run (#{plan.overhead[:sample]} tests)."
+        else
+          say "  That is the sum of the test bodies only. Loading files, suite hooks and cleaning"
+          say "  between examples are not in it, and on a real suite they were the larger half --"
+          say "  run the suite once so the overhead can be measured rather than guessed."
+        end
+        say ""
+        return if plan.unmeasured.empty?
+
+        say "  #{plan.unmeasured.size} file(s) have never run here, so they are not in that total"
+        say ""
+      end
+
+      def print_plan_footer(plan)
+        say "Nothing was written."
+        removals = plan.delete ? " and remove #{plan.entries.size} original(s)" : ""
+        say "Re-run without --plan to write #{plan.entries.size} file(s)#{removals}."
       end
 
       # --- last / metrics --------------------------------------------------------

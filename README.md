@@ -321,6 +321,35 @@ a broken file and calling it progress is worse than not moving it, so `--port` p
 form that runs and tells you which it used. `--port --cold` forces the verbatim form even
 for files that would convert.
 
+`--plan` shows what a port would do before it does any of it:
+
+```console
+$ constable modernize spec/models/tasks --plan --port --base UnitCase --delete
+PORT PLAN
+─────────
+  65 files  13 convert  52 move verbatim  base UnitCase
+
+WHY THE VERBATIM ONES CANNOT CONVERT
+────────────────────────────────────
+    266   56%  eager_let
+    129   27%  rspec_mocks
+
+ESTIMATED RUNTIME
+─────────────────
+  12m 43s  across 749 tests  measured from 65 of 65 files
+
+  2m 25s of that is the test bodies. The rest is boot, file loading, suite
+  hooks and cleaning between examples -- 0.82s per test, measured from your largest
+  recorded run (88 tests).
+```
+
+The runtime figure comes out of the blotter, not out of the air: Constable already records
+an average duration per test to balance workers, and per-test overhead is measured from
+your own largest recorded run. Summing test bodies alone understated a real directory by
+4.6x, and a single multiplier over-estimated it by 4x — a run of one file is nearly all
+Rails boot, a run of the whole suite is nearly all tests. A suite that has never run here
+gets no estimate rather than an invented one.
+
 Add `--delete` to finish the move:
 
 ```console

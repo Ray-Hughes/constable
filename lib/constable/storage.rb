@@ -608,6 +608,67 @@ module Constable
         row[:seconds].to_f
       end
 
+      # Average duration per test, grouped by the file that test most recently lived in.
+      #
+      # `durations` is keyed by identity and knows nothing about paths; `flake_history`
+      # knows the path but holds one row per run. Joining the two through each identity's
+      # newest history row gives "what these files cost", which is what a plan needs to
+      # estimate a port -- and it survives a file being renamed or a test moving, because
+      # identity is the body, not the location.
+      def average_seconds_by_file
+        found = rows(query(<<~SQL, []))
+          SELECT h.file         AS file,
+                 COUNT(*)       AS tests,
+                 SUM(d.average) AS seconds
+          FROM durations d
+          JOIN (SELECT identity, MAX(id) AS newest FROM flake_history GROUP BY identity) latest
+            ON latest.identity = d.identity
+          JOIN flake_history h ON h.id = latest.newest
+          WHERE h.file IS NOT NULL
+          GROUP BY h.file
+        SQL
+
+        found.to_h do |row|
+          [row[:file].to_s, { tests: row[:tests].to_i, seconds: row[:seconds].to_f }]
+        end
+      end
+
+      # What each test costs beyond its own body.
+      #
+      # A test's recorded duration times the body. A run also boots Rails, loads files,
+      # runs suite hooks and cleans the database between examples -- none of it in any
+      # test's duration, all of it wall-clock time someone waits through. On a real suite
+      # the sum of test bodies was 2m 25s and the run took 11m.
+      #
+      # Modelled per test rather than as a multiplier, because a multiplier is wrong at
+      # both ends: a single-file run is almost entirely Rails boot (ratios over 100x), and
+      # a full run is almost entirely tests. Taking the ratio across runs of wildly
+      # different sizes produced a 17.8x that over-estimated a known directory by four
+      # times.
+      #
+      # The largest recorded run is used, because that is where boot is amortised across
+      # enough tests to stop dominating. Returns nil -- not a guess -- when no run has
+      # recorded both a wall-clock duration and per-test durations.
+      def overhead_per_test(minimum_tests: 20)
+        row = rows(query(<<~SQL, [minimum_tests.to_i])).first
+          SELECT r.duration AS wall, SUM(h.duration) AS tests, COUNT(*) AS count
+          FROM runs r
+          JOIN flake_history h ON h.run_id = r.id
+          WHERE r.duration IS NOT NULL AND h.duration IS NOT NULL
+          GROUP BY r.id, r.duration
+          HAVING COUNT(*) >= ?
+          ORDER BY COUNT(*) DESC
+          LIMIT 1
+        SQL
+        return nil if row.nil?
+
+        count = row[:count].to_i
+        spare = row[:wall].to_f - row[:tests].to_f
+        return nil if count.zero? || spare <= 0
+
+        { seconds: spare / count, sample: count }
+      end
+
       # Every result recorded for one run, newest run first being the usual caller.
       def results_for_run(run_id, limit: 5000)
         rows(query(<<~SQL, [run_id.to_i, limit.to_i]))
