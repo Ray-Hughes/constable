@@ -312,14 +312,23 @@ module Constable
 
     # The configure block is the reference for Ruby-side settings the way config.yml is
     # for the file, so every setting has to appear in it. Missing one means somebody
-    # cannot discover it without reading the gem.
-    def test_the_configure_block_lists_every_setting
+    # The configure block deliberately does NOT list every setting any more.
+    #
+    # It used to, and config.yml documents them all as well -- two homes for one setting,
+    # eighty-five lines of it, in the first file a new adopter opens. The settings live in
+    # config.yml; this file shows what only Ruby can express and says where the rest are.
+    def test_the_configure_block_shows_what_only_ruby_can_do_and_points_at_the_rest
       install
       helper = generated("test/case_helper.rb")
 
-      Configuration::SETTINGS.each do |setting|
-        assert_match(/c\.#{setting}\s*=/, helper, "case_helper.rb should show c.#{setting}")
-      end
+      assert_match(/before_suite/, helper)
+      assert_match(/Matchers\.define/, helper)
+      assert_match(%r{\.constable/config\.yml}, helper, "it should say where the settings live")
+
+      # The catalogue is gone: these are documented in config.yml, not here.
+      refute_match(/c\.warrants\s*=/, helper)
+      refute_match(/c\.coverage_threshold\s*=/, helper)
+      refute_match(/c\.jail_flakes\s*=/, helper)
     end
 
     # ...and must not show the one that raises.

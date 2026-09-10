@@ -1,36 +1,23 @@
 # frozen_string_literal: true
 
-# =============================================================================
-#  test/case_helper.rb
+# Loaded once by `constable test`, before any case file -- the equivalent of RSpec's
+# spec_helper.rb + rails_helper.rb. Individual cases never require it themselves.
 #
-#  Constable's equivalent of RSpec's spec_helper.rb + rails_helper.rb, or of
-#  Minitest's test_helper.rb. `constable test` loads this file once, before any
-#  case file -- individual cases never require it themselves.
-#
-#  Three things live here:
-#
-#    1. Booting the Rails test environment.
-#    2. The per-tier base classes your cases inherit from.
-#    3. Constable.configure -- configuration that is *code*.
-#
-#  Configuration that is merely a *setting* (a number, a flag, a glob) lives in
-#  .constable/config.yml instead, so it can be overridden by a CLI flag for one
-#  run without editing Ruby.
-# =============================================================================
+# Settings that are *values* (a number, a flag, a glob) live in .constable/config.yml,
+# where a CLI flag can override them for one run without editing Ruby. This file is for
+# the things that have to be code: tier base classes, hooks, matchers.
 
 ENV["RAILS_ENV"] ||= "test"
 
 require_relative "../config/environment"
 require "constable"
 
-# A test suite that can reach production data is a suite that will eventually
-# destroy some. This costs one string comparison per run.
+# A suite that can reach production data is one that will eventually destroy some.
 abort("The Rails environment is running in production mode!") if Rails.env.production?
 
-# Loads db/schema.rb into the test database when it has drifted behind your
-# migrations -- the same thing `rails test` does before it runs anything. Without
-# it the first case to touch the database fails with "no such table", which tells
-# you nothing about the test you actually wrote.
+# Loads db/schema.rb when it has drifted behind your migrations -- the same thing
+# `rails test` does. Without it the first case to touch the database fails with
+# "no such table", which tells you nothing about the test you wrote.
 if defined?(ActiveRecord::Migration)
   begin
     ActiveRecord::Migration.maintain_test_schema!
@@ -39,296 +26,121 @@ if defined?(ActiveRecord::Migration)
   end
 end
 
-# -----------------------------------------------------------------------------
-#  Tiers are base classes, not magic.
-#
-#  A tier says how much of the stack a case needs: :unit skips the database and
-#  the request stack entirely and is the fastest thing Constable can run,
-#  :integration gets a transactional database plus request helpers, :system
-#  additionally drives a browser.
-#
-#  Rather than infer that from a file path, declare it once on a base class and
-#  let ordinary Ruby inheritance carry it down:
-#
-#      class UsersController::CreatesUserCase < IntegrationCase
-#
-#  Path-based inference (the `tiers:` section of .constable/config.yml) still
-#  works as a fallback for cases that don't inherit from one of these, but
-#  inheritance is the recommended pattern -- there is nothing to infer, nothing
-#  to surprise you, and no rule to learn that Ruby didn't already teach you.
-#
-#  These are plain classes. Anything a whole tier needs belongs here: an
-#  ActiveJob test adapter, a factory module, `include Authenticatable` for every
-#  integration case.
-#
-#  The two Constable::RailsSupport modules below are the bridge to Rails' own
-#  testing code. Constable does not reimplement `post users_path` or
-#  `click_on "Save"` -- Rails ships both as ordinary modules, and every
-#  reimplementation of them would be a slightly wrong one.
-# -----------------------------------------------------------------------------
-
-# -----------------------------------------------------------------------------
-#  Support files -- shared modules and custom matchers.
-#
-#  Same role RSpec's spec/support/**/*.rb plays. Shared behavior *across* files
-#  is a plain module you `include`; there is deliberately no shared-examples DSL
-#  here, because Ruby's own composition tools already do that job with fewer
-#  rules to learn and more flexibility once the reuse stops being simple.
-#
-#  Sorted on purpose: Dir[] returns filesystem order, which differs between your
-#  laptop and CI. A suite that loads its own support files in an unpredictable
-#  order has already lost the argument about determinism.
-#
-#  Loaded BEFORE the tier classes below, so `include Authenticatable` on a tier
-#  is a thing you can actually write. Loading them afterwards would make the
-#  advice in test/support/authenticatable.rb raise NameError.
-# -----------------------------------------------------------------------------
-
+# Shared modules and custom matchers. Sorted, because Dir[] returns filesystem order and
+# that differs between your laptop and CI. Loaded before the tier classes below so they
+# can `include` from here.
 Dir[Rails.root.join("test/support/**/*.rb")].sort.each { |f| require f }
 
-# Factories, when the app has them. `create(:user)` is what a converted spec will be
-# full of, and a NoMethodError on the first native run is a bad way to learn that the
-# include was missing. Guarded, so a suite with no factory gem is unaffected.
+# --- Tiers -------------------------------------------------------------------------
+#
+# A tier says how much of the stack a case needs. Declare it once on a base class and
+# let ordinary Ruby inheritance carry it down:
+#
+#     class UsersController::CreatesUserCase < IntegrationCase
+#
+# Anything a whole tier needs belongs on these classes -- factories, auth helpers, a job
+# adapter. `constable modernize --base IntegrationCase` ports files into them.
+
+# Guarded so a suite with no factory gem still boots. Without this include, a converted
+# case dies on `NoMethodError: undefined method 'create'`.
 module CaseFactories
   include FactoryBot::Syntax::Methods if defined?(FactoryBot::Syntax::Methods)
 end
 
-# Per-test cleanup your RSpec suite does in hooks.
+# Per-test cleanup that your RSpec suite does in an `after(:each)` hook.
 #
-# Native cases are not RSpec, so they do not run RSpec hooks. Anything your
-# `spec/support` does in an `after(:each)` -- resetting a memoized singleton,
-# clearing a fake, emptying a thread-local -- simply does not happen for them.
-#
-# That costs nothing while the two never meet, and becomes a real bug the moment a
-# native case and a cold case share a process, which is exactly what a half-ported
-# directory is. Observed on a real suite: a class-level `@system_user ||=` memo was
-# populated inside a native case's transaction, the transaction rolled back,
-# ActiveRecord reset that in-memory object to an unsaved record -- and the memo kept
-# pointing at it. The next cold case read `.id`, got nil, and failed on a not-null
-# constraint in a table it was not testing.
-#
-# So mirror that cleanup here, and include this in the tier classes below:
-#
-# module CaseCleanup
-#   def self.included(base)
-#     base.teardown do
-#       SomeSingleton.reset!
-#       Fakes::Service.clean!
-#     end
-#   end
-# end
-#
-# Reach for the underlying reset rather than your suite's helper where you can: a
-# helper defined in `spec/support` is not loaded until something pulls in
-# `rails_helper`, which is usually after the native cases that needed it.
+# Native cases are not RSpec and do not run RSpec hooks, so anything spec/support does
+# per test does not happen for them. That costs nothing until a part-ported directory
+# puts a native case and a cold case in the same process -- then a memoized singleton
+# built inside one case's transaction survives the rollback as an unsaved record, and the
+# next cold case reads it and fails somewhere unrelated. Mirror that cleanup here.
+module CaseCleanup
+  def self.included(base)
+    base.teardown do
+      # SomeSingleton.reset!
+      # Fakes::Service.clean!
+    end
+  end
+end
 
-# No database, no request stack, no browser -- just Ruby. The fastest thing
-# Constable can run, and where most of a suite should live.
+# No database, no request stack, no browser -- just Ruby. The fastest thing Constable
+# runs, and where most of a suite should live.
 class UnitCase < Constable::Case
   include CaseFactories
+  include CaseCleanup
 
   tier :unit
 end
 
-# get/post/patch/delete, `response`, `follow_redirect!`, cookies, and every URL
-# helper your routes define (`users_path`, `article_url(article)`). Each
-# investigation runs inside a transaction that is rolled back afterwards.
+# get/post/patch/delete, `response`, `follow_redirect!`, cookies, and every URL helper
+# your routes define. Each investigation runs inside a transaction, rolled back after.
 class IntegrationCase < Constable::Case
   include Constable::RailsSupport::Integration
   include CaseFactories
-
-  # Every integration case gets the app's sign-in helpers. Uncomment once
-  # test/support/authenticatable.rb says something true about your app:
-  #
-  # include Authenticatable
+  include CaseCleanup
 
   tier :integration
 end
 
-# The browser instead of the request stack: Capybara's `visit`/`click_on`/
-# `fill_in`/`page`, its assertions, your URL helpers pointed at the test server,
-# and Rails' own `driven_by`. There is no `response` here -- a system case looks
-# at the rendered page, which is the whole reason to pay for a browser.
+# The browser instead of the request stack: Capybara's visit/click_on/fill_in/page.
 class SystemCase < Constable::Case
   include CaseFactories
+  include CaseCleanup
 
-  # Capybara is not a Constable dependency. System cases are opt-in, and a suite
-  # with no browser tests shouldn't be made to install a browser driver to boot.
+  # Capybara is not a Constable dependency -- a suite with no browser tests should not
+  # need a driver installed to boot.
   include Constable::RailsSupport::System if defined?(Capybara)
 
   tier :system
 
-  # The default is Selenium driving Chrome, exactly as Rails' own system tests
-  # default. Change it here and every system case follows:
-  #
   # driven_by :selenium, using: :headless_chrome, screen_size: [1400, 1400]
 end
 
-# -----------------------------------------------------------------------------
-#  Code-level configuration.
-# -----------------------------------------------------------------------------
-
-#  Code only, by default: matchers and suite hooks can be written nowhere else.
+# --- Configuration that has to be code ---------------------------------------------
 #
-#  Settings can be written here too, and this file wins over
-#  .constable/config.yml -- a CLI flag wins over both, for one run. Use the file
-#  for values that differ per project or per branch, where being greppable
-#  without running anything is worth something. Use Ruby when the value has to be
-#  computed, which YAML cannot do:
+# Every *setting* -- workers, output, coverage, warrants, cold_cases -- is documented and
+# set in .constable/config.yml. It is not repeated here, because two homes for one setting
+# means learning which one wins.
 #
-#      c.parallel_workers = ENV.fetch("CI_WORKERS", 4).to_i
-#      c.coverage         = ENV["CI"] == "true"
+# `storage` and `modernize` are the two that can only live there: both are read before
+# this file runs -- the blotter so `constable jail` works without booting the app, and
+# modernize because it never boots one at all -- so setting either here raises rather than
+# being quietly ignored. CONSTABLE_STORAGE_URL overrides the blotter location per run.
 #
-#  Every setting, at its default -- uncomment what you want and delete the rest.
-#  `.constable/config.yml` explains each one at length and is optional; between
-#  the two, this file can be the only place you configure Constable.
-#
-#      c.cold_cases         = []      # RSpec/Minitest globs to run as cold cases
-#      c.parallel_workers   = "auto"  # or an integer. Each worker gets its own database
-#      c.worker_databases   = :schema # or :reuse (keep them between runs) / :off
-#      c.output             = :concise    # or :expanded -- a line per test, with timings
-#      c.fail_on_warnings   = false   # CI: fail when the warning count is not trending down
-#      c.jail_flakes        = false   # auto-jail a pass->fail flip (jailed = skipped)
-#      c.warrants           = false   # rerun a failure in isolation before believing it
-#      c.warrant_retries    = 5
-#      c.parole_period      = 10      # clean runs before a paroled test releases itself
-#      c.auto_relink        = false   # auto-confirm rename detection
-#      c.coverage           = false
-#      c.coverage_threshold = 90      # diff-based: only lines changed in this diff
-#      c.coverage_html      = false
-#      c.tiers              = { "unit" => "test/cases/models/**/*" }
-#
-#      # `modernize` and `storage` are deliberately absent: both are read before this file
-#      # runs, so setting them here cannot work. They live in .constable/config.yml, and
-#      # setting them here raises rather than being quietly ignored.
-#
-#  `storage` is the one setting that cannot go here: the blotter is opened before
-#  this file loads, so `constable jail` and `constable status` can read the docket
-#  without booting the app. Setting it here raises rather than being ignored. Use
-#  .constable/config.yml, or CONSTABLE_STORAGE_URL / _PATH / _ADAPTER.
-#
-#  Not config/initializers/: initializers run on every boot including production,
-#  where a test-only gem is not in the bundle. Same reason RSpec, SimpleCov and
-#  WebMock all configure from the test helper rather than an initializer.
-# -----------------------------------------------------------------------------
+# What belongs here is what a YAML file cannot express.
 
 Constable.configure do |c|
-  # --- Settings. Uncomment what you want; each is shown at its default. --------
-
-  # Workers default to `auto` -- processor count minus a little headroom, so the
-  # machine stays usable while the suite runs. Pin it when a CI container lies
-  # about its core count, or to rule parallelism out while debugging.
+  # A value computed at boot:
   #
-  # c.parallel_workers = 4
+  # c.parallel_workers = ENV.fetch("CI_WORKERS", 4).to_i
 
-  # How a parallel worker gets a database of its own. Sharing one is not a
-  # speed/safety trade, it is a correctness bug: on SQLite the run dissolves into
-  # "database is locked", and on a client/server database tests quietly see each
-  # other's rows, which is worse because it looks like it worked.
-  #
-  #   :schema   rebuild <database>_<index> from schema.rb every run. What Rails
-  #             does for `rails test`, and correct by construction -- the
-  #             databases cannot drift, because they are thrown away each time.
-  #             The default, and the wrong choice only when it is slow or
-  #             impossible.
-  #   :reuse    keep them between runs. Faster (a big schema is not replayed per
-  #             worker), and the ONLY option that works when your schema cannot
-  #             rebuild the database by itself -- true of any app with Postgres
-  #             custom types, since CREATE TYPE has no schema.rb representation.
-  #             Run `constable prepare` once to build them, and again after a
-  #             migration; keeping them current is your job.
-  #   :off      do not shard, so do not fork. An explicit serial run: no attempt,
-  #             no warning. Correct, and as slow as one core.
-  #
-  # c.worker_databases = :reuse
-
-  # The live stream while the suite runs. The summary is identical either way.
-  #   :concise   one glyph per test, grouped per case (default)
-  #   :expanded  a line per test: glyph, description, duration -- so you can see
-  #              which test is hanging while it hangs, not afterwards
-  #
-  # c.output = :expanded
-
-  # Put a test on the docket by itself when it passed last run and failed this
-  # one. Off by default, and the reason is what jailing does: a jailed test is
-  # SKIPPED on every later run. On automatically, a suite with order-dependent
-  # tests quietly stops running things nobody chose to stop running.
-  #
-  # c.jail_flakes = true
-
-  # Rerun a failure in isolation before believing it. A test that then passes is
-  # flaky rather than broken: it gets a warrant instead of failing the build, and
-  # stays loudly visible until someone deals with it.
-  #
-  # c.warrants = true
-
-  # CI: fail the build when the warning count is not trending down. Warnings are
-  # cold-case files and `unsafe` blocks -- allowed, but visible.
-  #
-  # c.fail_on_warnings = true
-
-  # Diff-based coverage: only lines changed in the current diff are held to it.
-  #
-  # c.coverage           = true
-  # c.coverage_threshold = 90
-
-  # Your existing RSpec/Minitest files, run verbatim as cold cases through their
-  # own engine. `constable import --from=rspec` writes this for you.
-  #
-  # c.cold_cases = ["spec/**/*_spec.rb"]
-
-  # --- Code. This can only be written here. -----------------------------------
-
-  # One-time global setup, run once per process before the whole suite. For
-  # configuring the world -- drivers, adapters, formats -- and deliberately not
-  # for creating records that tests then share. See the note at the bottom of
-  # this file about why that distinction is the whole ballgame.
+  # Run once per process, before the whole suite. For configuring the world -- drivers,
+  # adapters, formats -- and deliberately not for creating records that tests then share.
   #
   # c.before_suite do
-  #   Capybara.default_driver    = :rack_test
-  #   Capybara.javascript_driver = :headless_chrome
+  #   Capybara.default_driver = :rack_test
   # end
   #
-  # c.after_suite do
-  #   SomeExternalHarness.shut_down
-  # end
+  # c.after_suite { SomeExternalHarness.shut_down }
 
-  # Custom matchers can be defined here too, though test/support/matchers.rb is
-  # the better home once there is more than one of them:
+  # Custom matchers, though test/support/matchers.rb is the better home once there is
+  # more than one:
   #
   # Constable::Matchers.define(:be_created) { |response| response.status == 201 }
 end
 
-# =============================================================================
-#  Two things are missing from this file on purpose.
+# Two things are absent on purpose.
 #
-#  1. There is no before(:all), no setup_once, no one-time fixture hook.
+# There is no before(:all) here, and no one-time fixture hook.
 #
-#     A before(:all) block builds state once and hands the same objects to many
-#     tests. That is faster right up until one test mutates one of them -- and
-#     then you have a bug that appears only in a particular order, on a
-#     particular machine, in CI, roughly once a week. The ordering that produced
-#     it isn't written down anywhere, so it isn't reproducible, so it doesn't get
-#     fixed: it gets a retry, and the retry gets copied to the next test.
+# A before(:all) builds state once and hands the same objects to many tests. That is
+# faster right up until one test mutates one of them -- and then you have a failure that
+# depends on order, appears on one machine, and is not reproducible from anything written
+# down. `briefing` runs before every investigation instead, against a fresh instance in a
+# transaction that is rolled back. When that is genuinely too slow the fix is a cheaper
+# fixture -- build_stubbed over create -- not state shared across tests.
 #
-#     Constable doesn't have the hook, so it can't have the bug. `briefing` runs
-#     before *every* investigation, against a fresh instance, inside a
-#     transaction that is rolled back afterwards. When that is genuinely too
-#     slow, the fix is a cheaper fixture -- build_stubbed instead of create, one
-#     record instead of five -- not state shared across tests.
-#
-#     `c.before_suite` above is not a loophole. It runs once per process to
-#     configure the world, not to populate it.
-#
-#  2. `witness` memoizes per test, and never per process.
-#
-#     witness(:user) { create(:user) } is memoized within a single
-#     investigation, so naming `user` five times in one test hits the database
-#     once. The moment that investigation finishes the memo is gone, and the
-#     next one builds its own.
-#
-#     Caching across tests would be faster, and would reintroduce exactly the
-#     shared, mutable, order-dependent state that (1) exists to prevent. So the
-#     cache is scoped to the one place it is provably safe: inside a single test
-#     that owns the object outright.
-# =============================================================================
+# And `witness` memoizes per test, and never per process. Naming it five times in one
+# investigation hits the database once; the moment that investigation ends the memo is
+# gone. Caching across tests would be faster and would reintroduce exactly the shared,
+# mutable, order-dependent state the paragraph above exists to prevent.
