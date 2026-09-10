@@ -676,12 +676,46 @@ module Constable
       buckets = Array.new(count) { [] }
       loads = Array.new(count, 0.0)
 
-      items.sort_by { |item| -index.fetch(item.identity, 0.0) }.each do |item|
+      items.sort_by { |item| -weight_of(item, index) }.each do |item|
         slot = loads.index(loads.min)
         buckets[slot] << item
-        loads[slot] += index.fetch(item.identity, 0.05)
+        loads[slot] += weight_of(item, index, default: 0.05)
       end
       buckets.reject(&:empty?)
+    end
+
+    # What one item is expected to cost.
+    #
+    # A native item is one investigation and its identity is in the duration index. A cold
+    # item is a whole *file* of examples, and its identity is
+    # `Identity.for_cold_case(path, "file")` -- a key nothing ever records, because
+    # durations are stored per example, keyed by the example's description. So every cold
+    # item weighed 0.0 and the sort was a no-op.
+    #
+    # That made longest-processing-time-first do nothing at all on a suite that is entirely
+    # cold cases, which is the common case for an app that has just adopted Constable: the
+    # files went out in whatever order they were discovered, and one worker could take the
+    # slowest four while another took four quick ones.
+    #
+    # The per-file totals were already being computed for `constable modernize --plan`; this
+    # just asks for them here too.
+    def weight_of(item, index, default: 0.0)
+      return index.fetch(item.identity, default) if item.native?
+
+      file_durations.dig(relative_to_root(item.path), :seconds) || default
+    end
+
+    def relative_to_root(path)
+      path.to_s.delete_prefix("#{Constable.root}/")
+    end
+
+    # Read once, in the parent, before any fork -- same as the duration index.
+    def file_durations
+      @file_durations ||= begin
+        @storage.average_seconds_by_file
+      rescue StandardError
+        {}
+      end
     end
 
     def duration_index

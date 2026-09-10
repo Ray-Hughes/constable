@@ -148,6 +148,40 @@ module Constable
       assert_equal 4, runner.results.size
     end
 
+    # --- balancing ----------------------------------------------------------------------
+    #
+    # Longest-processing-time-first only works if the runner knows what things cost. A cold
+    # item is a whole file, and its identity is `for_cold_case(path, "file")` -- a key
+    # nothing records, because durations are stored per example keyed by description. So
+    # every cold file weighed 0.0, the sort was a no-op, and a suite that is entirely cold
+    # cases (the normal state of a freshly adopted app) got no balancing whatsoever.
+
+    def test_cold_files_are_weighted_by_their_recorded_duration
+      slow = write_file("spec/slow_spec.rb", "describe('s') { it('a') { expect(1).to eq(1) } }")
+      quick = write_file("spec/quick_spec.rb", "describe('q') { it('a') { expect(1).to eq(1) } }")
+      items = [Runner::Item.new(path: quick, kind: :cold), Runner::Item.new(path: slow, kind: :cold)]
+
+      _status, runner = run_suite
+      runner.stub(:file_durations, { "spec/slow_spec.rb" => { tests: 10, seconds: 30.0 },
+                                     "spec/quick_spec.rb" => { tests: 1, seconds: 0.5 } }) do
+        buckets = runner.send(:balance, items, 2)
+
+        assert_equal 2, buckets.size
+        # Slowest first: it is handed out before the quick one rather than by discovery order.
+        assert_equal "spec/slow_spec.rb", buckets.first.first.path.delete_prefix("#{tmp_root}/")
+      end
+    end
+
+    def test_a_cold_file_with_no_history_still_gets_scheduled
+      file = write_file("spec/new_spec.rb", "describe('n') { it('a') { expect(1).to eq(1) } }")
+      items = [Runner::Item.new(path: file, kind: :cold)]
+
+      _status, runner = run_suite
+      runner.stub(:file_durations, {}) do
+        assert_equal 1, runner.send(:balance, items, 2).flatten.size
+      end
+    end
+
     # --- a worker that dies beside living ones ------------------------------------------
     #
     # The worst bug this runner has had. `worker_errors` was only ever read on the path
