@@ -471,7 +471,7 @@ loggers, SQL, request/response logging, and anything a gem prints to `$stdout` o
 debugging.
 
 That matters more than it sounds. A gem warning fired once per file lands in the middle of
-the live stream, and you get `Address ✓✓✓✓✓✓To use retry middleware with Faraday...`
+the live stream, and you get `Address ✓✓✓✓✓✓...`
 instead of a readable run. The one thing Constable deliberately does not intercept is a
 write straight to file descriptor 2 — capturing that would also swallow a real crash and
 break `binding.pry`, so `2>/dev/null` stays yours to decide on.
