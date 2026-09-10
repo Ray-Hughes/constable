@@ -292,7 +292,10 @@ module Constable
     option :"in-place", type: :boolean, default: false, desc: "Overwrite the file"
     option :cold, type: :boolean, default: false,
                   desc: "Move it verbatim as a cold case instead of converting"
-    option :limit, type: :numeric, desc: "With --plan: how many files to list (default 25)"
+    option :limit, type: :numeric,
+                   desc: "How many files to LIST in the output. Does not change what is ported"
+    option :batch, type: :numeric,
+                   desc: "Port only the first N files. With --delete, run again for the next N"
     option :plan, type: :boolean, default: false,
                   desc: "Show what a --port would do -- destinations, forms, blockers, runtime -- and write nothing"
     option :delete, type: :boolean, default: false,
@@ -331,7 +334,8 @@ module Constable
       mode = :none if options[:plan]
 
       run = Importer.modernize(paths, config: load_config, write: mode, base: options[:base],
-                                      delete_original: options[:delete] && !options[:plan])
+                                      delete_original: options[:delete] && !options[:plan],
+                                      batch: options[:batch])
 
       if options[:plan]
         print_port_plan(run)
@@ -790,8 +794,8 @@ module Constable
         end
         return unless results.size > rows.size
 
-        say "  ... and #{results.size - rows.size} more " \
-            "(--limit #{results.size} to list them all)"
+        say "  #{paint("... and #{results.size - rows.size} more processed but not listed " \
+                       "(--limit #{results.size} to list them all)", :dim)}"
         say ""
       end
 
@@ -857,6 +861,10 @@ module Constable
           say "  nothing written (add --port, --alongside or --in-place)"
         end
         say "  #{failed.size} file(s) could not be processed" if failed.any?
+        if run.remaining.to_i.positive?
+          say "  #{paint("#{run.remaining} file(s) left in this directory -- run the same command " \
+                         "again for the next batch", :cyan)}"
+        end
         say "  full detail, with guidance per construct: #{run.report_path}" if run.report_path
         say ""
       end
@@ -905,7 +913,8 @@ module Constable
 
         # The number that shows everything is already known here, so print it rather than
         # an N the reader has to work out.
-        hint = "... and #{plan.entries.size - limit} more (--limit #{plan.entries.size} for all)"
+        hint = "... and #{plan.entries.size - limit} more in this plan but not listed " \
+               "(--limit #{plan.entries.size} to list them all)"
         say "  #{paint(hint, :dim)}"
         say ""
       end

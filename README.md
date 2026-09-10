@@ -350,6 +350,22 @@ your own largest recorded run. Summing test bodies alone understated a real dire
 Rails boot, a run of the whole suite is nearly all tests. A suite that has never run here
 gets no estimate rather than an invented one.
 
+`--batch N` ports N files and leaves the rest. Paired with `--delete` it walks a directory,
+because the ones already ported are no longer there for the next run to find:
+
+```console
+$ constable modernize spec/models --port --base UnitCase --delete --batch 20
+SUMMARY
+───────
+  20 file(s) written -- 13 converted, 7 verbatim
+  20 original(s) removed
+  45 file(s) left in this directory -- run the same command again for the next batch
+```
+
+**`--limit` is not that.** It caps how many rows are printed and changes nothing about what
+is ported — the two are deliberately separate flags, because conflating them with
+`--delete` in play would delete files someone believed they had excluded.
+
 Add `--delete` to finish the move:
 
 ```console

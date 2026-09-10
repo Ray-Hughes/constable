@@ -64,7 +64,7 @@ module Constable
       end
 
       # An aggregate over one `constable modernize` invocation.
-      Run = Struct.new(:results, :report, :report_path, :write_mode, keyword_init: true) do
+      Run = Struct.new(:results, :report, :report_path, :write_mode, :remaining, keyword_init: true) do
         def ok?       = results.all?(&:ok?)
         def failed    = results.reject(&:ok?)
         def flagged   = results.select(&:flagged?)
@@ -119,7 +119,7 @@ module Constable
       class << self
         # The CLI entry point. `paths` may be files, directories or globs.
         def run(paths, config: Constable.config, root: nil, write: :none, report: true, base: nil,
-                delete_original: false)
+                delete_original: false, batch: nil)
           root = (root || config&.root || Constable.root).to_s
           write = (write || :none).to_sym
           unless WRITE_MODES.include?(write)
@@ -127,7 +127,14 @@ module Constable
                   "unknown write mode #{write.inspect} (expected #{WRITE_MODES.join(", ")})"
           end
 
-          results = expand(paths, root).map do |file|
+          files = expand(paths, root)
+          # A batch is a prefix of a deterministically sorted list. Paired with --delete it
+          # walks a directory: each run takes the next N, because the ones already ported
+          # are no longer there to be found.
+          remaining = batch.to_i.positive? ? [files.size - batch.to_i, 0].max : 0
+          files = files.first(batch.to_i) if batch.to_i.positive?
+
+          results = files.map do |file|
             result = new(file, config: config, root: root, base: base).call
             result.write_mode = write
             persist(result, root, write)
@@ -141,7 +148,8 @@ module Constable
             report_path = File.join(root, REPORT_FILENAME)
             File.write(report_path, text)
           end
-          Run.new(results: results, report: text, report_path: report_path, write_mode: write)
+          Run.new(results: results, report: text, report_path: report_path, write_mode: write,
+                  remaining: remaining)
         end
 
         # `constable modernize` is useless without the parser gem, but Constable itself
@@ -179,7 +187,7 @@ module Constable
             else
               [absolute]
             end
-          end.uniq
+          end.uniq.sort
         end
 
         # Where a ported file lands: spec/models/tasks/mdr_task_spec.rb becomes

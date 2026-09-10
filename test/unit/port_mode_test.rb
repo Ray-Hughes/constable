@@ -147,5 +147,71 @@ module Constable
       assert_path_exists File.join(tmp_root, "spec/models/broken_spec.rb")
       assert_nil result.removed_original
     end
+
+    # --- --batch: port a directory a few files at a time --------------------------------
+    #
+    # `--limit` caps how many rows are printed and nothing else. Porting sixty-five files
+    # while showing twenty is a display choice; porting twenty of them is a different
+    # request, and conflating the two with --delete in play would delete forty-five files
+    # someone thought they had excluded.
+
+    def batch(path, size, delete: true)
+      Importer.modernize([path], config: Constable.config, root: tmp_root, write: :port,
+                                 report: false, delete_original: delete, batch: size)
+    end
+
+    def three_specs
+      %w[a b c].each do |name|
+        write_file("spec/models/#{name}_spec.rb", <<~SPEC)
+          describe "#{name.upcase}" do
+            it("works") { expect(1).to eq(1) }
+          end
+        SPEC
+      end
+    end
+
+    def test_batch_ports_only_the_first_n_files
+      three_specs
+
+      run = batch("spec/models", 2)
+
+      assert_equal 2, run.results.size
+      assert_equal 1, run.remaining
+      assert_path_exists File.join(tmp_root, "spec/models/c_spec.rb")
+    end
+
+    # The point of pairing it with --delete: the ported ones are gone, so the same command
+    # picks up where it left off.
+    def test_running_again_takes_the_next_batch
+      three_specs
+
+      batch("spec/models", 2)
+      second = batch("spec/models", 2)
+
+      assert_equal 1, second.results.size
+      assert_equal 0, second.remaining
+      assert_equal %w[a_case.rb b_case.rb c_case.rb],
+                   Dir[File.join(tmp_root, "test/cases/models/*.rb")].map { |f| File.basename(f) }.sort
+      assert_empty Dir[File.join(tmp_root, "spec/models/*.rb")]
+    end
+
+    # A batch is a prefix of a sorted list, not of whatever order the filesystem returned,
+    # or "run it again for the next batch" would revisit files it had already taken.
+    def test_batches_are_taken_in_a_stable_order
+      three_specs
+
+      assert_equal %w[spec/models/a_spec.rb spec/models/b_spec.rb],
+                   batch("spec/models", 2, delete: false).results.map(&:relative_path)
+    end
+
+    def test_no_batch_processes_everything
+      three_specs
+
+      run = Importer.modernize(["spec/models"], config: Constable.config, root: tmp_root,
+                                                write: :port, report: false)
+
+      assert_equal 3, run.results.size
+      assert_equal 0, run.remaining.to_i
+    end
   end
 end
