@@ -716,6 +716,34 @@ module Constable
         value.to_s[0, 10]
       end
 
+      # Colour, for the reports that are read rather than parsed.
+      #
+      # Padding happens before painting, always: an ANSI escape is zero columns wide but
+      # several characters long, so `format("%-40s", painted)` pads to the wrong width and
+      # every column after it staggers.
+      def ansi_codes
+        { bold: 1, dim: 2, red: 31, green: 32, yellow: 33, cyan: 36 }
+      end
+
+      def paint(text, *styles)
+        codes = styles.flatten.filter_map { |style| ansi_codes[style] }
+        return text.to_s if codes.empty? || !color?
+
+        "\e[#{codes.join(";")}m#{text}\e[0m"
+      end
+
+      # The directory every path in a set shares, so it can be said once in a heading
+      # instead of repeated on sixty-five rows that then wrap.
+      def common_directory(paths)
+        return nil if paths.size < 2
+
+        parts = paths.map { |path| File.dirname(path).split("/") }
+        shared = parts.reduce { |a, b| a.take_while.with_index { |seg, i| seg == b[i] } }
+        return nil if shared.nil? || shared.empty?
+
+        shared.join("/")
+      end
+
       def shard_from(spec)
         Shard.parse(spec)
       rescue Constable::Error => e
@@ -757,10 +785,10 @@ module Constable
 
       # Converted cleanly, moved verbatim, or reported only.
       def modernize_glyph(result)
-        return "·" unless result.written_to
-        return "○" if result.written_as == :cold
+        return paint("·", :dim) unless result.written_to
+        return paint("○", :yellow) if result.written_as == :cold
 
-        "✓"
+        paint("✓", :green)
       end
 
       def modernize_name(result)
@@ -796,7 +824,10 @@ module Constable
 
         total = counts.sum { |_, n| n }
         say_table("WHAT IS BLOCKING CONVERSION", counts.first(8)) do |kind, count|
-          [format("%5d", count), format("%3d%%", (count * 100.0 / total).round), kind.to_s]
+          share = (count * 100.0 / total).round
+          [paint(format("%5d", count), :bold),
+           paint(format("%3d%%", share), :dim),
+           paint(kind.to_s, share >= 25 ? :yellow : :cyan)]
         end
       end
 
@@ -833,8 +864,10 @@ module Constable
 
       def print_plan_headline(plan)
         say_table("PORT PLAN", [plan]) do |p|
-          ["#{p.entries.size} files", "#{p.native} convert", "#{p.cold} move verbatim",
-           "base #{p.base || "Constable::Case"}"]
+          [paint("#{p.entries.size} files", :bold),
+           paint("#{p.native} convert", :green),
+           paint("#{p.cold} move verbatim", :yellow),
+           paint("base #{p.base || "Constable::Case"}", :dim)]
         end
       end
 
@@ -842,14 +875,34 @@ module Constable
         # A port is usually a whole directory, so the default shows enough of it to check
         # the destinations look right without printing four hundred lines.
         limit = (options[:limit] || 25).to_i.clamp(1, 1000)
-        say_table("WHAT MOVES WHERE", plan.entries.first(limit)) do |e|
-          form = e.form == :cold ? "verbatim" : "converted"
-          [format("%-9s", form), e.source, "→", e.destination]
-        end
+        rows = plan.entries.first(limit)
+
+        # Every row carried its full source and destination, both of which usually share a
+        # directory with every other row -- so two long prefixes were repeated sixty-five
+        # times and the lines wrapped. Said once here instead.
+        from = common_directory(rows.map(&:source))
+        into = common_directory(rows.map(&:destination))
+
+        say "WHAT MOVES WHERE"
+        say "─" * 16
+        say "  #{paint("#{from} → #{into}", :dim)}" if from && into
+        say ""
+        rows.each { |entry| say "  #{plan_row(entry, from, into)}" }
+        say ""
         return unless plan.entries.size > limit
 
-        say "  ... and #{plan.entries.size - limit} more (--limit N to see them)"
+        say "  #{paint("... and #{plan.entries.size - limit} more (--limit N to see them)", :dim)}"
         say ""
+      end
+
+      def plan_row(entry, from, into)
+        form = entry.form == :cold ? "verbatim " : "converted"
+        source = from ? entry.source.delete_prefix("#{from}/") : entry.source
+        dest = into ? entry.destination.delete_prefix("#{into}/") : entry.destination
+        blocked = entry.flags.positive? ? paint(" (#{entry.flags})", :dim) : ""
+
+        "#{paint(form, entry.form == :cold ? :yellow : :green)}  " \
+          "#{format("%-52s", truncate_label(source, 52))}#{paint("→ ", :dim)}#{paint(dest, :dim)}#{blocked}"
       end
 
       def print_plan_blockers(plan)
@@ -857,7 +910,10 @@ module Constable
 
         total = plan.blockers.sum { |_, n| n }
         say_table("WHY THE VERBATIM ONES CANNOT CONVERT", plan.blockers.first(6)) do |kind, n|
-          [format("%5d", n), format("%3d%%", (n * 100.0 / total).round), kind.to_s]
+          share = (n * 100.0 / total).round
+          [paint(format("%5d", n), :bold),
+           paint(format("%3d%%", share), :dim),
+           paint(kind.to_s, share >= 25 ? :yellow : :cyan)]
         end
       end
 
@@ -876,11 +932,13 @@ module Constable
 
         say_table("ESTIMATED RUNTIME", [plan]) do |p|
           if p.projected_seconds
-            [human_seconds(p.projected_seconds), "across #{p.total_tests} tests",
-             "measured from #{p.measured.size} of #{p.entries.size} files"]
+            [paint(human_seconds(p.projected_seconds), :bold, :cyan),
+             "across #{p.total_tests} tests",
+             paint("measured from #{p.measured.size} of #{p.entries.size} files", :dim)]
           else
-            ["#{human_seconds(p.total_seconds)} of test time", "across #{p.total_tests} tests",
-             "measured from #{p.measured.size} of #{p.entries.size} files"]
+            [paint("#{human_seconds(p.total_seconds)} of test time", :bold, :cyan),
+             "across #{p.total_tests} tests",
+             paint("measured from #{p.measured.size} of #{p.entries.size} files", :dim)]
           end
         end
 
