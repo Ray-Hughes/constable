@@ -36,6 +36,19 @@ module Constable
                    "config.yml and Constable.configure must understand the same settings"
     end
 
+    # Same shape as storage, different command: `constable modernize` never boots the app,
+    # so case_helper.rb has not run by the time it reads these. Verified before this was
+    # made to raise -- `c.modernize = {...}` was accepted and silently ignored while the
+    # YAML won, which is a setting that looks configurable and does nothing.
+    def test_setting_modernize_in_ruby_says_why_it_cannot_work
+      error = assert_raises(ConfigurationError) do
+        Constable.configure { |c| c.modernize = { "base" => "UnitCase" } }
+      end
+
+      assert_match(/config\.yml/, error.message)
+      assert_match(/does not boot the application/, error.message)
+    end
+
     # Ordering, not preference: the blotter is opened before case_helper.rb loads so the
     # docket commands can work without booting the app. Accepting the setting and quietly
     # using the old path is exactly the failure this release exists to stop.

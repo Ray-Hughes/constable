@@ -197,9 +197,10 @@ end
 #      c.coverage_threshold = 90      # diff-based: only lines changed in this diff
 #      c.coverage_html      = false
 #      c.tiers              = { "unit" => "test/cases/models/**/*" }
-#      # Defaults for `constable modernize`, so a port is one command rather than five
-#      # flags. A flag on the command line still wins over these.
-#      c.modernize          = { "base" => "UnitCase", "port" => true, "delete" => true }
+#
+#      # `modernize` and `storage` are deliberately absent: both are read before this file
+#      # runs, so setting them here cannot work. They live in .constable/config.yml, and
+#      # setting them here raises rather than being quietly ignored.
 #
 #  `storage` is the one setting that cannot go here: the blotter is opened before
 #  this file loads, so `constable jail` and `constable status` can read the docket

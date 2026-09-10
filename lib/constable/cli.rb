@@ -298,11 +298,11 @@ module Constable
                    desc: "Port only the first N files. With --delete, run again for the next N"
     option :plan, type: :boolean, default: false,
                   desc: "Show what a --port would do -- destinations, forms, blockers, runtime -- and write nothing"
-    option :delete, type: :boolean, default: false,
+    option :delete, type: :boolean,
                     desc: "With --port: remove the original after it has been written"
     option :base, type: :string,
                   desc: "Superclass for converted cases (e.g. UnitCase). Default: Constable::Case"
-    option :port, type: :boolean, default: false,
+    option :port, type: :boolean,
                   desc: "Write into test/cases/, mirroring the spec path"
     option :"show-source", type: :boolean, default: false, desc: "Print the rewritten source"
     def modernize(*paths)
@@ -314,6 +314,10 @@ module Constable
       config = load_config
       # A flag beats the file. The file says what this project does by default; the flag
       # says what this invocation does instead.
+      # `options.key?` is the test, not truthiness: `--no-port` must be able to switch off
+      # what the config turned on. Thor only includes these keys when they were actually
+      # given, because neither declares a default -- one that did would make absence
+      # indistinguishable from an explicit false, and the config could never win.
       port = options.key?("port") ? options[:port] : config.modernize_port?
       delete = options.key?("delete") ? options[:delete] : config.modernize_delete?
       base = options[:base] || config.modernize_base

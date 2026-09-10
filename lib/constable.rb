@@ -152,7 +152,7 @@ module Constable
     SETTINGS = %i[
       cold_cases warrants warrant_retries auto_relink parole_period
       coverage coverage_threshold coverage_html fail_on_warnings parallel_workers
-      worker_databases jail_flakes output tiers modernize
+      worker_databases jail_flakes output tiers
     ].freeze
 
     # `storage` is the one setting that cannot live here, and the reason is ordering, not
@@ -162,9 +162,23 @@ module Constable
     #
     # Raising beats accepting the value and quietly using the old path -- silently
     # ignoring a setting somebody wrote is the failure mode this whole class was fixed for.
-    SETTINGS_ONLY_IN_YAML = %i[storage].freeze
+    SETTINGS_ONLY_IN_YAML = %i[storage modernize].freeze
 
     attr_accessor(*SETTINGS, :seed)
+
+    # Same reason as storage, different command. `constable modernize` never boots the
+    # app -- that is why it reads four hundred files in ten seconds -- so case_helper.rb
+    # has not run by the time it needs these and never will.
+    #
+    # Verified before this was made to raise: `c.modernize = {...}` in case_helper was
+    # accepted and silently ignored, while the YAML won. A setting that looks configurable
+    # and does nothing is worse than one that refuses.
+    def modernize=(_value)
+      raise ConfigurationError,
+            "modernize must be set in .constable/config.yml, not Constable.configure. " \
+            "`constable modernize` does not boot the application -- it is an AST rewrite, " \
+            "and not booting is what makes it fast -- so case_helper.rb never runs for it."
+    end
 
     def storage=(_value)
       raise ConfigurationError,
