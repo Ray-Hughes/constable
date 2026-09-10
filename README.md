@@ -488,6 +488,7 @@ worse than one that resets.
 | `constable test PATH[:LINE]` | One file, or one investigation at that line |
 | `constable test --unsafe` | Cold cases only |
 | `constable test --jail` | The full run, in jail mode |
+| `constable test --shard i/n` | One slice of the suite, for a CI matrix |
 | `constable jail [run\|parole\|release]` | The docket. `release --all` empties it |
 | `constable warrants [release]` | Outstanding warrants |
 | `constable watchlist` | Everything under supervision right now |
@@ -560,6 +561,32 @@ parent, so serial runs keep whatever name they had. Use `FileUtils.mkdir_p` rath
 `Dir.mkdir ... unless File.directory?` while you are there — the second is a race, and if
 it runs inside `spec/support` it takes `rails_helper` down with it, which costs the loser
 its database cleaning rather than just its cache directory.
+
+### CI: one suite across several machines
+
+Constable balances work across forked workers on one machine. A CI matrix is the other
+axis, and `--shard` covers it — no separate report file to generate, upload and keep
+current:
+
+```yaml
+strategy:
+  matrix:
+    shard: [1, 2, 3, 4, 5, 6, 7, 8]
+steps:
+  - run: bundle exec constable test --full --shard ${{ matrix.shard }}/8
+```
+
+The split is a **partition**: every test lands in exactly one slice, and each machine
+derives the same answer without talking to any other. That property is the whole feature —
+a splitter that drops a file produces a green build that ran less than it claimed, and
+nothing downstream can tell.
+
+Which is why the default split depends on nothing but the set of files. `--shard-by-time`
+weights it by recorded durations, so slices are even in time rather than in file count, and
+it is safe **only when every machine reads identical duration data** — a blotter restored
+from one shared cache, never one written back to mid-matrix. Weighting from a blotter that
+moves between shards repartitions: measured across three local shards, one file ran in two
+of them and another ran in none.
 
 ### Knowing what your suite is doing
 

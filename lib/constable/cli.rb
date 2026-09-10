@@ -59,6 +59,9 @@ module Constable
     option :coverage, type: :boolean, desc: "Record coverage for this run"
     option :seed,     type: :numeric, desc: "Replay a previous run's order"
     option :workers,  type: :numeric, desc: "Parallel workers (default: config, or auto)"
+    option :shard,    type: :string,  desc: "Run one slice of the suite: --shard 3/8 (for a CI matrix)"
+    option :"shard-by-time", type: :boolean, default: false,
+                             desc: "Weight --shard by duration (needs identical blotter data everywhere)"
     option :verbose,  type: :boolean, default: false, desc: "Stream log/test.log to stdout"
     option :tier,     type: :string,  desc: "Run one tier only: unit, integration or system"
     option :output,   type: :string,  desc: "Live stream detail: concise (default) or expanded"
@@ -87,7 +90,9 @@ module Constable
         warrants: options[:warrants],
         coverage: options[:coverage],
         workers: options[:workers],
-        verbose: options[:verbose]
+        verbose: options[:verbose],
+        shard: shard_from(options[:shard]),
+        shard_by_time: options[:"shard-by-time"]
       )
 
       exit(runner.call)
@@ -332,27 +337,7 @@ module Constable
         exit(run.ok? ? EXIT_CLEAN : EXIT_FAILED)
       end
 
-      run.results.each do |result|
-        if result.error
-          say "#{result.relative_path}: #{result.error}"
-          next
-        end
-
-        counts = result.counts
-        say "#{result.relative_path} — #{describe_counts(counts)}"
-        say(result.source) if options[:"show-source"]
-
-        if result.written_to
-          how = result.written_as == :cold ? " (verbatim, as a cold case)" : ""
-          moved = result.removed_original ? ", original removed" : ""
-          say "    → #{result.written_to}#{how}#{moved}"
-        end
-
-        result.flags.each { |flag| say "    flagged #{flag[:location]}  #{flag[:reason]}" }
-      end
-
-      say "\nWrote #{run.written.size} file(s)." if run.written.any?
-      say "Report: #{run.report_path}" if run.report_path
+      print_modernize_results(run)
       if mode == :none
         say "\nNothing was written. Re-run with --port (into test/cases/), --alongside or " \
             "--in-place."
@@ -729,6 +714,108 @@ module Constable
 
       def short_date(value)
         value.to_s[0, 10]
+      end
+
+      def shard_from(spec)
+        Shard.parse(spec)
+      rescue Constable::Error => e
+        CLI.complain(e.message)
+        exit(EXIT_USAGE)
+      end
+
+      # --- modernize output ----------------------------------------------------------
+      #
+      # One line per file, and the per-flag detail behind a flag.
+      #
+      # It used to print every flagged construct inline, which on a real directory was
+      # thousands of lines with the same `let!` sentence repeated three hundred times --
+      # long enough that the summary scrolled away and nobody could see what had actually
+      # moved. The detail is not lost: it is in the report file, grouped and explained
+      # once, which is a better place to read two hundred occurrences of anything.
+
+      def print_modernize_results(run)
+        processed, failed = run.results.partition(&:ok?)
+
+        print_modernize_files(processed)
+        print_modernize_failures(failed)
+        print_modernize_blockers(processed)
+        print_modernize_summary(run, processed, failed)
+      end
+
+      def print_modernize_files(results)
+        return if results.empty?
+
+        rows = results.first((options[:limit] || 40).to_i.clamp(1, 1000))
+        say_table("FILES", rows) do |result|
+          [modernize_glyph(result), modernize_name(result), modernize_outcome(result)]
+        end
+        return unless results.size > rows.size
+
+        say "  ... and #{results.size - rows.size} more (--limit N to list them)"
+        say ""
+      end
+
+      # Converted cleanly, moved verbatim, or reported only.
+      def modernize_glyph(result)
+        return "·" unless result.written_to
+        return "○" if result.written_as == :cold
+
+        "✓"
+      end
+
+      def modernize_name(result)
+        format("%-52s", truncate_label(result.relative_path, 52))
+      end
+
+      def modernize_outcome(result)
+        counts = result.counts
+        return "#{counts[:converted]} converted, #{counts[:flagged]} blocked" unless result.written_to
+
+        form = result.written_as == :cold ? "verbatim" : "converted"
+        blocked = counts[:flagged].positive? ? " (#{counts[:flagged]} blockers)" : ""
+        moved = result.removed_original ? ", original removed" : ""
+        "#{form}#{blocked}#{moved}"
+      end
+
+      def print_modernize_failures(failed)
+        return if failed.empty?
+
+        say_table("NOT CONVERTED (#{failed.size})", failed) do |result|
+          [result.relative_path, result.error.to_s]
+        end
+      end
+
+      # The same table the report leads with. Two hundred occurrences of one construct is
+      # the useful fact; two hundred lines saying so is not.
+      def print_modernize_blockers(results)
+        counts = results.flat_map { |r| Array(r.flags) }
+                        .group_by { |f| f[:kind] }
+                        .transform_values(&:size)
+                        .sort_by { |_, n| -n }
+        return if counts.empty?
+
+        total = counts.sum { |_, n| n }
+        say_table("WHAT IS BLOCKING CONVERSION", counts.first(8)) do |kind, count|
+          [format("%5d", count), format("%3d%%", (count * 100.0 / total).round), kind.to_s]
+        end
+      end
+
+      def print_modernize_summary(run, processed, failed)
+        converted = processed.count { |r| r.written_as == :native }
+        verbatim = processed.count { |r| r.written_as == :cold }
+        removed = processed.count(&:removed_original)
+
+        say "SUMMARY"
+        say "─" * 7
+        if run.written.any?
+          say "  #{run.written.size} file(s) written -- #{converted} converted, #{verbatim} verbatim"
+          say "  #{removed} original(s) removed" if removed.positive?
+        else
+          say "  nothing written (add --port, --alongside or --in-place)"
+        end
+        say "  #{failed.size} file(s) could not be processed" if failed.any?
+        say "  full detail, with guidance per construct: #{run.report_path}" if run.report_path
+        say ""
       end
 
       # --- port plan ---------------------------------------------------------------

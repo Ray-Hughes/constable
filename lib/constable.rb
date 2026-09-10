@@ -56,6 +56,7 @@ module Constable
   autoload :Reporter,      "constable/reporter"
   autoload :Result,        "constable/result"
   autoload :Runner,        "constable/runner"
+  autoload :Shard,         "constable/shard"
   autoload :Selection,     "constable/selection"
   autoload :Storage,       "constable/storage"
   autoload :Warrants,      "constable/warrants"

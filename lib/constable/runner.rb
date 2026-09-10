@@ -40,7 +40,7 @@ module Constable
 
     def initialize(selection:, config: Constable.config, reporter: nil, storage: nil,
                    seed: nil, jail_mode: false, jail_run: false, warrants: nil, coverage: nil,
-                   workers: nil, verbose: false, io: $stdout)
+                   workers: nil, verbose: false, shard: nil, shard_by_time: false, io: $stdout)
       @selection  = selection
       @config     = config
       @storage    = storage || Constable.storage
@@ -51,6 +51,8 @@ module Constable
       @coverage_requested = coverage.nil? ? config.coverage? : coverage
       @workers    = workers
       @verbose    = verbose
+      @shard      = shard
+      @shard_by_time = shard_by_time
       @io         = io
       @reporter   = reporter || Reporter.new(io: io, config: config)
       @results    = []
@@ -103,7 +105,7 @@ module Constable
       # Before anything is keyed on an identity -- selection, the docket, flake history --
       # settle any two tests that happen to share a body.
       Constable.registry.disambiguate_identities!
-      items = build_items
+      items = shard_of(build_items)
       refuse_empty_selection!(items)
       ordered = order(items)
 
@@ -667,6 +669,42 @@ module Constable
         out << Marshal.load(payload) # rubocop:disable Security/MarshalLoad -- our own pipe
       end
       out
+    end
+
+    # One slice of the suite, for one machine in a CI matrix.
+    #
+    # Applied before anything else looks at the item list, so the docket, the reporter and
+    # the exit status all describe this machine's share honestly rather than the whole
+    # suite's. Weighted by the same measured durations the worker balancer uses, so slices
+    # are even in time rather than in file count.
+    def shard_of(items)
+      return items if @shard.nil? || @shard.whole?
+
+      @shard.slice(items, weights: shard_weights(items))
+    end
+
+    # Deliberately empty unless asked for, and this is the interesting part.
+    #
+    # Weighting the split by recorded durations makes slices even in time rather than in
+    # file count, which is the whole appeal. But each machine computes its own slice with
+    # no coordination, so every machine must derive the *same* partition -- and durations
+    # come from the blotter, which each run writes back to.
+    #
+    # Measured: running shards 1, 2 and 3 in sequence locally, each run updated the
+    # durations the next one read, so each repartitioned. One file ran in two shards and
+    # another ran in none. Eighteen tests were missing from the union and thirty-three were
+    # duplicated -- a green build that ran less than it claimed, which is the exact failure
+    # this project exists to prevent.
+    #
+    # So the default partition depends on nothing but the item set: sorted by label,
+    # handed out round-robin, provably every item exactly once whatever any blotter says.
+    # `--shard-by-time` opts into duration weighting, and is safe only when every machine
+    # reads identical duration data -- a blotter restored from one shared cache, and never
+    # one written back to mid-matrix.
+    def shard_weights(items)
+      return {} unless @shard_by_time
+
+      items.to_h { |item| [item, weight_of(item, duration_index)] }
     end
 
     # Longest-processing-time-first: the slowest tests are handed out before the quick ones,
