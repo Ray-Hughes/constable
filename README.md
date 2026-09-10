@@ -49,8 +49,10 @@ linter instead of by CI, and an adoption path that never asks you to rewrite any
 
 - [Why](#why)
 - [Requirements](#requirements)
-- [Installation](#installation)
-- [Quick start](#quick-start)
+- [Getting started](#getting-started)
+  - [Path 1 — an RSpec suite](#path-1--you-have-an-rspec-suite)
+  - [Path 2 — a Minitest suite](#path-2--you-have-a-minitest-suite)
+  - [Path 3 — no test suite yet](#path-3--no-test-suite-yet)
 - [Documentation](#documentation)
   - [The DSL](#the-dsl)
   - [Tiers](#tiers-are-base-classes-not-magic)
@@ -114,7 +116,9 @@ Nothing else is required. These are all optional, and only if you want the featu
 | `capybara` + a driver | the `:system` tier |
 | `pg` / `mysql2` | pointing the blotter at Postgres or MySQL instead of SQLite |
 
-## Installation
+## Getting started
+
+Three ways in, depending on what you have today. All three start the same way.
 
 ```ruby
 # Gemfile
@@ -130,14 +134,78 @@ $ rails generate constable:install
 ```
 
 That writes `test/case_helper.rb`, `test/support/`, `.constable/config.yml`, a `.rubocop.yml`
-snippet, and a worked example case so `constable test` does something immediately.
+snippet, and a worked example case. Two files matter and they do not overlap:
 
-## Quick start
+| File | Owns |
+| --- | --- |
+| `.constable/config.yml` | every setting. Run through ERB, so a value can be computed |
+| `test/case_helper.rb` | code only — boot, tier base classes, hooks, matchers |
+
+Setting a value in the wrong one raises and names the right one, so there is no precedence
+rule to learn. See [Configuration](#configuration-one-home-per-setting).
+
+### Path 1 — you have an RSpec suite
+
+Nothing is rewritten and nothing moves. `import` adds one glob to the config, and your specs
+run from where they are, through real RSpec, with results folded into Constable's reporting,
+flake history and CI gate.
+
+```console
+$ constable import --from=rspec --dry-run   # read it first, it changes a config file
+$ constable import --from=rspec
+$ constable test --full                     # the whole suite, cold cases and all
+```
+
+At this point you are done. Everything below is optional and can happen a directory at a
+time, over months, with a green suite the entire way.
+
+```console
+$ constable modernize spec/models --plan     # what a port would do. writes nothing
+$ constable modernize spec/models            # do it
+$ constable test test/cases/models           # run what came out
+```
+
+`modernize` rewrites `describe`/`it` into `Constable::Case`/`investigate`, `let` into
+`witness`, `before` into `briefing` and `expect` into `attest`. What it cannot decide safely
+it refuses to guess at: a flagged file is moved verbatim as a cold case instead, because a
+half-converted file does not run. Set the flags once in `.constable/config.yml` under
+`modernize:` and the command stays short.
+
+### Path 2 — you have a Minitest suite
+
+Identical, with one word changed.
+
+```console
+$ constable import --from=minitest --dry-run
+$ constable import --from=minitest
+$ constable test --full
+```
+
+`modernize` handles `def test_foo` → `investigate "foo"` and `setup` → `briefing`, and the
+same rule applies: anything ambiguous is moved verbatim rather than guessed at.
+
+### Path 3 — no test suite yet
+
+Skip `import` entirely. The installer already left you a working example.
+
+```console
+$ constable test                       # runs the example case
+$ rails generate constable:model User  # scaffold a case for something real
+$ constable test --full
+```
+
+Read `test/case_helper.rb` before writing the first case. It is short, and it explains the
+tier base classes and the two things Constable deliberately does not have.
+
+### Then, whichever path you took
 
 ```console
 $ constable test              # only what your current git diff touches
 $ constable test --full       # everything. this is what CI runs
-$ constable test path/to/case.rb:12
+$ constable last              # everything about the most recent run
+$ constable metrics           # lifetime KPIs for the suite
+$ constable insights          # what to fix first, and why
+$ constable tree              # every command, if you forget one of these
 ```
 
 ## Documentation

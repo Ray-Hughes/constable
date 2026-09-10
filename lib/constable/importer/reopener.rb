@@ -142,11 +142,18 @@ module Constable
             lines << "  superclass swap: #{@changes.size} file(s) wrapped"
             @changes.each { |c| lines << "    - #{c.relative_path} -> class #{c.class_name} < #{superclass_name}" }
           end
-          unless @skipped.empty?
-            lines << "  skipped #{@skipped.size} file(s) already reopened:"
-            @skipped.each { |s| lines << "    - #{s[:path]} (#{s[:reason]})" }
-          end
+          lines.concat(skipped_lines) unless @skipped.empty?
           @errors.each { |e| lines << "  error: #{e[:path]} -- #{e[:message]}" }
+
+          if nothing_left_to_do?
+            lines << ""
+            lines << "  Nothing to do -- every #{engine_label} file is already adopted."
+            lines << ""
+            lines << "  Next:  constable test --full        run everything, cold and native"
+            lines << "         constable modernize PATH --plan"
+            lines << "                                      see what porting one directory"
+            lines << "                                      to native cases would do"
+          end
 
           unless dry_run? || imported_count.zero?
             lines << ""
@@ -157,6 +164,28 @@ module Constable
           end
 
           lines.join("\n")
+        end
+
+        # A second `constable import` skips every file the first one adopted, and on a real
+        # suite that is over a thousand lines all saying the same sentence. The reason is
+        # the information; the file list is not, so it is grouped and capped.
+        SKIP_SAMPLE = 5
+
+        def skipped_lines
+          lines = []
+          @skipped.group_by { |skip| skip[:reason] }.each do |reason, skips|
+            lines << "  #{skips.size} #{skips.size == 1 ? "file" : "files"} skipped -- #{reason}:"
+            skips.first(SKIP_SAMPLE).each { |skip| lines << "    - #{skip[:path]}" }
+            remaining = skips.size - SKIP_SAMPLE
+            lines << "    ... and #{remaining} more" if remaining.positive?
+          end
+          lines
+        end
+
+        # Every file already adopted and nothing new to do. Saying "0 files" and stopping
+        # reads like a failure, so say it is already done and what the next step is.
+        def nothing_left_to_do?
+          imported_count.zero? && @changes.empty? && @errors.empty? && !@skipped.empty?
         end
 
         def engine_label = @from.to_s == "rspec" ? "RSpec" : "Minitest"

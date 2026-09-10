@@ -384,6 +384,32 @@ module Constable
       assert_match(/already matched by a cold_cases glob/, result.skipped.first[:reason])
     end
 
+    # A second import on a real suite skips every file it adopted the first time. Printing
+    # one line each is over a thousand lines of the same sentence, so the reason is stated
+    # once and the file list is capped.
+    def test_the_skipped_list_is_grouped_and_capped
+      seed_rspec(*(1..40).map { |n| "spec/models/model_#{n}_spec.rb" })
+      write_config("cold_cases:\n  - spec/models/**/*_spec.rb\n")
+
+      summary = import(config: Config.load(root: tmp_root)).summary
+
+      assert_match(/40 files skipped -- already matched by a cold_cases glob/, summary)
+      assert_match(/\.\.\. and 35 more/, summary)
+      assert_operator summary.lines.size, :<, 20
+    end
+
+    # "Would adopt 0 files" and nothing else reads like a failure rather than a suite that
+    # is already fully adopted.
+    def test_a_fully_adopted_suite_says_so_and_points_somewhere
+      seed_rspec("spec/models/user_spec.rb")
+      write_config("cold_cases:\n  - spec/models/**/*_spec.rb\n")
+
+      summary = import(config: Config.load(root: tmp_root)).summary
+
+      assert_match(/Nothing to do -- every RSpec file is already adopted/, summary)
+      assert_match(/constable modernize PATH --plan/, summary)
+    end
+
     def test_running_the_glob_route_twice_does_not_duplicate_the_entry
       seed_rspec("spec/models/user_spec.rb", "spec/models/post_spec.rb")
       import
