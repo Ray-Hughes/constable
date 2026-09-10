@@ -19,21 +19,18 @@
 # is identical either way. Re-run `rails generate constable:install --skip` after
 # upgrading and any settings added since will be appended, leaving your values alone.
 
-# Glob paths to run as cold cases: original RSpec/Minitest files, driven verbatim
-# through their own real engine, with pass/fail/timing fed into Constable's
-# reporting, flake history and CI gate alongside native cases.
+# Cold cases -- adopting an existing RSpec or Minitest suite -- are NOT configured here.
 #
-# This is the zero-file-change adoption route. The alternative is one line per
-# file -- inheriting from Constable::ColdCase::RSpec or ::Minitest -- which is
-# more explicit but touches source. Either way nothing gets rewritten.
+# They are declared in test/cold_cases.rb, which `constable import` writes:
 #
-# Every cold-case file is reported as a warning on every run: one per file, not
-# one per test. Not to nag, but so "12 tests not yet under native rules" is never
-# something the suite quietly forgets to mention.
-cold_cases: []
-# cold_cases:
-#   - spec/controllers/**/*_spec.rb
-#   - test/legacy/**/*_test.rb
+#     Constable.cold_cases do
+#       rspec "spec/**/*_spec.rb"
+#     end
+#
+# That is the one setting with a home outside this file, and the reason is visibility.
+# Linking a legacy suite decides what `constable test` runs at all, and as a key in here it
+# was invisible: the first run executed a thousand specs with nothing in the test tree to
+# say why. A file can be seen, read and deleted.
 
 # The blotter: flake history, the jail docket, warrants.
 #

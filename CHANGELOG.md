@@ -5,6 +5,62 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Adoption was invisible, so the first run was a surprise
+
+Linking a legacy suite was one key in `.constable/config.yml`. Nothing else changed, nothing
+appeared in the test tree, and the next `constable test` ran a thousand RSpec files with no
+visible reason why. The link decides what the suite *is*; it should not be the least visible
+thing in the project.
+
+`constable import` now writes `test/cold_cases.rb`:
+
+```ruby
+# RSpec is linked to Constable.
+#
+# Delete this file to unlink them.
+
+Constable.cold_cases do
+  rspec "spec/**/*_spec.rb"  # 1,277 files
+end
+```
+
+That file is the link rather than a description of one. Deleting it unlinks the suite, and
+narrowing a glob shrinks what stays cold as directories are ported across. Naming the engine
+also settles files the `_spec.rb` / `_test.rb` convention cannot answer for, which used to
+raise. Convention still wins where it applies, so one broad glob covering both kinds keeps
+dispatching per file.
+
+**Breaking.** `cold_cases:` in `config.yml` now raises and says where it went, rather than
+being silently ignored. `import` no longer edits `config.yml` at all, so the settings and
+comments in it cannot be disturbed by an adoption.
+
+### `--only`, replacing `--unsafe`
+
+There was no way to say "skip the legacy suite", which is the thing you want while working
+on a native case in a repo that is mostly cold. `--only` takes `native`, `cold`, `rspec` or
+`minitest`, and composes with `--full` and `--tier` rather than competing with them.
+
+**Breaking.** `--unsafe` is gone; `--only=cold` is the same thing under a name that does not
+read like a safety override.
+
+### A second import printed 1,277 identical lines
+
+Every already-adopted file got its own line saying the same sentence. Grouped by reason and
+capped at five now. A fully adopted suite said "Would adopt 0 files" and stopped, which
+reads like a failure rather than a suite that is already done; it now says so and points at
+`modernize`.
+
+### Fixed
+
+- The generated `case_helper.rb` offered `c.parallel_workers = ...` as its example of a
+  computed value. That setter raises. Guarded by a test that rejects any setter, commented
+  or not, for a setting whose home is elsewhere.
+- `worker_databases: off` is a YAML 1.1 boolean, so it arrived as `false` and fell through
+  to `:schema` -- silently the opposite of what the line said. `off`, `no` and `false` now
+  all read as `:off`.
+- `Constable.reset!` did not clear the configuration, so hooks and links leaked between
+  runs in the same process.
+
 ## [2.1.2]
 
 ### One file could cost every later file its shared examples

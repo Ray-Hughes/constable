@@ -10,7 +10,6 @@ module Constable
   # tier base classes, one-time global setup) lives in test/case_helper.rb instead.
   class Config
     DEFAULTS = {
-      "cold_cases" => [],
       "storage" => { "adapter" => "sqlite", "path" => ".constable/constable.sqlite3", "url" => nil },
       "warrants" => false,
       "warrant_retries" => 5,
@@ -74,6 +73,17 @@ module Constable
       # load time without needing a second home for settings.
       loaded = YAML.safe_load(ERB.new(File.read(path)).result, permitted_classes: [], aliases: true)
       return {} if loaded.nil?
+
+      if loaded.is_a?(Hash) && loaded.key?("cold_cases")
+        raise Constable::ConfigurationError,
+              "#{CONFIG_PATH} sets cold_cases, which moved to test/cold_cases.rb:\n\n    " \
+              "Constable.cold_cases do\n      " \
+              "rspec \"spec/**/*_spec.rb\"\n    " \
+              "end\n\n" \
+              "Delete the cold_cases key here and run `constable import --from=rspec` " \
+              "(or --from=minitest) to write that file. It lives in the test tree so that " \
+              "linking a legacy suite is visible rather than buried in a config key."
+      end
 
       unless loaded.is_a?(Hash)
         raise Constable::Error,

@@ -213,10 +213,11 @@ class LegacyUsersSpec < Constable::ColdCase::RSpec
 end
 ```
 
-```yaml
-# .constable/config.yml — or don't touch the file at all
-cold_cases:
-  - spec/controllers/**/*_spec.rb
+```ruby
+# test/cold_cases.rb — written by `constable import`, or don't touch a file at all
+Constable.cold_cases do
+  rspec "spec/controllers/**/*_spec.rb"
+end
 ```
 
 `Constable::ColdCase::RSpec` / `Constable::ColdCase::Minitest` run the file through the real RSpec/Minitest engine and feed pass/fail/timing into Constable's own reporting, flake history, and CI gate alongside native cases. RSpec/Minitest themselves are only needed when cold cases exist, so the installer puts them in an optional Gemfile group:
@@ -354,8 +355,10 @@ Tables: `flake_history`, `jail_docket`, `warrants`.
 |---|---|
 | `constable test` | Everything — native + cold cases (git-diff-scoped locally, `--full` for the whole suite; CI always uses `--full`) |
 | `constable test PATH[:LINE]` | One file, or one specific `investigate` at that line |
-| `constable test --unsafe` | Every cold case only |
-| `constable test PATH:LINE --unsafe` | One specific cold case only |
+| `constable test --only=cold` | Every cold case only |
+| `constable test PATH:LINE --only=cold` | One specific cold case only |
+| `constable test --only=native` | Skip the legacy suite entirely |
+| `constable test --only=rspec` \| `--only=minitest` | One engine only |
 | `constable test --jail` | The full run, in **jail mode** |
 | `constable last` | The most recent run in detail — failures, slowest tests, slowest files |
 | `constable metrics` | Lifetime KPIs — runs, tests executed, pass rate, runtime, flakiest, never-passed |
@@ -491,13 +494,32 @@ SessionsCase                       ✓✓⛓✓
 
 Failure messages are specific, not generic: the assertion's own context (response body, record attributes), file:line at the `investigate` block itself (not framework internals), and a ready-to-paste rerun command with the exact seed. Sections print worst-to-least-urgent: parole violations, then failures, then warnings, then the slowest list.
 
+## Cold-case links
+
+Cold-case globs are the one thing that is not a config setting. They live in
+`test/cold_cases.rb`, as executable Ruby:
+
+```ruby
+Constable.cold_cases do
+  rspec    "spec/**/*_spec.rb"
+  minitest "test/legacy/**/*_test.rb"
+end
+```
+
+Loaded by the generated `case_helper.rb`, and by the runner directly, so it works in an app
+whose helper predates the file or has none. Globs de-duplicate, so loading twice is safe.
+
+Naming the engine is also the only way to settle a file the `_spec.rb` / `_test.rb`
+convention cannot answer for; without it such a file raises rather than being guessed at.
+
+Assigning `cold_cases` through `Constable.configure` raises and names this file. The reason
+it is not a config key is visibility: it determines what `constable test` runs at all, and
+a line in a YAML file made the first run look like it ran a legacy suite for no reason.
+
 ## Configuration reference
 
 ```yaml
 # .constable/config.yml
-cold_cases:                     # glob paths to run as cold cases (unmodified RSpec/Minitest)
-  - spec/controllers/**/*_spec.rb
-
 storage:
   adapter: sqlite                # sqlite (default) | postgres | mysql
   path: .constable/constable.sqlite3

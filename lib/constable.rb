@@ -90,6 +90,18 @@ module Constable
       @configuration ||= Configuration.new
     end
 
+    # The contents of test/cold_cases.rb:
+    #
+    #     Constable.cold_cases do
+    #       rspec    "spec/**/*_spec.rb"
+    #       minitest "test/legacy/**/*_test.rb"
+    #     end
+    #
+    # Deliberately not part of Constable.configure. Linking a legacy suite is not a
+    # setting, it is the decision that determines what `constable test` runs at all, and
+    # it earns a file of its own so it is visible in the test tree.
+    def cold_cases(&) = configuration.cold_cases(&)
+
     def storage
       @storage ||= Storage::Adapter.build(config).tap(&:setup!)
     end
@@ -112,6 +124,7 @@ module Constable
       @config = nil
       @storage = nil
       @registry = nil
+      @configuration = nil
       @warnings = []
     end
 
@@ -179,6 +192,23 @@ module Constable
       worker_databases jail_flakes output tiers
     ].freeze
 
+    # Which engine a cold file runs under, declared rather than guessed. Without this the
+    # only signal is the filename suffix, which cannot answer for `test/legacy/foo.rb` and
+    # has to raise instead.
+    class ColdCaseLinks
+      ENGINES = %i[rspec minitest].freeze
+
+      def initialize = @globs = ENGINES.to_h { |engine| [engine, []] }
+
+      ENGINES.each do |engine|
+        define_method(engine) { |*globs| @globs[engine].concat(globs.flatten.map(&:to_s)) }
+      end
+
+      def globs = @globs.reject { |_engine, list| list.empty? }.transform_values(&:uniq)
+      def any?  = globs.any?
+      def flat  = globs.values.flatten
+    end
+
     attr_accessor :seed
 
     SETTINGS_ONLY_IN_YAML.each do |setting|
@@ -193,12 +223,27 @@ module Constable
       case setting
       when :storage then storage_message
       when :modernize then modernize_message
+      when :cold_cases then cold_cases_message
       else
         "#{setting} is set in .constable/config.yml, not Constable.configure. Settings " \
         "have one home so there is no precedence rule to learn, and the file is run " \
         "through ERB, so a computed value still works. Constable.configure is for " \
         "code: before_suite, after_suite, matchers."
       end
+    end
+
+    # cold_cases is the one setting whose home is neither config.yml nor a setter. Linking
+    # a legacy suite is the single most consequential thing an adopter does, and burying it
+    # in a config key meant the first `constable test` ran a thousand specs nobody could
+    # see a reason for. It gets a file, so the link is visible in the tree.
+    def self.cold_cases_message
+      "cold_cases is declared in test/cold_cases.rb, not Constable.configure:\n\n    " \
+        "Constable.cold_cases do\n      " \
+        "rspec \"spec/**/*_spec.rb\"\n    " \
+        "end\n\n" \
+        "`constable import --from=rspec` writes that file for you. It lives in the test " \
+        "tree rather than in config.yml so that linking a legacy suite is visible, and " \
+        "deleting the file really does unlink it."
     end
 
     def self.storage_message
@@ -219,9 +264,23 @@ module Constable
       @after_suite_hooks  = []
     end
 
-    # Nothing to merge: settings live in the file. The loader still asks, and an empty
-    # hash is the honest answer.
-    def overrides = {}
+    # `Constable.cold_cases { rspec "spec/**/*_spec.rb" }` -- see ColdCaseLinks.
+    def cold_cases(&block)
+      @cold_case_links ||= ColdCaseLinks.new
+      @cold_case_links.instance_eval(&block) if block
+      @cold_case_links
+    end
+
+    attr_reader :cold_case_links
+
+    # Settings live in config.yml, with one exception: the cold-case links live in
+    # test/cold_cases.rb, and this is how they reach the loader.
+    def overrides
+      links = @cold_case_links
+      return {} if links.nil? || links.globs.empty?
+
+      { cold_cases: links.flat, cold_case_engines: links.globs }
+    end
 
     def before_suite(&block) = @before_suite_hooks << block
     def after_suite(&block)  = @after_suite_hooks << block

@@ -45,9 +45,18 @@ module Constable
 
     def read(relative_path) = File.read(File.join(tmp_root, relative_path))
 
+    LINK_PATH = "test/cold_cases.rb"
+
+    # The link lives in test/cold_cases.rb now, as executable Ruby rather than a config
+    # key, so read it the way the importer does -- by pattern, without executing it.
     def cold_cases_in_config
-      YAML.safe_load_file(File.join(tmp_root, Config::CONFIG_PATH), permitted_classes: [], aliases: true)["cold_cases"]
+      path = File.join(tmp_root, LINK_PATH)
+      return [] unless File.exist?(path)
+
+      File.read(path).scan(/^\s*(?:rspec|minitest)\s+"([^"]+)"/).flatten
     end
+
+    def link_file = read(LINK_PATH)
 
     # ---- discovery ---------------------------------------------------------------
 
@@ -243,23 +252,18 @@ module Constable
       assert_equal 2, result.changes.size
     end
 
-    def test_editing_the_config_preserves_other_settings_and_comments
+    # The link is Ruby in the test tree now, not a config key, so config.yml is not
+    # touched at all -- and the settings a user wrote there cannot be disturbed by an
+    # import, which is most of what the old YAML-rewriting tests were guarding.
+    def test_import_writes_the_link_file_and_leaves_config_alone
       seed_rspec("spec/models/user_spec.rb")
-      write_config(<<~YAML)
-        # Hand-written, and the comments matter.
-        cold_cases:
-          - legacy/**/*_spec.rb   # imported last spring
-        warrants: true            # flaky detector on
-        parole_period: 3
-      YAML
+      write_config("# Hand-written, and the comments matter.\nwarrants: true\nparole_period: 3\n")
 
       import(paths: ["spec/models"])
-      updated = read(Config::CONFIG_PATH)
 
-      assert_includes updated, "# Hand-written, and the comments matter."
-      assert_includes updated, "- legacy/**/*_spec.rb   # imported last spring"
-      assert_includes updated, "warrants: true            # flaky detector on"
-      assert_equal ["legacy/**/*_spec.rb", "spec/**/*_spec.rb"], cold_cases_in_config
+      assert_equal ["spec/**/*_spec.rb"], cold_cases_in_config
+      assert_equal "# Hand-written, and the comments matter.\nwarrants: true\nparole_period: 3\n",
+                   read(Config::CONFIG_PATH)
 
       reloaded = Config.load(root: tmp_root)
 
@@ -267,56 +271,45 @@ module Constable
       assert_equal 3, reloaded.parole_period
     end
 
-    def test_editing_the_config_reports_that_comments_survived
+    # The file exists to be read by a person, so it has to say what it is and how to undo
+    # it -- not just carry the globs.
+    def test_the_link_file_explains_itself
       seed_rspec("spec/models/user_spec.rb")
-      write_config("cold_cases:\n  - legacy/**/*_spec.rb\nwarrants: true\n")
-
-      result = import(paths: ["spec/models"])
-
-      assert_predicate result, :comments_preserved?
-    end
-
-    def test_an_empty_inline_cold_cases_list_becomes_a_block
-      seed_rspec("spec/models/user_spec.rb")
-      write_config("cold_cases: []\nparole_period: 7\n")
-
       import(paths: ["spec/models"])
 
-      assert_equal ["spec/**/*_spec.rb"], cold_cases_in_config
-      assert_equal 7, Config.load(root: tmp_root).parole_period
+      assert_match(/RSpec is linked to Constable/, link_file)
+      assert_match(/Delete this file to unlink them/, link_file)
+      assert_match(/Constable\.cold_cases do/, link_file)
+      assert_match(%r{rspec "spec/\*\*/\*_spec\.rb"}, link_file)
+      assert_match(/# 1 file$/, link_file)
     end
 
-    def test_a_config_without_a_cold_cases_key_gets_one_appended
-      seed_rspec("spec/models/user_spec.rb")
-      write_config("warrants: true\ncoverage: true\n")
+    # It is loadable Ruby, not a template with holes in it.
+    def test_the_link_file_is_valid_ruby_that_declares_the_globs
+      seed_rspec("spec/models/user_spec.rb", "spec/models/post_spec.rb")
+      import
 
-      import(paths: ["spec/models"])
+      Constable.reset!
+      Constable.configuration.instance_eval(File.read(File.join(tmp_root, LINK_PATH)).sub("Constable.", "self."))
 
-      assert_equal ["spec/**/*_spec.rb"], cold_cases_in_config
-      assert_predicate Config.load(root: tmp_root), :coverage?
+      assert_equal({ rspec: ["spec/**/*_spec.rb"] }, Constable.configuration.cold_case_links.globs)
     end
 
-    def test_a_missing_config_file_is_created
+    def test_a_second_import_does_not_duplicate_the_glob
       seed_rspec("spec/models/user_spec.rb")
-      FileUtils.rm_f(File.join(tmp_root, Config::CONFIG_PATH))
-
-      import(paths: ["spec/models"])
+      import
+      import(config: Config.load(root: tmp_root))
 
       assert_equal ["spec/**/*_spec.rb"], cold_cases_in_config
     end
 
-    def test_an_exotic_inline_cold_cases_list_falls_back_to_a_dump_that_keeps_every_setting
-      seed_rspec("spec/models/user_spec.rb")
-      write_config("cold_cases: [legacy/**/*_spec.rb]\nwarrants: true\nparole_period: 4\n")
+    def test_minitest_writes_a_minitest_link
+      write_file("test/legacy/user_test.rb",
+                 "require \"minitest/autorun\"\nclass UserTest < Minitest::Test\n  def test_a; end\nend\n")
+      import(from: :minitest)
 
-      result = import(paths: ["spec/models"])
-
-      refute_predicate result, :comments_preserved?
-      assert_equal ["legacy/**/*_spec.rb", "spec/**/*_spec.rb"], cold_cases_in_config
-      reloaded = Config.load(root: tmp_root)
-
-      assert_predicate reloaded, :warrants?
-      assert_equal 4, reloaded.parole_period
+      assert_match(/Minitest is linked to Constable/, link_file)
+      assert_match(%r{minitest "test/\*\*/\*_test\.rb"}, link_file)
     end
 
     # ---- dry run -----------------------------------------------------------------
@@ -375,7 +368,7 @@ module Constable
 
     def test_a_file_already_matched_by_a_glob_is_skipped
       seed_rspec("spec/models/user_spec.rb")
-      write_config("cold_cases:\n  - spec/models/**/*_spec.rb\n")
+      link_cold_cases(:rspec, "spec/models/**/*_spec.rb")
 
       result = import(config: Config.load(root: tmp_root))
 
@@ -389,7 +382,7 @@ module Constable
     # once and the file list is capped.
     def test_the_skipped_list_is_grouped_and_capped
       seed_rspec(*(1..40).map { |n| "spec/models/model_#{n}_spec.rb" })
-      write_config("cold_cases:\n  - spec/models/**/*_spec.rb\n")
+      link_cold_cases(:rspec, "spec/models/**/*_spec.rb")
 
       summary = import(config: Config.load(root: tmp_root)).summary
 
@@ -402,7 +395,7 @@ module Constable
     # is already fully adopted.
     def test_a_fully_adopted_suite_says_so_and_points_somewhere
       seed_rspec("spec/models/user_spec.rb")
-      write_config("cold_cases:\n  - spec/models/**/*_spec.rb\n")
+      link_cold_cases(:rspec, "spec/models/**/*_spec.rb")
 
       summary = import(config: Config.load(root: tmp_root)).summary
 
@@ -450,8 +443,9 @@ module Constable
 
       summary = import.summary
 
-      assert_match(/cold_cases:/, summary)
-      assert_match(%r{\.constable/config\.yml}, summary)
+      assert_match(/Constable\.cold_cases do/, summary)
+      assert_match(%r{test/cold_cases\.rb}, summary)
+      refute_match(%r{\.constable/config\.yml}, summary)
     end
 
     def test_the_summary_says_what_to_do_next

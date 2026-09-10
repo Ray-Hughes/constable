@@ -65,7 +65,7 @@ module Constable
     # The command that reruns exactly this test, seed included, ready to paste.
     def rerun_command
       base = "constable test #{location}"
-      base += " --unsafe" if cold?
+      base += " --only=cold" if cold?
       base += " --seed #{@seed}" if @seed
       base
     end

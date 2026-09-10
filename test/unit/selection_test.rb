@@ -43,17 +43,48 @@ module Constable
     end
 
     def test_cold_case_detected_from_config_glob
-      write_config("cold_cases:\n  - spec/**/*_spec.rb\n")
+      link_cold_cases(:rspec, "spec/**/*_spec.rb")
       target = selection([], full: true).targets.find { |t| t.path.include?("old_users_spec") }
 
       assert_predicate target, :cold?
     end
 
-    def test_unsafe_only_selects_cold_cases_alone
-      targets = selection([], unsafe_only: true).targets
+    def test_only_cold_selects_cold_cases_alone
+      targets = selection([], only: "cold").targets
 
       assert_equal ["spec/legacy/old_users_spec.rb"], relative(targets)
       assert(targets.all?(&:cold?))
+    end
+
+    # The missing opposite. There was no way to say "skip the legacy suite", which is the
+    # thing you want while working on a native case in a repo that is 99% cold.
+    def test_only_native_skips_every_cold_case
+      targets = selection([], full: true, only: "native").targets
+
+      refute_empty targets
+      assert(targets.none?(&:cold?))
+      refute_includes relative(targets), "spec/legacy/old_users_spec.rb"
+    end
+
+    def test_only_an_engine_narrows_to_that_engine
+      write_file("test/legacy/thing_test.rb",
+                 "require \"minitest/autorun\"\nclass ThingTest < Minitest::Test\n  def test_a; end\nend\n")
+      link_cold_cases(:rspec, "spec/**/*_spec.rb")
+      link_cold_cases(:minitest, "test/legacy/**/*_test.rb")
+
+      rspec_only = selection([], full: true, only: "rspec").targets
+
+      assert_equal ["spec/legacy/old_users_spec.rb"], relative(rspec_only)
+
+      minitest_only = selection([], full: true, only: "minitest").targets
+
+      assert_equal ["test/legacy/thing_test.rb"], relative(minitest_only)
+    end
+
+    # --only narrows what runs; --full says how much. Both at once is the CI case.
+    def test_only_composes_with_full
+      assert(selection([], full: true, only: "native").targets.none?(&:cold?))
+      assert(selection([], full: true, only: "cold").targets.all?(&:cold?))
     end
 
     def test_explicit_path_selects_one_file

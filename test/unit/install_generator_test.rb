@@ -242,12 +242,15 @@ module Constable
       refute_predicate Constable.config, :warrants?
     end
 
-    def test_generated_config_leaves_the_cold_case_example_commented_out
+    # cold_cases is not a config key any more; the file has to point at its real home
+    # rather than leave a reader hunting for a setting that no longer exists.
+    def test_generated_config_points_cold_cases_at_its_own_file
       install
       config = generated(".constable/config.yml")
 
-      assert_match(/^cold_cases: \[\]$/, config)
-      assert_match(%r{^#   - spec/controllers/\*\*/\*_spec\.rb$}, config)
+      refute_match(/^cold_cases:/, config)
+      assert_match(%r{test/cold_cases\.rb}, config)
+      assert_match(/Constable\.cold_cases do/, config)
     end
 
     # -- the :cold_case Gemfile group ---------------------------------------

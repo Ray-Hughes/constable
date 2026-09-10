@@ -33,14 +33,39 @@ module Constable
           Constable.configure { |c| c.public_send("#{setting}=", "anything") }
         end
 
-        assert_match(/config\.yml/, error.message)
+        assert_match(/config\.yml|cold_cases\.rb/, error.message)
       end
     end
 
+    # cold_cases is the one name in the raiser list with no config key behind it: its home
+    # is test/cold_cases.rb, so it belongs to neither list's other half.
+    HOMED_ELSEWHERE = %i[cold_cases].freeze
+
     def test_the_two_lists_stay_in_step
-      assert_equal Config::DEFAULTS.keys.map(&:to_sym).sort,
-                   (Configuration::SETTINGS + Configuration::SETTINGS_ONLY_IN_YAML).sort,
+      accounted = Configuration::SETTINGS + Configuration::SETTINGS_ONLY_IN_YAML - HOMED_ELSEWHERE
+
+      assert_equal Config::DEFAULTS.keys.map(&:to_sym).sort, accounted.sort,
                    "every setting must be accounted for in exactly one place"
+    end
+
+    def test_cold_cases_points_at_its_own_file_rather_than_config_yml
+      error = assert_raises(ConfigurationError) do
+        Constable.configure { |c| c.cold_cases = ["spec/**/*_spec.rb"] }
+      end
+
+      assert_match(%r{test/cold_cases\.rb}, error.message)
+      assert_match(/Constable\.cold_cases do/, error.message)
+    end
+
+    # The config key is gone, and a file that still carries it must say so rather than be
+    # silently ignored -- which is the failure mode this whole split exists to remove.
+    def test_cold_cases_left_in_config_yml_raises_and_says_where_it_went
+      write_file(".constable/config.yml", "cold_cases:\n  - spec/**/*_spec.rb\n")
+
+      error = assert_raises(ConfigurationError) { Constable.reset! && Constable.config }
+
+      assert_match(%r{test/cold_cases\.rb}, error.message)
+      assert_match(/constable import --from=rspec/, error.message)
     end
 
     # Ordering, not preference: the blotter is opened before case_helper.rb loads so the

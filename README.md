@@ -151,10 +151,30 @@ run from where they are, through real RSpec, with results folded into Constable'
 flake history and CI gate.
 
 ```console
-$ constable import --from=rspec --dry-run   # read it first, it changes a config file
+$ constable import --from=rspec --dry-run   # read it first
 $ constable import --from=rspec
 $ constable test --full                     # the whole suite, cold cases and all
 ```
+
+`import` writes one file, `test/cold_cases.rb`, and changes nothing else:
+
+```ruby
+# RSpec is linked to Constable.
+#
+# These files run through real RSpec, in place, and report as cold cases alongside
+# native ones -- same summary, same flake history, same CI gate.
+#
+# Delete this file to unlink them.
+
+Constable.cold_cases do
+  rspec "spec/**/*_spec.rb"  # 1,277 files
+end
+```
+
+That file **is** the link, not a description of one. Deleting it unlinks the suite;
+narrowing a glob shrinks what stays cold as you port directories across. It lives in the
+test tree rather than in `.constable/config.yml` on purpose: linking a legacy suite decides
+what `constable test` runs at all, and a config key made that invisible.
 
 At this point you are done. Everything below is optional and can happen a directory at a
 time, over months, with a green suite the entire way.
@@ -181,6 +201,18 @@ $ constable import --from=minitest
 $ constable test --full
 ```
 
+Same single file, declaring the other engine:
+
+```ruby
+Constable.cold_cases do
+  minitest "test/legacy/**/*_test.rb"  # 312 files
+end
+```
+
+Both can be declared at once, so a codebase with `spec/` from one era and `test/` from
+another gets one suite, one summary and one CI gate. Naming the engine also settles files
+the `_spec.rb`/`_test.rb` convention cannot answer for.
+
 `modernize` handles `def test_foo` → `investigate "foo"` and `setup` → `briefing`, and the
 same rule applies: anything ambiguous is moved verbatim rather than guessed at.
 
@@ -202,6 +234,8 @@ tier base classes and the two things Constable deliberately does not have.
 ```console
 $ constable test              # only what your current git diff touches
 $ constable test --full       # everything. this is what CI runs
+$ constable test --only=native   # skip the legacy suite
+$ constable test --only=cold     # run only the legacy suite
 $ constable last              # everything about the most recent run
 $ constable metrics           # lifetime KPIs for the suite
 $ constable insights          # what to fix first, and why
@@ -350,12 +384,17 @@ class LegacyUsersSpec < Constable::ColdCase::RSpec
 end
 ```
 
-**Or nothing changes at all** — match the path in config:
+**Or nothing changes at all** — declare the path in `test/cold_cases.rb`:
 
-```yaml
-cold_cases:
-  - spec/controllers/**/*_spec.rb
+```ruby
+Constable.cold_cases do
+  rspec "spec/controllers/**/*_spec.rb"
+end
 ```
+
+`constable import` writes that file. It is the one place cold-case globs live, and the
+reason it is a file rather than a config key is visibility: it sits in the test tree, so
+the link between your legacy suite and Constable is something you can see and delete.
 
 ```console
 $ constable import --from=rspec        # reopen everything, verbatim
@@ -596,7 +635,7 @@ worse than one that resets.
 | `constable test` | Everything, git-diff-scoped locally |
 | `constable test --full` | The whole suite. CI always uses this |
 | `constable test PATH[:LINE]` | One file, or one investigation at that line |
-| `constable test --unsafe` | Cold cases only |
+| `constable test --only=MODE` | Narrow by what runs it: `native`, `cold`, `rspec`, `minitest` |
 | `constable test --jail` | The full run, in jail mode |
 | `constable test --shard i/n` | One slice of the suite, for a CI matrix |
 | `constable jail [run\|parole\|release]` | The docket. `release --all` empties it |
@@ -613,7 +652,7 @@ worse than one that resets.
 | `constable import --from=rspec` | Adopt an existing suite as cold cases |
 | `constable modernize PATH [--port --base C --delete]` | Opt-in AST rewrite into the native DSL. `--port` writes into `test/cases/`, `--base` sets the superclass, `--delete` removes the original, `--cold` moves it verbatim |
 
-Flags: `--full --unsafe --jail --warrants --coverage --seed N --workers N --verbose --tier T\n--expanded --concise --output MODE --no-color`.
+Flags: `--full --only MODE --jail --warrants --coverage --seed N --workers N --verbose --tier T\n--expanded --concise --output MODE --no-color`.
 
 Order is randomized every run for native cases, with the seed printed and replayable via
 `--seed`. Cold cases keep their own engine's order. Workers run in parallel by default,
@@ -1025,9 +1064,6 @@ other generated files, which you have probably edited, are left as they are.)
 
 ```yaml
 # .constable/config.yml
-cold_cases:
-  - spec/controllers/**/*_spec.rb
-
 storage:
   adapter: sqlite                # sqlite (default) | postgres | mysql
   path: .constable/constable.sqlite3

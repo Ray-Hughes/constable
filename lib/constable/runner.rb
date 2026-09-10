@@ -159,7 +159,7 @@ module Constable
     def mode_label
       return "jail_run" if jail_run?
       return "jail" if jail_mode?
-      return "unsafe" if @selection.unsafe_only?
+      return @selection.only.to_s if @selection.only
 
       @selection.full? ? "full" : "diff"
     end
@@ -172,6 +172,13 @@ module Constable
       helper = %w[test/case_helper.rb spec/case_helper.rb].map { |p| File.join(Constable.root, p) }
                                                           .find { |p| File.exist?(p) }
       require helper if helper
+
+      # The cold-case link. The generated case_helper requires this too, but loading it
+      # here as well means it works in an app whose helper predates the file, and in one
+      # that has no helper at all. `require` is idempotent and the globs de-duplicate, so
+      # being loaded twice costs nothing.
+      link = File.join(Constable.root, "test/cold_cases.rb")
+      require link if File.exist?(link)
 
       # Between requiring the helper and asking the selection anything.
       #
@@ -1158,7 +1165,7 @@ module Constable
         root: Constable.root,
         # Cold cases contribute their numbers but are never held to the diff gate, so a
         # run carrying nothing else must not be gated at all.
-        gate: !@selection.unsafe_only?
+        gate: !@selection.cold_only?
       )
       Constable::Coverage.abort!
       report

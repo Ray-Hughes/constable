@@ -95,7 +95,7 @@ module Constable
 
     # A cold case reruns through its own engine, so the command has to say so.
     def test_a_cold_result_reruns_as_a_cold_case
-      assert_match(/--unsafe/, full_result.rerun_command)
+      assert_match(/--only=cold/, full_result.rerun_command)
     end
   end
 end

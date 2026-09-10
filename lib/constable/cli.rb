@@ -53,7 +53,8 @@ module Constable
       that line.
     DESC
     option :full,     type: :boolean, default: false, desc: "Run the whole suite (always use this in CI)"
-    option :unsafe,   type: :boolean, default: false, desc: "Run cold cases only"
+    option :only,     type: :string, enum: %w[native cold rspec minitest],
+                      desc: "Narrow by what runs the test: native, cold, rspec or minitest"
     option :jail,     type: :boolean, default: false, desc: "Jail failures instead of failing the build"
     option :warrants, type: :boolean, desc: "Turn the flaky detector on for this run"
     option :coverage, type: :boolean, desc: "Record coverage for this run"
@@ -77,7 +78,7 @@ module Constable
         config: config,
         root: Constable.root,
         full: options[:full],
-        unsafe_only: options[:unsafe],
+        only: options[:only],
         tier: options[:tier]
       )
 

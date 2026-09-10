@@ -104,6 +104,21 @@ module Constable
         matched.select { |path| File.file?(path) }.uniq.sort
       end
 
+      def declared_engine_for(path)
+        links = Constable.configuration.cold_case_links
+        return nil unless links&.any?
+
+        relative = path.to_s.delete_prefix("#{Constable.root}/")
+        links.globs.each do |engine, globs|
+          matched = globs.any? do |glob|
+            File.fnmatch?(glob, relative, File::FNM_PATHNAME | File::FNM_EXTGLOB) ||
+              File.fnmatch?(glob, path.to_s, File::FNM_PATHNAME | File::FNM_EXTGLOB)
+          end
+          return engine if matched
+        end
+        nil
+      end
+
       # :rspec, :minitest, or nil when we genuinely cannot tell.
       #
       # An explicit Constable::ColdCase::* superclass is the strongest signal -- the user
@@ -118,6 +133,13 @@ module Constable
 
         return :rspec    if path.end_with?("_spec.rb")
         return :minitest if path.end_with?("_test.rb")
+
+        # test/cold_cases.rb says which engine each glob belongs to. It sits *below* the
+        # naming convention deliberately: a glob is broad and may cover both kinds, so
+        # `rspec "legacy/*.rb"` must not claim legacy/thing_test.rb. What it answers is the
+        # case nothing else can -- a file whose name follows neither convention.
+        declared = declared_engine_for(path)
+        return declared if declared
 
         if source
           return :rspec    if source.match?(/^\s*(?:RSpec\.)?(?:describe|feature|context)\b/)

@@ -23,6 +23,9 @@ module Constable
     class Reopener
       STRATEGIES = %i[auto config superclass].freeze
 
+      # Where the cold-case link lives. Not config.yml: see #apply_config_globs.
+      LINK_PATH = "test/cold_cases.rb"
+
       ENGINES = {
         rspec: {
           glob: "spec/**/*_spec.rb",
@@ -127,10 +130,11 @@ module Constable
           unless @globs_added.empty?
             lines << ""
             lines << "  Your #{@from} files stay exactly where they are and are not changed."
-            lines << "  #{dry_run? ? "One line would be added to" : "One line was added to"} " \
-                     "#{@config_path}:"
+            lines << "  #{dry_run? ? "This would be written to" : "Written to"} #{LINK_PATH}:"
             lines << ""
-            @globs_added.each { |glob| lines << "    cold_cases:\n      - #{glob}" }
+            lines << "    Constable.cold_cases do"
+            @globs_added.each { |glob| lines << "      #{@from} #{glob.inspect}" }
+            lines << "    end"
             lines << ""
             lines << "  Constable runs them from there, through real #{engine_label}, and folds"
             lines << "  the results into its own reporting, flake history and CI gate."
@@ -158,7 +162,7 @@ module Constable
           unless dry_run? || imported_count.zero?
             lines << ""
             lines << "  Next:  constable test --full        run everything, cold and native"
-            lines << "         constable test --unsafe      run only these"
+            lines << "         constable test --only=cold   run only these"
             lines << "         constable modernize PATH     see what one file would look like"
             lines << "                                      as a native case (writes nothing)"
           end
@@ -223,7 +227,8 @@ module Constable
 
       def call
         result = Result.new(from: @from, strategy: @strategy, root: @root,
-                            config_path: Config::CONFIG_PATH, dry_run: @dry_run)
+                            config_path: LINK_PATH, dry_run: @dry_run)
+        adopt_declared_globs!
         candidates = discover(result)
         return result if candidates.empty?
 
@@ -231,6 +236,17 @@ module Constable
         apply_config_globs(globs, result)
         apply_superclass_swaps(leftovers, result)
         result
+      end
+
+      # `constable import` does not boot the application -- that is what makes it usable on
+      # a suite that does not load yet -- so test/cold_cases.rb is never executed here and
+      # the config knows nothing about what is already linked. Without this, a second
+      # import reports every previously adopted file as newly adopted.
+      def adopt_declared_globs!
+        declared = existing_cold_cases(File.join(@root, LINK_PATH))
+        return if declared.empty? || !@config.respond_to?(:apply_overrides!)
+
+        @config.apply_overrides!(cold_cases: declared)
       end
 
       # Every file the engine owns that isn't already running as a cold case.
@@ -377,10 +393,16 @@ module Constable
         !on_disk.empty? && on_disk.all? { |path| set.include?(path) }
       end
 
+      # The link goes in test/cold_cases.rb, not in config.yml.
+      #
+      # It used to be a config key, and the whole of adoption was therefore invisible: one
+      # line in a YAML file nobody reopens, after which `constable test` ran a thousand
+      # specs with nothing in the test tree to explain why. A file you can see, delete, and
+      # read the globs out of is the difference between a surprise and a decision.
       def apply_config_globs(globs, result)
         return if globs.empty?
 
-        path = File.join(@root, Config::CONFIG_PATH)
+        path = File.join(@root, LINK_PATH)
         existing = existing_cold_cases(path)
         result.existing_globs.concat(existing)
         fresh = globs.reject { |glob| existing.include?(glob) }
@@ -390,51 +412,45 @@ module Constable
         return if fresh.empty? || dry_run?
 
         FileUtils.mkdir_p(File.dirname(path))
-        updated, preserved = merged_config_yaml(path, fresh)
-        result.comments_preserved = preserved
-        File.write(path, updated)
+        File.write(path, link_file(existing + fresh))
+      end
+
+      def engine_label = @from.to_s == "rspec" ? "RSpec" : "Minitest"
+
+      def link_file(globs)
+        counts = globs.to_h { |glob| [glob, Dir.glob(File.join(@root, glob)).size] }
+        width  = globs.map(&:length).max.to_i
+
+        <<~RUBY
+          # frozen_string_literal: true
+
+          # #{engine_label} is linked to Constable.
+          #
+          # These files run through real #{engine_label}, in place, and report as cold cases
+          # alongside native ones -- same summary, same flake history, same CI gate. Nothing
+          # here is rewritten, and nothing was moved to add this file.
+          #
+          # Delete this file to unlink them. Narrow a glob to shrink what stays cold as you
+          # port directories into test/cases/ with `constable modernize`.
+
+          Constable.cold_cases do
+          #{globs.map { |glob| "  #{@from} #{glob.inspect.ljust(width + 2)}  # #{counts[glob]} #{counts[glob] == 1 ? "file" : "files"}" }.join("\n")}
+          end
+        RUBY
       end
 
       def covered_files(globs)
         globs.flat_map { |glob| Dir.glob(File.join(@root, glob)).map { |path| relativize(path) } }.uniq.sort
       end
 
+      # Read back the globs already declared, without executing the file -- import runs
+      # without booting the app, so `Constable.cold_cases` is not callable here.
       def existing_cold_cases(path)
         return [] unless File.exist?(path)
 
-        raw = YAML.safe_load_file(path, permitted_classes: [], aliases: true) || {}
-        Array(raw["cold_cases"]).map(&:to_s)
+        File.read(path).scan(/^\s*(?:rspec|minitest)\s+["']([^"']+)["']/).flatten
       rescue StandardError
         []
-      end
-
-      # Editing YAML as text rather than round-tripping through the parser, because a
-      # config file is a document a human wrote and their comments are part of it.
-      # If the text edit can't be verified afterwards we fall back to a full dump, which
-      # keeps every setting but loses the comments -- and says so in the result.
-      def merged_config_yaml(path, globs)
-        original = File.exist?(path) ? File.read(path) : nil
-        edited = original.nil? ? fresh_config_yaml(globs) : insert_globs(original, globs)
-
-        parsed = begin
-          edited && (YAML.safe_load(edited, permitted_classes: [], aliases: true) || {})
-        rescue StandardError
-          nil
-        end
-
-        if edited && parsed.is_a?(Hash) && globs.all? { |glob| Array(parsed["cold_cases"]).include?(glob) }
-          [edited, true]
-        else
-          [rewritten_config_yaml(original, globs), false]
-        end
-      end
-
-      def fresh_config_yaml(globs)
-        <<~YAML
-          # Constable settings. See docs/SPEC.md for the full reference.
-          cold_cases:                     # run verbatim through their original engine
-          #{globs.map { |glob| "  - #{quote(glob)}" }.join("\n")}
-        YAML
       end
 
       # Last resort: reparse and re-dump. Loses comments, never loses settings.
@@ -450,38 +466,6 @@ module Constable
               end
         raw["cold_cases"] = (Array(raw["cold_cases"]).map(&:to_s) + globs).uniq
         YAML.dump(raw)
-      end
-
-      def insert_globs(original, globs)
-        lines = original.lines
-        key_index = lines.index { |line| line.match?(/\Acold_cases\s*:/) }
-
-        return append_block(lines, globs) if key_index.nil?
-
-        key_line = lines[key_index]
-        inline = key_line.split(":", 2)[1].to_s.sub(/#.*\z/, "").strip
-
-        # `cold_cases: []` and `cold_cases:` both become a block; anything else inline
-        # (a populated flow sequence, an anchor) is too exotic to edit safely as text --
-        # nil tells the caller to fall back to a full re-dump.
-        return nil if !inline.empty? && inline != "[]"
-
-        lines[key_index] = key_line.sub(/:\s*\[\]/, ":") if inline == "[]"
-
-        insert_at = key_index
-        cursor = key_index + 1
-        while cursor < lines.length
-          line = lines[cursor]
-          break if line.match?(/\A\S/) && !line.start_with?("#")
-
-          insert_at = cursor if line.match?(/\A\s+-\s/)
-          cursor += 1
-        end
-
-        indent = lines[insert_at].match?(/\A(\s+)-\s/) ? lines[insert_at][/\A\s+/] : "  "
-        lines[insert_at] = "#{lines[insert_at].chomp}\n" unless lines[insert_at].end_with?("\n")
-        lines.insert(insert_at + 1, *globs.map { |glob| "#{indent}- #{quote(glob)}\n" })
-        lines.join
       end
 
       def append_block(lines, globs)

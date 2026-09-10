@@ -76,6 +76,16 @@ module Constable
       Constable.warnings.replace(original)
     end
 
+    # Cold-case globs live in test/cold_cases.rb now, not in config.yml. Writes the file
+    # (so anything reading it back sees it) and applies it the way the runner does.
+    def link_cold_cases(engine = :rspec, *globs)
+      body = globs.map { |glob| "  #{engine} #{glob.inspect}" }.join("\n")
+      write_file("test/cold_cases.rb", "Constable.cold_cases do\n#{body}\nend\n")
+      Constable.configuration.cold_cases { globs.each { |glob| public_send(engine, glob) } }
+      Constable.config.apply_overrides!(Constable.configuration.overrides)
+      Constable.config
+    end
+
     def with_env(values)
       previous = values.keys.to_h { |key| [key, ENV.fetch(key, nil)] }
       values.each { |key, value| ENV[key] = value }

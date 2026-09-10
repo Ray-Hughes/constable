@@ -31,6 +31,12 @@ end
 # can `include` from here.
 Dir[Rails.root.join("test/support/**/*.rb")].sort.each { |f| require f }
 
+# The link to a legacy RSpec or Minitest suite, if there is one. `constable import` writes
+# it; it does not exist until you run that. Its globs decide which existing spec or test
+# files run as cold cases, so this has to load before the suite is selected.
+cold_cases = Rails.root.join("test/cold_cases.rb")
+require cold_cases if File.exist?(cold_cases)
+
 # --- Tiers -------------------------------------------------------------------------
 #
 # A tier says how much of the stack a case needs. Declare it once on a base class and

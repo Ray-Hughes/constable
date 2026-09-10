@@ -194,10 +194,7 @@ module Constable
       write_file("spec/controllers/users_controller_spec.rb", RSPEC_PLAIN)
       write_file("spec/controllers/nested/sessions_controller_spec.rb", RSPEC_PLAIN)
       write_file("spec/models/user_spec.rb", RSPEC_PLAIN)
-      config = write_config(<<~YAML)
-        cold_cases:
-          - spec/controllers/**/*_spec.rb
-      YAML
+      config = link_cold_cases(:rspec, "spec/controllers/**/*_spec.rb")
 
       files = ColdCase.cold_case_files(config: config)
 
@@ -209,10 +206,7 @@ module Constable
 
     def test_config_cold_case_predicate_and_files_agree
       write_file("spec/controllers/users_controller_spec.rb", RSPEC_PLAIN)
-      config = write_config(<<~YAML)
-        cold_cases:
-          - spec/controllers/**/*_spec.rb
-      YAML
+      config = link_cold_cases(:rspec, "spec/controllers/**/*_spec.rb")
 
       ColdCase.cold_case_files(config: config).each do |file|
         assert config.cold_case?(file), "#{file} should satisfy Config#cold_case?"
@@ -257,7 +251,7 @@ module Constable
       assert_equal "Arithmetic", adds.case_name
       assert adds.duration.positive?, "expected a real duration, got #{adds.duration}"
       assert_equal 8841, adds.seed
-      assert_equal "constable test spec/arithmetic_spec.rb:2 --unsafe --seed 8841", adds.rerun_command
+      assert_equal "constable test spec/arithmetic_spec.rb:2 --only=cold --seed 8841", adds.rerun_command
     end
 
     def test_rspec_keeps_its_own_declaration_order
@@ -457,10 +451,7 @@ module Constable
     def test_config_globs_run_files_that_were_never_touched
       write_file("spec/controllers/users_controller_spec.rb", RSPEC_PLAIN)
       original = File.read(File.join(tmp_root, "spec/controllers/users_controller_spec.rb"))
-      config = write_config(<<~YAML)
-        cold_cases:
-          - spec/controllers/**/*_spec.rb
-      YAML
+      config = link_cold_cases(:rspec, "spec/controllers/**/*_spec.rb")
 
       files   = ColdCase.cold_case_files(config: config)
       results = ColdCase.run_files(files, config: config)
@@ -475,10 +466,7 @@ module Constable
     def test_mixed_engines_in_one_config_glob_set
       write_file("legacy/users_spec.rb", RSPEC_PLAIN)
       write_file("legacy/users_test.rb", MINITEST_PLAIN)
-      config = write_config(<<~YAML)
-        cold_cases:
-          - legacy/*.rb
-      YAML
+      config = link_cold_cases(:rspec, "legacy/*.rb")
 
       results = ColdCase.run_files(ColdCase.cold_case_files(config: config), config: config)
 

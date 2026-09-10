@@ -442,7 +442,7 @@ module Constable
       def diff_available? = !@changed_lines.nil?
 
       # Gating is switched off wholesale for a run that carried no native cases -- a
-      # `constable test --unsafe` run is all cold cases, and cold cases are exempt.
+      # `constable test --only=cold` run is all cold cases, and cold cases are exempt.
       def gate? = @gate == true
 
       # Files whose changed lines are held to the threshold: application files with

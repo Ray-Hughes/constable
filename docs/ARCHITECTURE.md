@@ -52,7 +52,7 @@ Exposes `#identity`, `#case_name`, `#full_description` (docket path prepended),
 `Result.from_investigation(inv, status:, duration:, ...)`. Accessors: `status`, `duration`,
 `failure`, `warnings`, `retries`, `jail_reason`, `parole_day`, `times_jailed`, `seed`, `coverage`.
 Predicates: `passed? failed? jailed? skipped? native? cold? parole_violation? warranted?`.
-`#glyph`, `#location`, `#display_label`, `#rerun_command` (includes `--seed`, and `--unsafe` when cold).
+`#glyph`, `#location`, `#display_label`, `#rerun_command` (includes `--seed`, and `--only=cold` when cold).
 `#to_h` / `Result.from_h` — **these two must stay symmetric; workers ship results over a pipe as hashes.**
 `Failure.from_exception(err, context:)`; `Failure` carries `message`, `context`, `backtrace`, `exception_class`.
 `Backtrace.clean(bt)` drops gem/stdlib frames so a failure points at the user's `investigate` line.
@@ -166,7 +166,7 @@ Schema is created idempotently on `setup!` with a `schema_version` row for migra
 - **Parallel workers**: `fork`-based, `parallel_workers` from config, load-balanced with the
   cached duration index (longest first). Workers write results to a pipe as `Result#to_h`;
   the parent is the sole storage writer. `--workers 1` / non-fork platforms fall back to serial.
-- `Constable::Selection` — resolves what to run: `PATH`, `PATH:LINE`, `--full`, `--unsafe`
+- `Constable::Selection` — resolves what to run: `PATH`, `PATH:LINE`, `--full`, `--only`
   (cold only), tier filter, and the **git-diff default** (changed files vs merge-base, mapped
   to their case files; falls back to full when git is unavailable or nothing matched).
 
@@ -195,7 +195,8 @@ Docket state machine over storage: `jailed` ⇄ `parole` → released.
 **original, unmodified** spec/test file content. Running one drives the *real* engine
 (RSpec::Core / Minitest) in-process, captures per-example pass/fail/timing, and converts each
 into a `Constable::Result` with `kind: :cold` and `Identity.for_cold_case(file, description)`.
-Also supports zero-file-change adoption: a file matched by `cold_cases:` globs is wrapped
+Also supports zero-file-change adoption: a file matched by a glob declared in
+`test/cold_cases.rb` is wrapped
 automatically without touching it. Emits exactly **one warning per cold-case file**, not per test.
 `require` RSpec/Minitest lazily with a clear message pointing at the `:cold_case` Gemfile group.
 
@@ -220,7 +221,7 @@ list; `--html` writes a browsable report.
 
 ### K. CLI + generators — `lib/constable/cli.rb`, `exe/constable`, `lib/generators/constable/*`
 Thor-based. Commands, exactly as SPEC.md's tables specify:
-`test [PATH[:LINE]] [--full --unsafe --jail --warrants --coverage --seed N --workers N --verbose --tier T --no-color]`,
+`test [PATH[:LINE]] [--full --only MODE --jail --warrants --coverage --seed N --workers N --verbose --tier T --no-color]`,
 `jail`, `jail run [PATH:LINE] [--full]`, `jail parole PATH:LINE`, `jail release PATH:LINE`,
 `warrants`, `warrants release PATH:LINE`, `watchlist`, `status`, `beat [--html]`,
 `history relink OLD NEW`, `import --from=rspec|minitest`, `modernize PATH`, `version`.

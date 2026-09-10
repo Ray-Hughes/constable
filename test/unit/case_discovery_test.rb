@@ -95,7 +95,7 @@ module Constable
     # --- the boundaries ---------------------------------------------------------------
 
     def test_a_cold_case_is_still_never_a_native_case
-      write_config("cold_cases:\n  - spec/legacy/**/*.rb\n")
+      link_cold_cases(:rspec, "spec/legacy/**/*.rb")
       write_file("spec/legacy/old_case.rb", "class OldCase < Constable::Case\nend\n")
 
       assert_empty native_paths

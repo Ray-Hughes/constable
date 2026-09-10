@@ -730,7 +730,7 @@ module Constable
         kind: :cold_case,
         location: nil,
         message: "#{cold.size} files running as cold cases#{total} — not yet under " \
-                 "native rules. `constable test --unsafe` runs just these."
+                 "native rules. `constable test --only=cold` runs just these."
       }] + rest
     end
 

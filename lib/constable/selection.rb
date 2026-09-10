@@ -42,15 +42,13 @@ module Constable
       "spec/**/*_case.rb"
     ].freeze
 
-    attr_reader :config, :root, :args, :reason
-
     def initialize(args = [], config: Constable.config, root: Constable.root,
-                   full: false, unsafe_only: false, tier: nil)
+                   full: false, only: nil, tier: nil)
       @args        = Array(args)
       @config      = config
       @root        = root.to_s
       @full        = full
-      @unsafe_only = unsafe_only
+      @only        = only.to_s.strip.downcase.to_sym unless only.to_s.strip.empty?
       # Downcased: `--tier UNIT` used to match nothing at all and report a clean run.
       @tier        = tier.to_s.strip.downcase.to_sym unless tier.to_s.strip.empty?
       @reason      = nil
@@ -58,8 +56,16 @@ module Constable
 
     TIERS = %w[unit integration system].freeze
 
-    def full?        = @full
-    def unsafe_only? = @unsafe_only
+    # --only narrows by what runs the test, which is a different axis from --full (how
+    # much of the suite) and --tier (which layer). All three compose.
+    ONLY_MODES = %i[native cold rspec minitest].freeze
+
+    def full? = @full
+    attr_reader :config, :root, :args, :reason, :only
+
+    def cold_only?   = %i[cold rspec minitest].include?(@only)
+    def native_only? = @only == :native
+    def engine_filter? = %i[rspec minitest].include?(@only)
 
     # => [Target]
     def targets
@@ -67,7 +73,7 @@ module Constable
         list =
           if @args.any?
             explicit_targets
-          elsif @unsafe_only
+          elsif cold_only?
             cold_targets
           elsif @full
             all_targets
@@ -75,7 +81,9 @@ module Constable
             diff_targets
           end
 
-        list = list.select(&:cold?) if @unsafe_only
+        list = list.select(&:cold?) if cold_only?
+        list = list.reject(&:cold?) if native_only?
+        list = list.select { |t| ColdCase.engine_for(t.path) == @only } if engine_filter?
         list = list.select { |t| tier_matches?(t) } if @tier
         list.uniq { |t| [t.path, t.line] }
       end

@@ -256,7 +256,7 @@ module Constable
       reporter.finish(results: passing(1), warnings: cold_case_warnings(20, tests_each: 7))
 
       assert_match(/20 files running as cold cases, 140 tests/, output)
-      assert_match(/constable test --unsafe/, output, "it should say how to run just those")
+      assert_match(/constable test --only=cold/, output, "it should say how to run just those")
     end
 
     def test_collapsing_does_not_swallow_other_warnings
@@ -598,13 +598,13 @@ module Constable
       assert_includes output, "    email: a@b.com\n    state: pending\n"
     end
 
-    def test_a_cold_case_rerun_command_keeps_its_unsafe_flag
+    def test_a_cold_case_rerun_command_keeps_its_cold_only_flag
       result = build_result(kind: :cold, status: :failed, seed: 22, failure: build_failure,
                             file: "spec/legacy/old_users_spec.rb", line: 4)
 
       reporter.finish(results: [result], duration: 1.0, warnings: [])
 
-      assert_includes output, "      constable test spec/legacy/old_users_spec.rb:4 --unsafe --seed 22\n"
+      assert_includes output, "      constable test spec/legacy/old_users_spec.rb:4 --only=cold --seed 22\n"
     end
 
     def test_an_errored_result_names_its_exception_class

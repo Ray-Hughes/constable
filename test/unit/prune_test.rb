@@ -60,7 +60,7 @@ module Constable
     # Cold-case tests cannot be enumerated without running their own engine, so absence
     # from the known set says nothing about them. Pruning on that would delete live rows.
     def test_a_cold_case_row_is_never_pruned_while_its_file_exists
-      write_config("cold_cases:\n  - spec/**/*_spec.rb\n")
+      link_cold_cases(:rspec, "spec/**/*_spec.rb")
       @jail = Jail.new(config: Constable.config, storage: Constable.storage)
       write_file("spec/models/user_spec.rb", "# a real cold case\n")
       jail_row("something", file: "spec/models/user_spec.rb")
@@ -69,7 +69,7 @@ module Constable
     end
 
     def test_a_cold_case_row_is_pruned_once_its_file_is_gone
-      write_config("cold_cases:\n  - spec/**/*_spec.rb\n")
+      link_cold_cases(:rspec, "spec/**/*_spec.rb")
       @jail = Jail.new(config: Constable.config, storage: Constable.storage)
       jail_row("something", file: "spec/models/deleted_spec.rb")
 
