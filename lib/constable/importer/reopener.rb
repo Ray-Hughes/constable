@@ -417,9 +417,12 @@ module Constable
 
       def engine_label = @from.to_s == "rspec" ? "RSpec" : "Minitest"
 
+      # Exactly one space before the trailing comment. Padding the globs into a column
+      # reads better and is a RuboCop offence in a generated file -- Layout/ExtraSpacing
+      # permits extra spacing only where it aligns with an adjacent line, so a single glob
+      # is always flagged. A file we write should not need correcting before it is committed.
       def link_file(globs)
         counts = globs.to_h { |glob| [glob, Dir.glob(File.join(@root, glob)).size] }
-        width  = globs.map(&:length).max.to_i
 
         <<~RUBY
           # frozen_string_literal: true
@@ -434,7 +437,7 @@ module Constable
           # port directories into test/cases/ with `constable modernize`.
 
           Constable.cold_cases do
-          #{globs.map { |glob| "  #{@from} #{glob.inspect.ljust(width + 2)}  # #{counts[glob]} #{counts[glob] == 1 ? "file" : "files"}" }.join("\n")}
+          #{globs.map { |glob| "  #{@from} #{glob.inspect} # #{counts[glob]} #{counts[glob] == 1 ? "file" : "files"}" }.join("\n")}
           end
         RUBY
       end

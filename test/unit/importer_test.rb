@@ -284,6 +284,30 @@ module Constable
       assert_match(/# 1 file$/, link_file)
     end
 
+    # A generated file that has to be corrected before it can be committed is a generated
+    # file that is wrong. This was Layout/ExtraSpacing: the globs were padded into a column,
+    # which RuboCop permits only where it aligns with an adjacent line, so the single-glob
+    # case -- the common one -- was always an offence.
+    def test_the_link_file_has_no_alignment_padding
+      seed_rspec("spec/models/user_spec.rb")
+      import
+
+      link_file.each_line do |line|
+        refute_match(/\S {2,}#/, line, "#{line.chomp.inspect} trips Layout/ExtraSpacing")
+        refute_match(/[ \t]+$/, line, "#{line.chomp.inspect} has trailing whitespace")
+      end
+    end
+
+    # Several globs is where the temptation to pad into a column comes back.
+    def test_the_link_file_has_no_padding_with_several_globs
+      seed_rspec("spec/models/user_spec.rb", "spec/controllers/keep_spec.rb")
+      import(paths: ["spec/models"])
+      import(paths: ["spec/controllers"], config: Config.load(root: tmp_root))
+
+      assert_operator link_file.scan(/^\s*rspec /).size, :>=, 1
+      link_file.each_line { |line| refute_match(/\S {2,}#/, line, line.chomp.inspect) }
+    end
+
     # It is loadable Ruby, not a template with holes in it.
     def test_the_link_file_is_valid_ruby_that_declares_the_globs
       seed_rspec("spec/models/user_spec.rb", "spec/models/post_spec.rb")

@@ -69,6 +69,10 @@ reads like a failure rather than a suite that is already done; it now says so an
 - `worker_databases: off` is a YAML 1.1 boolean, so it arrived as `false` and fell through
   to `:schema` -- silently the opposite of what the line said. `off`, `no` and `false` now
   all read as `:off`.
+- The generated `test/cold_cases.rb` padded its globs into a column, which is
+  `Layout/ExtraSpacing`: RuboCop allows extra spacing only where it aligns with an adjacent
+  line, so the single-glob case -- the common one -- was always an offence. A generated file
+  should not need correcting before it can be committed.
 - `Constable.reset!` did not clear the configuration, so hooks and links leaked between
   runs in the same process.
 
