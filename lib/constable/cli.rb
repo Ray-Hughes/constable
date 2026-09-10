@@ -746,6 +746,12 @@ module Constable
         shared.join("/")
       end
 
+      # Asking for more rows than exist is the same as asking for all of them, so the
+      # ceiling is the collection itself and `--limit <size>` always means everything.
+      def listing_limit(requested, available)
+        requested.to_i.clamp(1, [available, 1].max)
+      end
+
       def shard_from(spec)
         Shard.parse(spec)
       rescue Constable::Error => e
@@ -775,7 +781,10 @@ module Constable
       def print_modernize_files(results)
         return if results.empty?
 
-        rows = results.first((options[:limit] || 40).to_i.clamp(1, 1000))
+        # Clamped to what exists, not to an arbitrary ceiling: the hint below prints the
+        # exact number that shows everything, and a ceiling would make that number a lie
+        # on any directory larger than it. One real suite has 1,277 spec files.
+        rows = results.first(listing_limit(options[:limit] || 40, results.size))
         say_table("FILES", rows) do |result|
           [modernize_glyph(result), modernize_name(result), modernize_outcome(result)]
         end
@@ -877,7 +886,7 @@ module Constable
       def print_plan_files(plan)
         # A port is usually a whole directory, so the default shows enough of it to check
         # the destinations look right without printing four hundred lines.
-        limit = (options[:limit] || 25).to_i.clamp(1, 1000)
+        limit = listing_limit(options[:limit] || 25, plan.entries.size)
         rows = plan.entries.first(limit)
 
         # Every row carried its full source and destination, both of which usually share a
