@@ -588,6 +588,53 @@ from one shared cache, never one written back to mid-matrix. Weighting from a bl
 moves between shards repartitions: measured across three local shards, one file ran in two
 of them and another ran in none.
 
+### Reading a run
+
+The last two sections are the ones you act on, and they are last on purpose: after a long
+run the headline at the top has scrolled away, so the counts someone goes looking for are
+the ones they would otherwise scroll back for.
+
+```
+  FAILURES
+  ────────
+  ✗ SessionsCase
+    "expires after inactivity"
+    spec/cases/sessions_case.rb:12
+    broke at app/models/session.rb:88
+    1.2s  ·  failed 4 of the last 12 runs
+
+    Expected response to be :created, got :unprocessable_entity
+
+    Rerun just this test:
+      constable test spec/cases/sessions_case.rb:12 --seed 8841
+
+  RECOMMENDATIONS
+  ───────────────
+  3 failing tests have failed repeatedly before
+    Jail them to stop blocking the build while they are worked on:
+    constable jail spec/cases/sessions_case.rb:12
+
+  SUMMARY
+  ───────
+  6 tests   2 passed   1 failed   2 jailed   1 warranted
+  12.4s total · seed 8841 · 2 warnings
+```
+
+Three things a failure now carries that it did not: **where it broke** (the first
+backtrace frame that is not the test itself — the framework is already stripped out), **how
+long it took**, and **how often this same test has failed before**. The last is the one that
+changes what you do: a first failure is news about the change you just made, a test that
+has failed four of the last twelve runs is news about the test — and it is what drives the
+jail recommendation rather than someone deciding at 5pm. Identity is a hash of the body, so
+that history survives a rename and does not survive a rewrite, which is correct in both
+directions.
+
+A duration only prints once it is over 50ms; `<1ms` under a failure tells nobody anything.
+
+Sections collapse rather than bury: past five, warnings print as a count with
+`--show warnings` to open them. A flag, not a keypress, so the same command prints the same
+thing in a CI log as on a terminal.
+
 ### Knowing what your suite is doing
 
 Testing already happens in a terminal, so the answers should too. Three commands read what

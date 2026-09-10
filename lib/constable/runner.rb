@@ -147,7 +147,8 @@ module Constable
         duration: duration,
         seed: @seed,
         coverage: @coverage_report,
-        suggestions: suggestions
+        suggestions: suggestions,
+        history: failure_history(@results)
       )
 
       exit_status(@results, @coverage_report)
@@ -539,6 +540,28 @@ module Constable
     end
 
     def worker_progress = (@worker_progress ||= Hash.new(0))
+
+    # How often each failing test has failed before.
+    #
+    # "This has failed four of the last twelve runs" is a different fact from "this
+    # failed", and it is the one that decides what to do: a first failure is news about
+    # the change you just made, a recurring one is news about the test. The blotter has
+    # been recording it since the beginning; the summary never asked.
+    #
+    # Only for tests that failed in this run -- there is no reason to query history for
+    # the several thousand that passed.
+    def failure_history(results)
+      failing = results.select(&:failed?)
+      return {} if failing.empty?
+
+      failing.to_h do |result|
+        rows = Array(@storage.history_for(result.identity, limit: 25))
+        failures = rows.count { |row| %w[failed errored].include?(row[:status].to_s) }
+        [result.identity, { runs: rows.size, failures: failures }]
+      end
+    rescue StandardError
+      {}
+    end
 
     def worker_errors = (@worker_errors ||= [])
 

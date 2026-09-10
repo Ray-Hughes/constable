@@ -112,8 +112,12 @@ module Constable
 
     attr_reader :io, :config, :seed, :total
 
-    def initialize(io: $stdout, config: nil, color: nil, slowest: DEFAULT_SLOWEST, mode: nil)
+    def initialize(io: $stdout, config: nil, color: nil, slowest: DEFAULT_SLOWEST, mode: nil,
+                   show: nil)
       @io      = io
+      # Sections the caller asked to expand. A flag rather than a keypress, so the same
+      # command prints the same thing in a CI log as it does on a terminal.
+      @show    = Array(show).flat_map { |value| value.to_s.split(",") }.map(&:strip).reject(&:empty?)
       @config  = config || Constable.config
       @color   = resolve_color(color)
       @slowest = slowest.to_i
@@ -125,6 +129,7 @@ module Constable
       reset_stream!
       @failed_live = 0
       @warning_count = 0
+      @history = {}
       @finished = false
     end
 
@@ -176,11 +181,13 @@ module Constable
 
     # Prints the summary. Returns the process exit status so a caller can
     # `exit reporter.finish(...)` in one line.
-    def finish(results:, duration: 0.0, seed: nil, coverage: nil, suggestions: [], warnings: nil)
+    def finish(results:, duration: 0.0, seed: nil, coverage: nil, suggestions: [], warnings: nil,
+               history: {})
       results = Array(results)
       @seed   = seed if seed
       flush!
 
+      @history      = history || {}
       counts        = tally(results)
       @failed_live  = counts[:failed]
       warnings      = normalize_warnings(warnings)
@@ -201,6 +208,15 @@ module Constable
       section_warnings(warnings)
       section_slowest(results)
       rename_suggestions(suggestions)
+
+      # Last, deliberately.
+      #
+      # The counts are printed at the top as well, and after a long run the top has
+      # scrolled away -- so the number someone actually goes looking for is the one they
+      # have to scroll back for. Recommendations sit above it because they are what to do
+      # next, and the summary is what just happened.
+      section_recommendations(results, counts)
+      section_summary(counts, duration)
 
       writeln(paint(HEAVY_RULE, :dim))
       exit_status
@@ -578,12 +594,51 @@ module Constable
       writeln(INDENT + paint("#{GLYPHS[:failed]} #{result.case_name}", COLORS[:failed]))
       writeln(ENTRY_INDENT + paint(%("#{result.description}"), :dim))
       writeln(ENTRY_INDENT + paint(result.location, :dim))
+
+      # Where it broke, which is rarely where the test is. The backtrace has already had
+      # the framework stripped out of it, so the first frame left is the application's own
+      # -- and printing it saves opening the file to find out.
+      app = app_frame(result)
+      writeln(ENTRY_INDENT + paint("broke at #{app}", :dim)) if app
+
+      metrics = failure_metrics(result)
+      writeln(ENTRY_INDENT + paint(metrics, :dim)) unless metrics.empty?
+
       writeln
       failure_message(result).each_line { |line| writeln(ENTRY_INDENT + line.chomp) }
       failure_context(result)
       writeln
       writeln(ENTRY_INDENT + paint("Rerun just this test:", :dim))
       writeln(DETAIL_INDENT + result.rerun_command)
+    end
+
+    # The first backtrace frame that is not the test file itself.
+    def app_frame(result)
+      frames = Array(result.failure&.backtrace)
+      return nil if frames.empty?
+
+      own = File.basename(result.file.to_s)
+      frame = frames.find { |line| !line.to_s.include?(own) } || frames.first
+      frame.to_s.split(":in ").first
+    end
+
+    # How long it took, and how often this exact test has failed before.
+    #
+    # The second is the one that changes what you do: a first failure is news about the
+    # change you just made, a test that has failed four of the last twelve runs is news
+    # about the test. Identity is a hash of the body, so this survives renames and does
+    # not survive a rewrite -- which is the correct behaviour for both.
+    # Only what earns its line. "<1ms" under a failure tells nobody anything, so a
+    # duration appears once it is slow enough to be part of the story; history appears
+    # whenever there is any.
+    def noteworthy_failure_seconds = 0.05
+
+    def failure_metrics(result)
+      parts = []
+      parts << format_test_duration(result.duration) if result.duration.to_f >= noteworthy_failure_seconds
+      seen = @history[result.identity]
+      parts << "failed #{seen[:failures]} of the last #{seen[:runs]} runs" if seen && seen[:runs].to_i > 1
+      parts.join("  ·  ")
     end
 
     def failure_message(result)
@@ -618,9 +673,22 @@ module Constable
       lines.all?(&:empty?) ? [] : lines
     end
 
+    # Collapsed once there are more than a handful, because a wall of warnings between
+    # the failures and the summary is how both get skipped. `--show warnings` opens it;
+    # nothing is hidden that a flag will not print, and the count is always visible.
+    def warning_collapse_threshold = 5
+
     def section_warnings(warnings)
       warnings = collapse_cold_cases(warnings)
       return if warnings.empty?
+
+      if collapse_section?(:warnings, warnings.size)
+        section("WARNINGS")
+        writeln(INDENT + paint("#{warnings.size} warnings — open with --show warnings",
+                               COLORS[:warning]))
+        writeln
+        return
+      end
 
       section("WARNINGS")
       each_entry(warnings) do |warning|
@@ -662,6 +730,109 @@ module Constable
         text = line.chomp
         text.empty? ? [""] : wrap(text, width: RULE_WIDTH - ENTRY_INDENT.length, indent: "")
       end
+    end
+
+    # --- the last two sections ------------------------------------------------------
+
+    # What to do next, before what just happened.
+    #
+    # Everything here is tied to something in this run or in the blotter -- a repeated
+    # failure, a file that owns the clock, a docket that has stopped moving. Nothing is
+    # printed on a hunch, for the same reason `constable insights` prints nothing on a
+    # hunch: advice that is wrong once is advice nobody reads twice.
+    def section_recommendations(results, counts)
+      lines = recommendations(results, counts)
+      return if lines.empty?
+
+      section("RECOMMENDATIONS")
+      lines.each do |headline, detail|
+        writeln(INDENT + headline)
+        next unless detail
+
+        # The frame is sixty columns and everything obeys it, including advice.
+        detail.to_s.split("\n").each do |paragraph|
+          wrap(paragraph, width: RULE_WIDTH - ENTRY_INDENT.length, indent: "")
+            .each { |line| writeln(ENTRY_INDENT + paint(line, :dim)) }
+        end
+      end
+    end
+
+    def recommendations(results, counts)
+      lines = []
+      lines << repeat_failure_recommendation(results)
+      lines << jail_recommendation(counts)
+      lines << warning_recommendation
+      lines.compact
+    end
+
+    # A test that keeps failing across runs is the jail's whole purpose: it swaps "blocks
+    # the build" for "tracked and skipped", and the history says which tests qualify
+    # rather than someone deciding at 5pm.
+    def repeat_failure_recommendation(results)
+      repeats = results.select(&:failed?).select do |result|
+        seen = @history[result.identity]
+        seen && seen[:failures].to_i >= 3 && seen[:runs].to_i >= 5
+      end
+      return nil if repeats.empty?
+
+      [paint("#{repeats.size} failing #{repeats.size == 1 ? "test has" : "tests have"} " \
+             "failed repeatedly before", COLORS[:failed]),
+       "Jail them to stop blocking the build while they are worked on:\n" \
+       "#{repeats.first(3).map { |r| "constable jail #{r.location}" }.join("\n")}"]
+    end
+
+    def jail_recommendation(counts)
+      return nil unless counts[:jailed].to_i.positive?
+
+      [paint("#{counts[:jailed]} jailed #{counts[:jailed] == 1 ? "test" : "tests"} did not run",
+             COLORS[:jailed]),
+       "`constable jail run` reruns them in isolation; `constable jail list` says why each is there."]
+    end
+
+    def warning_recommendation
+      return nil unless @warning_count.to_i > warning_collapse_threshold
+      return nil if show?(:warnings)
+
+      [paint("#{@warning_count} warnings were not shown", COLORS[:warning]),
+       "`--show warnings` prints them. They do not fail the build unless " \
+       "`fail_on_warnings` is set."]
+    end
+
+    # The counts, last, where they are still on screen when the run ends.
+    # No trailing blank: the closing rule follows immediately, exactly as it does after
+    # SLOWEST when that is the last section.
+    def section_summary(counts, duration)
+      section("SUMMARY")
+      writeln(INDENT + summary_counts(counts))
+      summary_detail(duration).each { |line| writeln(INDENT + paint(line, :dim)) }
+    end
+
+    def summary_counts(counts)
+      total = counts.values_at(:passed, :failed, :jailed, :skipped, :warranted).sum(&:to_i)
+      parts = [paint("#{total} #{total == 1 ? "test" : "tests"}", :bold)]
+      parts << paint("#{counts[:passed]} passed", COLORS[:passed]) if counts[:passed].to_i.positive?
+      parts << paint("#{counts[:failed]} failed", COLORS[:failed]) if counts[:failed].to_i.positive?
+      parts << paint("#{counts[:skipped]} skipped", :dim) if counts[:skipped].to_i.positive?
+      parts << paint("#{counts[:jailed]} jailed", COLORS[:jailed]) if counts[:jailed].to_i.positive?
+      parts << paint("#{counts[:warranted]} warranted", COLORS[:warranted]) if counts[:warranted].to_i.positive?
+      parts.join("   ")
+    end
+
+    def summary_detail(duration)
+      bits = ["#{format_duration(duration)} total"]
+      bits << "seed #{@seed}" if @seed
+      bits << "#{@warning_count} warnings" if @warning_count.to_i.positive?
+      wrap(bits.join("  ·  "), width: RULE_WIDTH - INDENT.length, indent: "")
+    end
+
+    # Which sections the caller asked to expand. CI-friendly on purpose: a flag, not a
+    # keypress, so the same command prints the same thing in a log as on a terminal.
+    def show?(name)
+      @show.include?(name.to_s)
+    end
+
+    def collapse_section?(name, size)
+      size > warning_collapse_threshold && !show?(name)
     end
 
     def section_slowest(results)

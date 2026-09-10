@@ -59,6 +59,7 @@ module Constable
     option :coverage, type: :boolean, desc: "Record coverage for this run"
     option :seed,     type: :numeric, desc: "Replay a previous run's order"
     option :workers,  type: :numeric, desc: "Parallel workers (default: config, or auto)"
+    option :show,     type: :string,  desc: "Expand collapsed sections: --show warnings"
     option :shard,    type: :string,  desc: "Run one slice of the suite: --shard 3/8 (for a CI matrix)"
     option :"shard-by-time", type: :boolean, default: false,
                              desc: "Weight --shard by duration (needs identical blotter data everywhere)"
@@ -683,7 +684,8 @@ module Constable
       # log/test.log so a stray gem warning cannot land in the middle of the live stream.
       # The reporter is the one thing that still writes to the terminal.
       def reporter(config)
-        Reporter.new(io: LogRouter.console, config: config, color: color?, mode: output_mode)
+        Reporter.new(io: LogRouter.console, config: config, color: color?, mode: output_mode,
+                     show: options[:show])
       end
 
       # nil means "the config file decides". The explicit --output wins over the two
@@ -779,7 +781,8 @@ module Constable
         end
         return unless results.size > rows.size
 
-        say "  ... and #{results.size - rows.size} more (--limit N to list them)"
+        say "  ... and #{results.size - rows.size} more " \
+            "(--limit #{results.size} to list them all)"
         say ""
       end
 
@@ -891,7 +894,10 @@ module Constable
         say ""
         return unless plan.entries.size > limit
 
-        say "  #{paint("... and #{plan.entries.size - limit} more (--limit N to see them)", :dim)}"
+        # The number that shows everything is already known here, so print it rather than
+        # an N the reader has to work out.
+        hint = "... and #{plan.entries.size - limit} more (--limit #{plan.entries.size} for all)"
+        say "  #{paint(hint, :dim)}"
         say ""
       end
 

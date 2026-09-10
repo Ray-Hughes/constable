@@ -286,7 +286,7 @@ module Constable
         coverage: { percent: 92, unpatrolled: 3 }, warnings: spec_shaped_warnings
       )
 
-      expected = <<~SUMMARY
+      expected = <<~REPORT
         #{RULE}
           CONSTABLE            6 tests · 3 cases · 12.4s
         #{RULE}
@@ -309,6 +309,7 @@ module Constable
           ✗ SessionsCase
             "expires after inactivity"
             spec/cases/sessions_case.rb:12
+            400ms
 
             Expected response to be :created, got :unprocessable_entity
 
@@ -366,8 +367,19 @@ module Constable
           ────────
           3.2s  UsersController::CreatesUserCase "creates a user with valid params"
           1.1s  SessionsCase "times out after thirty seconds"
+
+          RECOMMENDATIONS
+          ───────────────
+          2 jailed tests did not run
+            `constable jail run` reruns them in isolation;
+            `constable jail list` says why each is there.
+
+          SUMMARY
+          ───────
+          6 tests   2 passed   1 failed   2 jailed   1 warranted
+          12.4s total · seed 8841 · 2 warnings
         #{RULE}
-      SUMMARY
+      REPORT
 
       assert_equal expected, output
     end
@@ -503,16 +515,25 @@ module Constable
 
       reporter.finish(results: results, duration: 1.0)
 
-      assert_equal ["PAROLE VIOLATED", "FAILURES", "WARNINGS", "SLOWEST"], section_titles
+      # SUMMARY last on purpose: after a long run the headline at the top has scrolled
+      # away, so the counts someone goes looking for are the ones they would have to
+      # scroll back for.
+      # RECOMMENDATIONS then SUMMARY at the end: what to do next, then what just happened.
+      assert_equal ["PAROLE VIOLATED", "FAILURES", "WARNINGS", "SLOWEST",
+                    "RECOMMENDATIONS", "SUMMARY"],
+                   section_titles
     end
 
     def test_empty_sections_are_omitted_entirely
       reporter.finish(results: passing(2), duration: 1.0, warnings: [])
 
-      assert_empty section_titles
+      # SUMMARY is the one section that is never empty and always prints -- it is the
+      # point of having it at the bottom.
+      assert_equal ["SUMMARY"], section_titles
       refute_includes output, "FAILURES"
       refute_includes output, "PAROLE VIOLATED"
       refute_includes output, "WARNINGS"
+      refute_includes output, "RECOMMENDATIONS"
     end
 
     def test_slowest_is_omitted_when_nothing_took_measurable_time
