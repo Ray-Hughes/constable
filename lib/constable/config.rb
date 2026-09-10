@@ -240,7 +240,21 @@ module Constable
       nil
     end
 
+    def cold_case_except = Array(@raw["cold_case_except"])
+
+    def cold_case_excluded?(path)
+      return false if cold_case_except.empty?
+
+      relative = path.to_s.delete_prefix("#{@root}/")
+      cold_case_except.any? do |glob|
+        File.fnmatch?(glob.to_s, relative, File::FNM_PATHNAME | File::FNM_EXTGLOB) ||
+          File.fnmatch?(glob.to_s, path.to_s, File::FNM_PATHNAME | File::FNM_EXTGLOB)
+      end
+    end
+
     def cold_case?(path)
+      return false if cold_case_excluded?(path)
+
       relative = path.to_s.delete_prefix("#{@root}/")
       cold_cases.any? do |glob|
         File.fnmatch?(glob.to_s, relative, File::FNM_PATHNAME | File::FNM_EXTGLOB) ||

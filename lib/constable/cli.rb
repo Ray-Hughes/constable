@@ -878,6 +878,10 @@ module Constable
           say "  #{Array(run.carried).size} support file(s) copied alongside " \
               "(required by relative path)"
         end
+        if Array(run.excluded).any?
+          say "  #{Array(run.excluded).size} original(s) excluded in test/cold_cases.rb " \
+              "so they don't run twice (the port kept them; --delete removes them instead)"
+        end
         if run.remaining.to_i.positive?
           say "  #{paint("#{run.remaining} file(s) left in this directory -- run the same command " \
                          "again for the next batch", :cyan)}"

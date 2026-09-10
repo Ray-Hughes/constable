@@ -241,7 +241,7 @@ module Constable
         declared = glob(["test/**/*_spec.rb", "spec/**/*_spec.rb", "test/**/*_test.rb"])
                    .reject { |f| known.include?(f) }
                    .select { |f| cold_by_content?(f) }
-        (from_config + declared).uniq
+        (from_config + declared).uniq.reject { |f| @config.cold_case_excluded?(f) }
       end
     end
 

@@ -172,7 +172,21 @@ end
 ```
 
 That file **is** the link, not a description of one. Deleting it unlinks the suite;
-narrowing a glob shrinks what stays cold as you port directories across. It lives in the
+narrowing a glob shrinks what stays cold as you port directories across.
+
+Porting does that bookkeeping for you. With `delete: true` the original spec is removed, so
+the glob stops matching it and nothing runs twice. When you keep the original instead --
+to diff it against its port before committing -- `modernize` adds an `except` line, because
+otherwise the same tests run once as the new native case and once as the spec they came
+from:
+
+```ruby
+Constable.cold_cases do
+  rspec "spec/**/*_spec.rb"
+  except "spec/models/user_spec.rb"   # ported to test/cases/models/user_case.rb
+end
+```
+ It lives in the
 test tree rather than in `.constable/config.yml` on purpose: linking a legacy suite decides
 what `constable test` runs at all, and a config key made that invisible.
 

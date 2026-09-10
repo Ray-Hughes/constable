@@ -65,7 +65,7 @@ module Constable
 
       # An aggregate over one `constable modernize` invocation.
       Run = Struct.new(:results, :report, :report_path, :write_mode, :remaining, :carried,
-                       keyword_init: true) do
+                       :excluded, keyword_init: true) do
         def ok?       = results.all?(&:ok?)
         def failed    = results.reject(&:ok?)
         def flagged   = results.select(&:flagged?)
@@ -146,6 +146,7 @@ module Constable
           # A ported file's relative requires have to resolve from where it now lives.
           carried = %i[port port_cold].include?(write) ? carry_companions(results, root) : []
           prune_empty_directories(results, root) if delete_original
+          excluded = delete_original ? [] : exclude_ported_originals(results, root, write)
 
           text = report_for(results, write_mode: write)
           report_path = nil
@@ -154,8 +155,36 @@ module Constable
             File.write(report_path, text)
           end
           Run.new(results: results, report: text, report_path: report_path, write_mode: write,
-                  remaining: remaining, carried: carried)
+                  remaining: remaining, carried: carried, excluded: excluded)
         end
+
+        # A port that keeps the original leaves both files on disk, and the cold-case glob
+        # still matches the original -- so the same tests run twice, once as the new native
+        # case and once as the spec it was generated from. Nothing said so; the suite just
+        # quietly grew. `--delete` avoids it by removing the source, which is why it is the
+        # documented default. When the source is kept on purpose, the link file has to say
+        # the original is no longer wanted.
+        def exclude_ported_originals(results, root, write)
+          return [] unless %i[port port_cold].include?(write)
+
+          link = File.join(root, "test/cold_cases.rb")
+          return [] unless File.exist?(link)
+
+          source = File.read(link)
+          fresh = results.select(&:written?).map { |result| relative_to(result.path, root) }
+                         .reject { |path| source.include?(%("#{path}")) }
+          return [] if fresh.empty?
+
+          File.write(link, insert_exclusions(source, fresh))
+          fresh
+        end
+
+        def insert_exclusions(source, paths)
+          lines = paths.map { |path| "  except #{path.inspect}" }.join("\n")
+          source.sub(/\nend\s*\z/, "\n#{lines}\nend\n")
+        end
+
+        def relative_to(path, root) = path.to_s.delete_prefix("#{root}/")
 
         # `constable modernize` is useless without the parser gem, but Constable itself
         # boots fine without it, so the require is lazy and the failure is a sentence.

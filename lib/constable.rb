@@ -198,15 +198,27 @@ module Constable
     class ColdCaseLinks
       ENGINES = %i[rspec minitest].freeze
 
-      def initialize = @globs = ENGINES.to_h { |engine| [engine, []] }
+      def initialize
+        @globs = ENGINES.to_h { |engine| [engine, []] }
+        @except = []
+      end
 
       ENGINES.each do |engine|
         define_method(engine) { |*globs| @globs[engine].concat(globs.flatten.map(&:to_s)) }
       end
 
-      def globs = @globs.reject { |_engine, list| list.empty? }.transform_values(&:uniq)
-      def any?  = globs.any?
-      def flat  = globs.values.flatten
+      # Carved out of the globs above.
+      #
+      # `constable modernize --port` without `delete` leaves the original in place, so the
+      # glob still matches it and the same tests run twice -- once as the new native case
+      # and once as the spec it was built from. Deleting the original solves it too, and is
+      # the default; this is for a port you want to check against its source first.
+      def except(*paths) = @except.concat(paths.flatten.map(&:to_s))
+
+      def globs      = @globs.reject { |_engine, list| list.empty? }.transform_values(&:uniq)
+      def exclusions = @except.uniq
+      def any?       = globs.any?
+      def flat       = globs.values.flatten
     end
 
     attr_accessor :seed
@@ -279,7 +291,8 @@ module Constable
       links = @cold_case_links
       return {} if links.nil? || links.globs.empty?
 
-      { cold_cases: links.flat, cold_case_engines: links.globs }
+      { cold_cases: links.flat, cold_case_engines: links.globs,
+        cold_case_except: links.exclusions }
     end
 
     def before_suite(&block) = @before_suite_hooks << block

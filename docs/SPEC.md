@@ -511,6 +511,21 @@ whose helper predates the file or has none. Globs de-duplicate, so loading twice
 
 Naming the engine is also the only way to settle a file the `_spec.rb` / `_test.rb`
 convention cannot answer for; without it such a file raises rather than being guessed at.
+The declaration sits *below* the naming convention, so a broad glob does not claim a file
+whose name says otherwise.
+
+`except` carves paths back out of the globs above it:
+
+```ruby
+Constable.cold_cases do
+  rspec "spec/**/*_spec.rb"
+  except "spec/models/user_spec.rb"
+end
+```
+
+`constable modernize --port` writes those lines when it keeps the original -- both files
+exist, the glob still matches the source, and the same tests would otherwise run twice.
+With `--delete` the source is gone and no exclusion is needed.
 
 Assigning `cold_cases` through `Constable.configure` raises and names this file. The reason
 it is not a config key is visibility: it determines what `constable test` runs at all, and

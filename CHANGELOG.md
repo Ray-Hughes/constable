@@ -34,6 +34,17 @@ dispatching per file.
 being silently ignored. `import` no longer edits `config.yml` at all, so the settings and
 comments in it cannot be disturbed by an adoption.
 
+### Porting without deleting ran every ported test twice
+
+`--port` writes a native case into `test/cases/`. Without `--delete` the original spec stays
+where it is, the cold-case glob still matches it, and both run: once as the new native case
+and once as the spec it was generated from. Nothing reported it -- the suite simply had more
+tests in it than the code had.
+
+`modernize` now writes an `except` line into `test/cold_cases.rb` for each original it
+keeps, and says how many in its summary. With `--delete`, which is the documented default,
+the source is gone and nothing is needed.
+
 ### `--only`, replacing `--unsafe`
 
 There was no way to say "skip the legacy suite", which is the thing you want while working

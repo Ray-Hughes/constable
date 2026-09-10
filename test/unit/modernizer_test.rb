@@ -863,5 +863,63 @@ module Constable
       assert_equal result.converted, hash[:converted]
       assert_equal result.source, result[:source]
     end
+
+    # A port that keeps the original leaves both on disk, and the cold-case glob still
+    # matches the original -- so the same tests run once as the new native case and once as
+    # the spec it came from. Nothing said so; the suite quietly grew.
+    def test_a_port_that_keeps_the_original_excludes_it_from_the_cold_glob
+      write_file("spec/models/user_spec.rb", <<~RUBY)
+        RSpec.describe "user" do
+          it "works" do
+            expect(1 + 1).to eq(2)
+          end
+        end
+      RUBY
+      write_file("test/cold_cases.rb", %(Constable.cold_cases do\n  rspec "spec/**/*_spec.rb"\nend\n))
+
+      run = Importer::Modernizer.run(["spec/models/user_spec.rb"], root: tmp_root, write: :port,
+                                                                   report: false, delete_original: false)
+
+      assert_equal ["spec/models/user_spec.rb"], run.excluded
+      assert_match(%r{except "spec/models/user_spec\.rb"}, read("test/cold_cases.rb"))
+      assert_path_exists File.join(tmp_root, "spec/models/user_spec.rb")
+    end
+
+    # --delete removes the source, so the glob matches nothing and there is nothing to say.
+    def test_a_port_that_deletes_the_original_writes_no_exclusion
+      write_file("spec/models/user_spec.rb", <<~RUBY)
+        RSpec.describe "user" do
+          it "works" do
+            expect(1 + 1).to eq(2)
+          end
+        end
+      RUBY
+      write_file("test/cold_cases.rb", %(Constable.cold_cases do\n  rspec "spec/**/*_spec.rb"\nend\n))
+
+      run = Importer::Modernizer.run(["spec/models/user_spec.rb"], root: tmp_root, write: :port,
+                                                                   report: false, delete_original: true)
+
+      assert_empty Array(run.excluded)
+      refute_match(/except/, read("test/cold_cases.rb"))
+      refute_path_exists File.join(tmp_root, "spec/models/user_spec.rb")
+    end
+
+    def test_porting_twice_does_not_repeat_an_exclusion
+      write_file("spec/models/user_spec.rb", <<~RUBY)
+        RSpec.describe "user" do
+          it "works" do
+            expect(1 + 1).to eq(2)
+          end
+        end
+      RUBY
+      write_file("test/cold_cases.rb", %(Constable.cold_cases do\n  rspec "spec/**/*_spec.rb"\nend\n))
+
+      2.times do
+        Importer::Modernizer.run(["spec/models/user_spec.rb"], root: tmp_root, write: :port,
+                                                               report: false, delete_original: false)
+      end
+
+      assert_equal 1, read("test/cold_cases.rb").scan("except ").size
+    end
   end
 end
