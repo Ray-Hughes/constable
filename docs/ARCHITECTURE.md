@@ -166,9 +166,47 @@ Schema is created idempotently on `setup!` with a `schema_version` row for migra
 - **Parallel workers**: `fork`-based, `parallel_workers` from config, load-balanced with the
   cached duration index (longest first). Workers write results to a pipe as `Result#to_h`;
   the parent is the sole storage writer. `--workers 1` / non-fork platforms fall back to serial.
+- **A case is the unit of work**, not an individual test. `Runner#balance` groups items by
+  case class (or by file, for a cold case) before balancing. Two reasons, both load-bearing:
+  the live stream groups by case, so scattering one case's tests across the schedule gives it
+  several separate lines and makes the output unreadable; and `witness_all` opens a
+  transaction spanning the case, which is no use to another process. Balancing is bounded by
+  the largest case rather than the largest test.
+- **Timeouts**: `Runner#run_item` wraps each item in `Timeout.timeout` when `timeout` is
+  non-zero, so a hung test becomes a named failure instead of a parked run. The engine
+  usually catches the interrupt first, which is better — it lands on the exact test — so
+  `#explain_timeouts` rewrites whatever message the engine produced.
 - `Constable::Selection` — resolves what to run: `PATH`, `PATH:LINE`, `--full`, `--only`
-  (cold only), tier filter, and the **git-diff default** (changed files vs merge-base, mapped
-  to their case files; falls back to full when git is unavailable or nothing matched).
+  (`native`/`cold`/`rspec`/`minitest`), tier filter, and the **git-diff default** (changed
+  files vs merge-base, mapped to their case files; falls back to full when git is unavailable
+  or nothing matched).
+
+### E2. Shared fixtures — `lib/constable/shared_fixtures.rb`
+`witness_all` — one fixture per case rather than per test. Extends `Constable::Case` as
+`SharedFixtures::ClassMethods`.
+- Delegates transaction handling to `TestProf::BeforeAll`, which is an optional dependency;
+  `witness_all` raises a message naming the gem when it is absent. A second implementation of
+  `before_all` would be a liability rather than a convenience.
+- `constable_open_shared_scope!` builds **every** fixture in the case in one pass, because
+  `begin_transaction` yields and the setup has to happen inside that yield.
+- Each investigation re-reads its record (`constable_reread`) unless `reload: false`. The
+  transaction protects the database; it cannot undo a mutation to the shared Ruby object.
+- Without a database it degrades to building once and not rolling back, mirroring
+  `Isolation#transactional?`.
+
+### E3. Impersonation — `lib/constable/impersonation.rb`
+Stubs and call assertions, so rspec-mocks is not a reason a file cannot convert.
+- `impersonate` replaces the singleton method directly and puts the original on a restore
+  list. No proxy object, no per-stub signature reflection — that is the speed story.
+- The ledger of calls is attached to the **target**, not the test instance, because
+  `attest(client).to have_been_asked(:fetch)` hands the matcher only the client. Removed
+  again on restore, so an object outliving the test carries nothing away.
+- Verification (the object must respond to the method) is the default rather than optional:
+  a stub of a method that does not exist passes forever and proves nothing.
+- `Case#run_teardown` calls `constable_restore_impersonations!` after the user's teardowns
+  and unconditionally, so a failing test cannot leave a method replaced.
+- Matcher: `have_been_asked`, with an `AskedDeferred` that overrides `#invoke` to pass itself
+  so `.with(...)` / `.times(n)` reach the matcher block.
 
 ### F. Jail — `lib/constable/jail.rb`
 Docket state machine over storage: `jailed` ⇄ `parole` → released.
@@ -242,6 +280,22 @@ Cops: `NoSleep`, `NoUnfrozenTime`, `NoNetworkWithoutStub`, `NoSharedMutableState
 **Scoped to native `Constable::Case` files only** — a file whose class inherits from
 `Constable::ColdCase::*` is exempt by design. `config/default.yml` + `lib/rubocop-constable.rb`
 entry point so users add `require: rubocop-constable` to `.rubocop.yml`.
+
+## Configuration layering
+
+Three sources, resolved in this order, each with a reason it exists separately:
+
+1. `.constable/config.yml` — every setting. ERB-processed before YAML, as Rails does for
+   `database.yml`, so a computed value needs no second home. Assigning any of these through
+   `Constable.configure` raises and names the file.
+2. `.constable/preferences.yml` — gitignored, per developer, merged over the above. The key
+   list is **closed** (`output`, `heartbeat`, `color`, `slowest`) and anything else raises.
+   A setting that changes what passes cannot live in a file nobody else can see.
+3. `Constable.cold_cases` in `test/case_helper.rb` — the cold-case globs, reaching the config
+   through `Configuration#overrides`, applied by `Runner#load_suite!` after the helper loads
+   and before `Selection` is asked for targets.
+
+`Constable.configure` is for **code**: `before_suite`, `after_suite`, matchers.
 
 ## Testing convention for this repo
 

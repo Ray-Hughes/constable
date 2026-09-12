@@ -316,9 +316,101 @@ Shipped as a Rubocop extension (`rubocop-constable`), scoped to native `Constabl
 ## Speed mechanisms
 
 - Boot tiers (`:unit`/`:integration`/`:system`) via base classes as shown above, with file-path/superclass convention as a fallback.
-- Parallel workers by default, load-balanced by a cached per-test duration index — across native and cold cases in the same run.
+- Parallel workers by default, load-balanced by a cached per-test duration index — across native and cold cases in the same run. **A case is one unit of work**, never split across workers: the live stream groups by case, so scattering one case's tests makes the output unreadable, and `witness_all` opens a transaction spanning the case. Balancing is bounded by the largest case rather than the largest test.
 - Git-diff-based local runs (`constable test` with no args); `constable test --full` for everything, always used in CI.
 - `witness` encourages `build_stubbed`-style reuse over redundant `create` calls.
+- `witness_all` builds a fixture once per case instead of once per test — see below.
+
+### `witness_all` — one fixture per case
+
+```ruby
+class UserCase < UnitCase
+  witness_all(:appeal) { create(:appeal, :with_post_intake_tasks) }
+end
+```
+
+Measured: 15 tests sharing one expensive factory, **2.0s → 0.9s**.
+
+This is not `before(:all)`. Records live in a transaction opened before the case and rolled
+back after it, each investigation nested inside, so nothing written to the database reaches
+the next test. That is [test-prof's `before_all`](https://github.com/test-prof/test-prof),
+delegated to rather than reimplemented; `gem "test-prof"` is required to use it.
+
+What a rollback cannot undo is a mutation to the shared Ruby object, since every test is
+handed the same instance — so each one re-reads its record before use. The saving is the
+`INSERT`; the `SELECT` that makes it safe is the cheap half. `reload: false` declines it.
+
+**On `let!`:** rewriting it as a lazy `let` looks like the same optimization and is not. On a
+152-test file it broke 13 tests and saved 5%, because the examples that skip the fixture are
+exactly the ones relying on the row existing. `witness_all` keeps it existing and stops
+paying to rebuild it.
+
+## Stubs and call assertions
+
+Constable ships its own, so `allow(x).to receive(:y)` is not a reason a legacy file cannot
+convert.
+
+```ruby
+impersonate(client, :fetch, returns: :ok)      # replace one method, record what it receives
+impersonate(client, :fetch, raises: Timeout::Error)
+impersonate(client, :fetch) { |id| store[id] } # replace it with a body
+impersonate_any(Client, :fetch, returns: :ok)  # every instance
+decoy(:api, ping: :pong)                       # a stand-in with nothing behind it
+
+attest(client).to have_been_asked(:fetch).with(1).once
+```
+
+Refinements: `.with(...)`, `.once`, `.twice`, `.never`, `.times(n)`.
+
+Everything is restored at teardown, including after a failure, because Constable owns the
+lifecycle. Two deliberate differences from rspec-mocks:
+
+- **Stubbing a method the object does not have is refused**, not optional. That stub passes
+  forever and proves nothing, which is exactly what a rename leaves behind. `allow_missing:
+  true` when the method really is defined later; a `decoy` never needs it.
+- **No proxy object or signature reflection per stub.** The singleton method is replaced
+  directly and the original goes on a restore list. That is the whole speed story.
+
+`constable modernize` converts `allow`, `and_return`, `and_raise` and `allow_any_instance_of`
+onto these. `expect(x).to receive(:y)` is deliberately not converted: it verifies at the end
+of the example, so rewriting it as an assertion afterwards moves when the failure surfaces.
+
+## Timeouts
+
+A test that never returns does not fail — it parks the run, and the only symptom is a
+terminal that sits there. `--timeout N`, or `timeout:` in config.yml, fails that file by name
+and lets the suite finish. Off by default: raising into a running test can leave state
+behind, so it is asked for rather than assumed.
+
+Usually the engine catches the interrupt first and reports it as the example failing, which
+is better than a file-level result because it names the exact test. Either way the message
+says what the limit was and what to do about it.
+
+## Preferences — yours, not the team's
+
+`.constable/config.yml` is a team agreement. `.constable/preferences.yml` is not, and is
+gitignored.
+
+```console
+$ constable config                  # what is set
+$ constable config output expanded
+$ constable config heartbeat 30
+$ constable config output --unset
+```
+
+The allowed keys are `output`, `heartbeat`, `color`, `slowest` — and the list is closed. A
+setting that changes what **passes** is refused there: a suite green on one machine and red
+on another, with the difference in a file nobody else can see, is worse than having no
+preferences at all.
+
+`heartbeat: N` prints a line every N seconds while a run streams:
+
+```
+  · 13s elapsed  ·  38 tests  ·  now: LegacyColocatedSpec
+```
+
+Time-based rather than per-test, so a fast suite never prints one and a slow one prints a
+handful instead of a wall.
 
 ## Persistence — the blotter
 
@@ -356,6 +448,10 @@ Tables: `flake_history`, `jail_docket`, `warrants`.
 | `constable test` | Everything — native + cold cases (git-diff-scoped locally, `--full` for the whole suite; CI always uses `--full`) |
 | `constable test PATH[:LINE]` | One file, or one specific `investigate` at that line |
 | `constable test --timeout N` | Fail a file that produces no result in N seconds |
+| `constable config [KEY VALUE]` | Read or write .constable/preferences.yml |
+| `constable tree` | Every available command |
+| `constable prepare` | Build the per-worker test databases parallel runs need |
+| `constable prune` | Forget docket rows and warrants for tests that no longer exist |
 | `constable test --only=cold` | Every cold case only |
 | `constable test PATH:LINE --only=cold` | One specific cold case only |
 | `constable test --only=native` | Skip the legacy suite entirely |

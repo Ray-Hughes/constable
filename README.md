@@ -58,6 +58,9 @@ linter instead of by CI, and an adoption path that never asks you to rewrite any
   - [Tiers](#tiers-are-base-classes-not-magic)
   - [Matchers](#matchers)
   - [Shared behavior](#shared-behavior-is-just-ruby)
+  - [witness_all](#witness_all--one-fixture-for-a-whole-case)
+  - [Stubs](#stubs-and-call-assertions)
+  - [Preferences](#preferences-yours-not-the-teams)
   - [Rails generators](#rails-generators)
   - [Adopting an existing suite](#adopting-an-existing-suite)
   - [Escape hatches](#escape-hatches-always-visible)
@@ -757,6 +760,8 @@ worse than one that resets.
 | `constable test PATH[:LINE]` | One file, or one investigation at that line |
 | `constable test --only=MODE` | Narrow by what runs it: `native`, `cold`, `rspec`, `minitest` |
 | `constable test --timeout N` | Fail a file that produces no result in N seconds |
+| `constable config` | Your own preferences, layered over the project's |
+| `constable tree` | Every command, when you forget one of these |
 | `constable test --jail` | The full run, in jail mode |
 | `constable test --shard i/n` | One slice of the suite, for a CI matrix |
 | `constable jail [run\|parole\|release]` | The docket. `release --all` empties it |
