@@ -19,6 +19,44 @@ module Constable
       [runner.call, runner]
     end
 
+    # --- scheduling ------------------------------------------------------------------
+
+    # `docket` builds an anonymous subclass per group, so a case with several dockets is
+    # several classes reporting under one name. Grouping by the class gave each docket its
+    # own line in the stream, which is the repetition grouping was meant to remove.
+    def test_dockets_of_one_case_schedule_together
+      write_file("test/cases/models/grouped_case.rb", <<~RUBY)
+        class GroupedCase < Constable::Case
+          docket "first" do
+            investigate("a") { attest(1).to eq(1) }
+          end
+
+          docket "second" do
+            investigate("b") { attest(2).to eq(2) }
+          end
+
+          investigate("c") { attest(3).to eq(3) }
+        end
+      RUBY
+
+      write_file("test/cases/models/other_case.rb", <<~RUBY)
+        class OtherCase < Constable::Case
+          investigate("x") { attest(1).to eq(1) }
+        end
+      RUBY
+
+      _status, runner = run_suite
+
+      # The stream opens a line per contiguous run of one case. Interleaving is what put
+      # the same name on four lines, so assert on adjacency, not on membership.
+      streamed = runner.results.map(&:case_name)
+      runs = streamed.chunk_while { |a, b| a == b }.map(&:first)
+
+      assert_equal runs.uniq.size, runs.size,
+                   "a case's tests were split up: #{runs.inspect}"
+      assert_equal 4, streamed.size
+    end
+
     # --- timeout ------------------------------------------------------------------------
 
     # A test that never finishes does not fail, it stops the suite -- and the symptom is a

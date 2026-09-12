@@ -297,12 +297,23 @@ module Constable
     def execute(items)
       return [] if items.empty?
 
+      items = group_by_case(items)
       count = worker_count(items)
       if count > 1 && forkable? && parallel_safe?(count)
         run_parallel(items, count)
       else
         run_serial(items)
       end
+    end
+
+    # Here rather than only in #balance, because #balance is the parallel path and a serial
+    # run never reaches it. That was the whole bug: the grouping landed, the tests passed,
+    # and the suite it was written for runs serially -- so the repetition it was meant to
+    # fix was still there on screen, unchanged.
+    #
+    # Stable within a group and across groups, so `--seed` still replays an order.
+    def group_by_case(items)
+      items.group_by { |item| scheduling_group(item) }.values.flatten(1)
     end
 
     # Forking is only safe once each worker has a database of its own. Without that,
@@ -767,10 +778,24 @@ module Constable
       buckets.reject(&:empty?)
     end
 
-    # What has to stay together: a native item belongs to its case class, a cold item is
-    # already a whole file.
+    # What has to stay together.
+    #
+    # Not the item's own case class: `docket` builds an anonymous subclass per group, so a
+    # case with four dockets is four classes that all report under one name. Grouping by the
+    # class gave each docket its own line and the repetition this was meant to fix survived
+    # -- visibly, on a real suite, with PowerOfAttorneyMapperCase appearing four times in one
+    # screenful.
+    #
+    # So group by what the reader sees, which is the nearest named non-docket ancestor. That
+    # is the same answer `constable_display_name` gives, and it has to be, or the scheduler
+    # and the stream disagree about what a case is.
     def scheduling_group(item)
-      item.native? ? item.investigation&.case_class : item.path
+      return item.path unless item.native?
+
+      klass = item.investigation&.case_class
+      return klass unless klass.respond_to?(:constable_display_name)
+
+      klass.constable_display_name
     end
 
     # What one item is expected to cost.
