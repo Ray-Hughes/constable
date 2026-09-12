@@ -236,6 +236,19 @@ module Constable
     ACTIVITY_FRAMES = %w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏].freeze
     ACTIVITY_INTERVAL = 0.12
 
+    # How long one test may take without the run saying anything about it.
+    #
+    # The clock is driven by results -- it is asked on each one whether it is due. That
+    # makes it silent during exactly the situation it exists for: a test that never
+    # finishes produces no results, so nothing is ever asked, and the spinner alone says
+    # "alive" without saying "stuck on this, for this long".
+    #
+    # So the activity thread, which is already on a timer, escalates. After this long with
+    # no result it names what it is waiting on and keeps counting.
+    STALL_AFTER = 30
+
+    def stall_after = STALL_AFTER
+
     def activity_mutex = (@activity_mutex ||= Mutex.new)
 
     def activity?
@@ -248,6 +261,8 @@ module Constable
       return unless activity? && @activity_thread.nil?
 
       @activity_frame = 0
+      @last_result_at = monotonic
+      @stalled_for = 0
       @activity_thread = Thread.new do
         loop do
           sleep(ACTIVITY_INTERVAL)
@@ -267,11 +282,26 @@ module Constable
 
     # Called with the mutex held.
     def draw_activity!
+      report_stall!
       erase_activity!
       @io.write(ACTIVITY_FRAMES[@activity_frame % ACTIVITY_FRAMES.size])
       @io.flush if @io.respond_to?(:flush)
       @activity_frame += 1
       @activity_shown = true
+    end
+
+    # Called with the mutex held.
+    def report_stall!
+      waited = monotonic - (@last_result_at || monotonic)
+      return if waited < stall_after || waited < @stalled_for.to_i + stall_after
+
+      @stalled_for = waited.to_i
+      erase_activity!
+      subject = @stream_case ? " on #{@stream_case}" : ""
+      @io.write("\n#{INDENT}#{paint("still running", :bold)} " \
+                "#{paint("#{format_elapsed(waited)}#{subject}", :dim)}\n")
+      @io.flush if @io.respond_to?(:flush)
+      @stream_open = false
     end
 
     # Called with the mutex held. Backspace, overwrite with a space, backspace again --
@@ -345,6 +375,8 @@ module Constable
       stream(result)
       # The gap between one result and the next is where a slow test lives, so that is
       # exactly when something has to be moving.
+      @last_result_at = monotonic
+      @stalled_for = 0
       start_activity!
       self
     end

@@ -1356,6 +1356,28 @@ module Constable
                    "every frame drawn has to be erased"
     end
 
+    # The clock is asked on each result whether it is due, which makes it silent during
+    # exactly the situation it exists for: a test that never finishes produces no results,
+    # so nothing is ever asked.
+    def test_a_stalled_run_says_what_it_is_waiting_on
+      Constable.reset!
+      io = StringIO.new
+      io.define_singleton_method(:tty?) { true }
+      previous = ENV.fetch("CI", nil)
+      ENV.delete("CI")
+      reporter = Reporter.new(io: io, config: Constable.config, color: false)
+      reporter.stub(:stall_after, 1) do
+        reporter.record(passing("Slow"))
+        sleep 1.5
+      end
+      reporter.flush!
+
+      assert_match(/still running/, io.string)
+      assert_match(/on Slow/, io.string)
+    ensure
+      ENV["CI"] = previous
+    end
+
     # The clock must not cut a case in half. Firing on whatever test crosses the interval
     # closes the stream line mid-case, so the case gets a second line for the rest of its
     # glyphs -- which is the repetition the scheduler grouping exists to prevent.

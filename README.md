@@ -668,6 +668,16 @@ answers "is it still running", and a user who turns it off and then cannot tell 
 handed a way to make their own tools worse. It only appears on a terminal — in CI the output
 is a log nobody watches live, and animation frames would be thousands of junk lines.
 
+If nothing finishes for 30 seconds, it stops spinning silently and says so:
+
+```
+  still running 2m 14s on LegacyAppealAffinitySpec
+```
+
+That case matters more than it sounds. The clock below is asked *on each result* whether it
+is due, which makes it silent during exactly the situation it exists for — a test that never
+finishes produces no results, so nothing is ever asked. This is the half that still speaks.
+
 ### The run clock
 
 A suite that takes half an hour gives no sign of how far in it is. Step away, come back, and
