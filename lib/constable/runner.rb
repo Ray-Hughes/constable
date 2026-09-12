@@ -290,9 +290,44 @@ module Constable
       line <= File.foreach(path).count
     end
 
+    # Shuffled, but hierarchically: groups against each other, tests within a group.
+    #
+    # A flat shuffle of every investigation scattered a docket's tests across the run, so
+    # the expanded stream printed the same group heading two or three times in one case --
+    # accurately, since those tests really did run at different points, and unreadably.
+    #
+    # Shuffling the groups instead keeps every isolation signal that matters. A docket is a
+    # class with its own witnesses and briefings, so order dependence lives either between
+    # dockets, which a group-level shuffle still exposes, or between the tests inside one,
+    # which the within-group shuffle still exposes. What is given up is interleaving tests
+    # from two sibling dockets, and those share no setup to leak through in the first place.
     def order(items)
       native, cold = items.partition(&:native?)
-      [*native.shuffle(random: Random.new(@seed)), *cold]
+      random = Random.new(@seed)
+
+      [*shuffle_tree(native, 0, random), *cold]
+    end
+
+    # Shuffling a flat list of docket paths is not enough: a case with `docket "#all"`
+    # containing both a test and a nested `docket "when drafted"` has two paths that share a
+    # prefix, and they can land either side of an unrelated group -- so "#all" prints twice
+    # even though every path appeared once.
+    #
+    # Shuffling the tree instead keeps a parent's descendants together by construction. At
+    # each level the children are shuffled against each other; what is inside a child stays
+    # inside it.
+    def shuffle_tree(items, depth, random)
+      return items.shuffle(random: random) if items.size <= 1
+
+      groups = items.group_by { |item| Array(item.investigation&.docket_path)[depth] }
+      return items.shuffle(random: random) if groups.size == 1 && groups.key?(nil)
+
+      groups.values.shuffle(random: random).flat_map do |group|
+        # Tests sitting directly in this group, before its sub-groups -- a heading with its
+        # own tests reads better than a heading that opens straight into a sub-heading.
+        here, deeper = group.partition { |item| Array(item.investigation&.docket_path).size <= depth + 1 }
+        [*here.shuffle(random: random), *shuffle_tree(deeper, depth + 1, random)]
+      end
     end
 
     def execute(items)

@@ -57,6 +57,54 @@ module Constable
       assert_equal 4, streamed.size
     end
 
+    # A flat shuffle scattered a docket's tests across the run, so the expanded stream
+    # printed the same group heading two or three times in one case -- accurately, since
+    # those tests really did run at different points, and unreadably.
+    def test_a_docket_group_runs_as_one_block
+      write_file("test/cases/models/nested_case.rb", <<~RUBY)
+        class NestedCase < Constable::Case
+          docket "#all" do
+            investigate("a") { attest(1).to eq(1) }
+            docket "when drafted" do
+              investigate("b") { attest(1).to eq(1) }
+            end
+            investigate("c") { attest(1).to eq(1) }
+          end
+
+          docket "#other" do
+            investigate("d") { attest(1).to eq(1) }
+          end
+        end
+      RUBY
+
+      _status, runner = run_suite
+
+      paths = runner.results.map { |result| Array(result.docket_path).first }
+      runs = paths.chunk_while { |a, b| a == b }.map(&:first)
+
+      assert_equal runs.uniq.size, runs.size, "a group was split up: #{paths.inspect}"
+    end
+
+    # The point of shuffling is that any order works. Grouping must not quietly stop it.
+    def test_groups_still_run_in_a_different_order_per_seed
+      write_file("test/cases/models/many_case.rb", <<~RUBY)
+        class ManyCase < Constable::Case
+          6.times do |n|
+            docket "group \#{n}" do
+              investigate("a") { attest(1).to eq(1) }
+            end
+          end
+        end
+      RUBY
+
+      orders = [1, 2, 3, 4].map do |seed|
+        _status, runner = run_suite(seed: seed)
+        runner.results.map { |result| Array(result.docket_path).first }
+      end
+
+      assert_operator orders.uniq.size, :>, 1, "every seed produced the same order"
+    end
+
     # --- timeout ------------------------------------------------------------------------
 
     # A test that never finishes does not fail, it stops the suite -- and the symptom is a
