@@ -1211,14 +1211,18 @@ module Constable
       index = lines.index { |line| line.match?(/\d+s/) && line.match?(/tests/) }
 
       refute_nil index, "no clock line in:\n#{output}"
-      assert_match(/─{10,}/, lines[index - 1], "the clock needs a rule above it")
+      # The name sits between the rule and the clock, so the rule is two lines up.
+      assert(lines[(index - 2)..(index - 1)].any? { |line| line.match?(/─{10,}/) },
+             "the clock needs a rule above it:\n#{output}")
       assert_match(/─{10,}/, lines[index + 1], "the clock needs a rule below it")
     end
 
-    def test_the_clock_says_what_it_is_on
+    # The file rather than the case name: the case name is the header on the very next
+    # line, so naming it in the banner says the same thing twice.
+    def test_the_clock_names_the_file_it_is_on
       output = report(heartbeat: 1, results: [passing("A"), passing("Later")], sleep_between: 1.1)
 
-      assert_match(/on Later/, output)
+      assert_match(/^\s+f\.rb$/, output)
     end
 
     def opening(forecast, heartbeat: 30)

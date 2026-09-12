@@ -48,11 +48,14 @@ module Constable
 
     desc "test [PATH[:LINE]]", "Run the suite -- native and cold cases side by side"
     long_desc <<~DESC
-      With no arguments, runs only the cases touched by your current git diff. CI should
-      always pass --full. PATH runs one file; PATH:LINE runs the single investigation at
-      that line.
+      With no arguments, runs the whole suite -- the way `rspec` with no arguments does.
+      `--changed` narrows it to the cases your current git diff touches. PATH runs one file;
+      PATH:LINE runs the single investigation at that line.
     DESC
-    option :full,     type: :boolean, default: false, desc: "Run the whole suite (always use this in CI)"
+    option :full,     type: :boolean, default: false,
+                      desc: "Run the whole suite. The default -- kept because it is in CI configs"
+    option :changed,  type: :boolean, default: false,
+                      desc: "Only the cases your current git diff touches"
     option :only,     type: :string, enum: %w[native cold rspec minitest],
                       desc: "Narrow by what runs the test: native, cold, rspec or minitest"
     option :jail,     type: :boolean, default: false, desc: "Jail failures instead of failing the build"
@@ -80,6 +83,7 @@ module Constable
         config: config,
         root: Constable.root,
         full: options[:full],
+        changed: options[:changed],
         only: options[:only],
         tier: options[:tier]
       )

@@ -43,11 +43,21 @@ module Constable
     ].freeze
 
     def initialize(args = [], config: Constable.config, root: Constable.root,
-                   full: false, only: nil, tier: nil)
+                   full: false, changed: false, only: nil, tier: nil)
       @args        = Array(args)
       @config      = config
       @root        = root.to_s
+      # `constable test` runs the whole suite, the way `rspec` with no arguments does.
+      #
+      # It used to run only what the current git diff touched. That is a genuinely useful
+      # thing and the wrong default: "run the tests" means run the tests, and a command that
+      # quietly runs a subset is one people stop trusting -- you end up typing --full every
+      # time, which is the tell that the default was backwards.
+      #
+      # --full is still accepted, because it is in CI configs and in muscle memory. It means
+      # what it always meant; it simply no longer needs saying.
       @full        = full
+      @changed     = changed
       @only        = only.to_s.strip.downcase.to_sym unless only.to_s.strip.empty?
       # Downcased: `--tier UNIT` used to match nothing at all and report a clean run.
       @tier        = tier.to_s.strip.downcase.to_sym unless tier.to_s.strip.empty?
@@ -60,7 +70,8 @@ module Constable
     # much of the suite) and --tier (which layer). All three compose.
     ONLY_MODES = %i[native cold rspec minitest].freeze
 
-    def full? = @full
+    def full?    = !@changed
+    def changed? = @changed
     attr_reader :config, :root, :args, :reason, :only
 
     def cold_only?   = %i[cold rspec minitest].include?(@only)
@@ -75,10 +86,10 @@ module Constable
             explicit_targets
           elsif cold_only?
             cold_targets
-          elsif @full
-            all_targets
-          else
+          elsif @changed
             diff_targets
+          else
+            all_targets
           end
 
         list = list.select(&:cold?) if cold_only?

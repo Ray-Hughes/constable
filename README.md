@@ -244,8 +244,8 @@ tier base classes and the two things Constable deliberately does not have.
 ### Then, whichever path you took
 
 ```console
-$ constable test              # only what your current git diff touches
-$ constable test --full       # everything. this is what CI runs
+$ constable test              # the whole suite, the way `rspec` with no args does
+$ constable test --changed    # only what your current git diff touches
 $ constable test --timeout 60  # raise or lower the hang limit for this run
 $ constable test --only=native   # skip the legacy suite
 $ constable test --only=cold     # run only the legacy suite
@@ -685,7 +685,8 @@ there is no honest answer to "has this been running ten minutes or forty".
 
 ```
   ────────────────────────────────────────────────────────
-  1m 22s   341 tests  ·  31 failed  ·  on LegacyCheckTaskTreeSpec
+  test/cases/models/check_task_tree_case.rb
+  1m 22s   341 tests  ·  31 failed
   ────────────────────────────────────────────────────────
 ```
 

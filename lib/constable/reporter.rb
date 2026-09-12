@@ -193,11 +193,21 @@ module Constable
       stats = ["#{@streamed} tests"]
       stats << "#{@failed_live} failed" if @failed_live.positive?
 
-      stats << "on #{result.case_name}" if result.respond_to?(:case_name) && result.case_name
+      # The file, not the case name. The case name is the header on the very next line, so
+      # naming it here says the same thing twice -- and the file is the thing you open.
+      subject = result.respond_to?(:file) ? result.file.to_s : ""
+      subject = result.case_name.to_s if subject.empty? && result.respond_to?(:case_name)
 
       close_stream_line if @stream_open
       writeln
       writeln(paint(INDENT + THIN_RULE, :dim))
+      # The name first, on its own line, because it is the thing you are looking for. The
+      # clock and counts read under it as detail about that name rather than as a sentence
+      # you have to get to the end of.
+      unless subject.empty?
+        writeln("#{INDENT}#{paint(subject, :bold)}")
+        @banner_named_file = subject
+      end
       writeln("#{INDENT}#{paint(pad(elapsed, 9), :bold)}#{paint(stats.join("  ·  "), :dim)}")
       writeln(paint(INDENT + THIN_RULE, :dim))
       writeln
@@ -349,7 +359,8 @@ module Constable
     def opening_frame(forecast)
       writeln
       writeln(paint(INDENT + THIN_RULE, :dim))
-      writeln("#{INDENT}#{paint(pad("starting", 9), :bold)}#{paint(forecast_line(forecast), :dim)}")
+      writeln("#{INDENT}#{paint("starting", :bold)}")
+      writeln("#{INDENT}#{paint(pad("0s", 9), :bold)}#{paint(forecast_line(forecast), :dim)}")
       writeln(paint(INDENT + THIN_RULE, :dim))
     end
 
@@ -567,7 +578,11 @@ module Constable
       if @stream_case != name
         writeln if @stream_case
         writeln(INDENT + paint(name, :bold))
-        writeln("#{INDENT}#{paint(result.file.to_s, :dim)}") unless result.file.to_s.empty?
+        # The banner immediately above already named the file when it just fired.
+        unless result.file.to_s.empty? || @banner_named_file == result.file.to_s
+          writeln("#{INDENT}#{paint(result.file.to_s, :dim)}")
+        end
+        @banner_named_file = nil
         @stream_case = name
         @stream_docket = nil
         @stream_open = true
