@@ -197,7 +197,7 @@ module Constable
 
     # Announces the run. The seed is always printed: every summary that mentions a
     # failure hands back a rerun command, and the command is only replayable with it.
-    def start(total: nil, seed: nil)
+    def start(total: nil, seed: nil, forecast: nil)
       @total = total
       @seed  = seed
       return self if total.nil? && seed.nil?
@@ -206,8 +206,43 @@ module Constable
       bits << "#{total} #{pluralize(total, "test")}" if total
       bits << "seed #{seed}" if seed
       writeln(paint("#{LABEL.downcase} · #{bits.join(" · ")}", :dim))
+      opening_frame(forecast) if forecast && heartbeat_seconds.positive?
       writeln
       self
+    end
+
+    # The first clock, printed before anything runs.
+    #
+    # A suite that takes 45 minutes should say so at the start rather than leaving you to
+    # discover it. Same frame as the later ones, so the shape is familiar by the time the
+    # second one arrives.
+    def opening_frame(forecast)
+      writeln
+      writeln(paint(INDENT + THIN_RULE, :dim))
+      writeln("#{INDENT}#{paint(pad("starting", 9), :bold)}#{paint(forecast_line(forecast), :dim)}")
+      writeln(paint(INDENT + THIN_RULE, :dim))
+    end
+
+    # Below this much coverage the estimate is extrapolation, not measurement, and a wrong
+    # number that looks authoritative is worse than no number -- it gets believed once and
+    # then the whole line is ignored forever.
+    FORECAST_MINIMUM_COVERAGE = 0.4
+
+    def forecast_line(forecast)
+      known = forecast[:known].to_i
+      total = forecast[:total].to_i
+      coverage = total.positive? ? known.to_f / total : 0
+      confident = coverage >= FORECAST_MINIMUM_COVERAGE
+
+      bits = []
+      bits << "~#{format_elapsed(forecast[:seconds])}" if confident && forecast[:seconds].to_f >= 1
+      bits << "~#{forecast[:tests]} tests" if confident && forecast[:tests].to_i.positive?
+      bits << if confident && forecast[:partial]
+                "estimated from #{known} of #{total}"
+              elsif !confident
+                "#{total - known} of #{total} never run here, so no estimate yet"
+              end
+      bits.compact.join("  ·  ")
     end
 
     # One glyph, live, as each test completes. Safe to call from the parent process

@@ -1221,6 +1221,51 @@ module Constable
       assert_match(/on Later/, output)
     end
 
+    def opening(forecast, heartbeat: 30)
+      write_config("heartbeat: #{heartbeat}\n")
+      Constable.reset!
+      io = StringIO.new
+      Reporter.new(io: io, config: Constable.config, color: false)
+              .start(total: 10, seed: 1, forecast: forecast)
+      io.string
+    end
+
+    def test_the_opening_frame_says_what_the_run_should_cost
+      output = opening({ seconds: 2700, tests: 6435, known: 100, total: 100, partial: false })
+
+      assert_match(/starting/, output)
+      assert_match(/45m 00s/, output)
+      assert_match(/6435 tests/, output)
+    end
+
+    # An estimate from a fraction of the files, printed as if it covered all of them, gets
+    # believed once and then the whole line is ignored forever.
+    def test_a_thin_estimate_is_withheld_rather_than_guessed
+      output = opening({ seconds: 2700, tests: 6435, known: 16, total: 69, partial: true })
+
+      refute_match(/45m/, output)
+      assert_match(/53 of 69 never run here/, output)
+    end
+
+    def test_a_partial_but_usable_estimate_says_how_partial
+      output = opening({ seconds: 600, tests: 400, known: 80, total: 100, partial: true })
+
+      assert_match(/10m 00s/, output)
+      assert_match(/estimated from 80 of 100/, output)
+    end
+
+    def test_no_opening_frame_when_the_clock_is_off
+      output = opening({ seconds: 600, tests: 400, known: 100, total: 100 }, heartbeat: 0)
+
+      refute_match(/starting/, output)
+    end
+
+    def test_no_opening_frame_without_a_forecast
+      output = opening(nil)
+
+      refute_match(/starting/, output)
+    end
+
     # Time-based, not per-test: a fast suite must never print one.
     def test_a_fast_run_prints_no_clock
       output = report(heartbeat: 30, results: Array.new(50) { passing("A") })

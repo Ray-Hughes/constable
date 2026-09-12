@@ -122,7 +122,7 @@ module Constable
       # A cold-case file is one work item but an unknown number of tests until its own
       # engine has run it, so claim a total only when every item is a native investigation.
       announced = ordered.all?(&:native?) ? ordered.size : nil
-      @reporter.start(total: announced, seed: @seed)
+      @reporter.start(total: announced, seed: @seed, forecast: forecast_for(ordered))
 
       # The "alone" half of the order audit has to happen before the suite has touched
       # anything, so it runs here rather than alongside the results it will be compared to.
@@ -824,6 +824,60 @@ module Constable
     end
 
     # Read once, in the parent, before any fork -- same as the duration index.
+    # What this run is about to cost, from what the blotter has seen before.
+    #
+    # A suite that takes 45 minutes should say so at the start rather than leaving you to
+    # find out. Returns nil rather than a guess when there is nothing recorded -- a made-up
+    # estimate on a first run is worse than no estimate, because it will be believed once
+    # and then never again.
+    def forecast_for(items)
+      index = duration_index
+      files = file_durations
+      return nil if index.empty? && files.empty?
+
+      seconds = 0.0
+      tests = 0
+      known = 0
+
+      items.each do |item|
+        if item.native?
+          recorded = index[item.identity]
+          if recorded
+            seconds += recorded
+            known += 1
+          end
+          tests += 1
+        else
+          relative = item.path.to_s.delete_prefix("#{Constable.root}/")
+          recorded = files[relative]
+          next unless recorded
+
+          seconds += recorded[:seconds] || recorded["seconds"] || 0
+          tests += (recorded[:tests] || recorded["tests"] || 0).to_i
+          known += 1
+        end
+      end
+
+      return nil if known.zero?
+
+      # Test bodies are not the run. Booting, loading files, suite hooks and cleaning
+      # between examples are all wall-clock time nobody's duration records -- measured on a
+      # real suite as 2m 25s of bodies inside an 11m run. The same per-test overhead the
+      # port planner uses, which got within 1m 30s of an 11m 11s run.
+      overhead = begin
+        @storage.overhead_per_test
+      rescue StandardError
+        nil
+      end
+      seconds += overhead[:seconds] * tests if overhead && tests.positive?
+
+      # Scale by coverage. An estimate built from a third of the files, presented as if it
+      # covered all of them, is worse than none: it will be believed once.
+      scale = items.size.to_f / known
+      { seconds: seconds * scale, tests: (tests * scale).round, known: known, total: items.size,
+        partial: known < items.size }
+    end
+
     def file_durations
       @file_durations ||= begin
         @storage.average_seconds_by_file

@@ -670,6 +670,18 @@ there is no honest answer to "has this been running ten minutes or forty".
 Framed on purpose. Unframed it sits under a case line and reads as an annotation on *that
 case* — the honest first reaction to a bare `· 1m 22s elapsed` is "did something just fail?".
 
+The first one prints before anything runs, so a 45-minute suite says so up front:
+
+```
+  ────────────────────────────────────────────────────────
+  starting ~45m 00s  ·  ~6435 tests
+  ────────────────────────────────────────────────────────
+```
+
+Both numbers come from the blotter. When too little of the run has been seen before, the
+estimate is **withheld rather than guessed** — it says how many files are new instead. A
+confident-looking wrong number gets believed once and then the whole line is ignored.
+
 Time-based rather than per-test, so a fast suite never prints one and a slow one prints a
 handful instead of a wall. Off by default; `constable config heartbeat 30` turns it on for
 you, `heartbeat:` in config.yml for everyone.
