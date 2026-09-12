@@ -1317,6 +1317,45 @@ module Constable
       assert_includes output, "Thing"
     end
 
+    # A slow test leaves the terminal completely still, and the honest reaction to that is
+    # to reach for ctrl-c -- the one thing that makes it worse.
+    def spinning(tty:, ci: nil)
+      Constable.reset!
+      io = StringIO.new
+      io.define_singleton_method(:tty?) { tty }
+      previous = ENV.fetch("CI", nil)
+      ci.nil? ? ENV.delete("CI") : ENV["CI"] = ci
+      reporter = Reporter.new(io: io, config: Constable.config, color: false)
+      reporter.record(passing("A"))
+      sleep 0.4
+      reporter.flush!
+      io.string
+    ensure
+      ENV["CI"] = previous
+    end
+
+    def test_something_moves_while_a_test_is_running
+      assert_match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/, spinning(tty: true))
+    end
+
+    # In CI the output is a log nobody watches live, so animation frames are junk lines.
+    def test_no_spinner_without_a_terminal
+      refute_match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/, spinning(tty: false))
+    end
+
+    def test_no_spinner_in_ci_even_on_a_terminal
+      refute_match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/, spinning(tty: true, ci: "true"))
+    end
+
+    # Every frame it draws it must take back, or the summary ends up with debris in it.
+    def test_the_spinner_leaves_nothing_behind
+      output = spinning(tty: true)
+
+      refute_match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*\z/, output, "a frame survived to the end of the run")
+      assert_equal output.count("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"), output.scan("\b \b").size,
+                   "every frame drawn has to be erased"
+    end
+
     # The clock must not cut a case in half. Firing on whatever test crosses the interval
     # closes the stream line mid-case, so the case gets a second line for the rest of its
     # glyphs -- which is the repetition the scheduler grouping exists to prevent.

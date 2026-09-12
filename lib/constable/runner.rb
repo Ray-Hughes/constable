@@ -421,6 +421,11 @@ module Constable
       # Same reasoning for the app's own connections: a child that inherits a live
       # handle can corrupt it. Rails does exactly this before its own fork.
       WorkerDatabases.before_fork!
+      # A forked child inherits the parent's memory but not its threads -- including a
+      # mutex that a now-absent thread was holding, which is a deadlock the child can never
+      # resolve. The spinner is a thread holding a mutex around every write, so it stops
+      # before the fork and the parent restarts it once the workers are away.
+      @reporter.stop_activity!
 
       buckets.each_with_index do |bucket, worker_index|
         reader, writer = IO.pipe

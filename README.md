@@ -656,6 +656,18 @@ changes what **passes** is not a preference, and is refused here — a suite tha
 one machine and red on another, with the difference in a file nobody else can see, is worse
 than no preferences at all.
 
+### Something always moves
+
+A slow test leaves the terminal completely still — no output, no cursor movement, nothing to
+distinguish "working" from "hung". The honest reaction is to reach for ctrl-c, which is the
+one thing that makes it worse. So a spinner runs whenever the suite is alive and between
+results.
+
+Deliberately **not configurable**. Every other display choice is a preference; this one
+answers "is it still running", and a user who turns it off and then cannot tell has been
+handed a way to make their own tools worse. It only appears on a terminal — in CI the output
+is a log nobody watches live, and animation frames would be thousands of junk lines.
+
 ### The run clock
 
 A suite that takes half an hour gives no sign of how far in it is. Step away, come back, and

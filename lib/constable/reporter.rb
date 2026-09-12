@@ -220,6 +220,70 @@ module Constable
 
     # Announces the run. The seed is always printed: every summary that mentions a
     # failure hands back a rerun command, and the command is only replayable with it.
+    # A spinner, while a test is running.
+    #
+    # A slow test leaves the terminal completely still -- no output, no cursor movement,
+    # nothing to distinguish "working" from "hung". The honest reaction is to reach for
+    # ctrl-c, which is the one thing that makes it worse. So there is always something
+    # moving while the run is alive.
+    #
+    # Deliberately not configurable. Every other display choice is a preference; this one
+    # answers "is it still alive", and a user who turns it off and then cannot tell has
+    # been given a way to make their own tools worse.
+    #
+    # Only on a tty. In CI the output is a log file, nothing watches it live, and animation
+    # frames would be thousands of junk lines.
+    ACTIVITY_FRAMES = %w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏].freeze
+    ACTIVITY_INTERVAL = 0.12
+
+    def activity_mutex = (@activity_mutex ||= Mutex.new)
+
+    def activity?
+      return @activity if defined?(@activity)
+
+      @activity = @io.respond_to?(:tty?) && @io.tty? && !ENV["CI"]
+    end
+
+    def start_activity!
+      return unless activity? && @activity_thread.nil?
+
+      @activity_frame = 0
+      @activity_thread = Thread.new do
+        loop do
+          sleep(ACTIVITY_INTERVAL)
+          activity_mutex.synchronize { draw_activity! }
+        end
+      end
+      @activity_thread.abort_on_exception = false
+    end
+
+    def stop_activity!
+      thread = @activity_thread
+      @activity_thread = nil
+      thread&.kill
+      thread&.join(0.2)
+      activity_mutex.synchronize { erase_activity! }
+    end
+
+    # Called with the mutex held.
+    def draw_activity!
+      erase_activity!
+      @io.write(ACTIVITY_FRAMES[@activity_frame % ACTIVITY_FRAMES.size])
+      @io.flush if @io.respond_to?(:flush)
+      @activity_frame += 1
+      @activity_shown = true
+    end
+
+    # Called with the mutex held. Backspace, overwrite with a space, backspace again --
+    # the frame is one column wide and has to leave the cursor exactly where it found it.
+    def erase_activity!
+      return unless @activity_shown
+
+      @activity_shown = false
+      @io.write("\b \b")
+      @io.flush if @io.respond_to?(:flush)
+    end
+
     def start(total: nil, seed: nil, forecast: nil)
       @total = total
       @seed  = seed
@@ -231,6 +295,9 @@ module Constable
       writeln(paint("#{LABEL.downcase} · #{bits.join(" · ")}", :dim))
       opening_frame(forecast) if forecast && heartbeat_seconds.positive?
       writeln
+      # Boot and file loading happen before the first result, and on a large app that is
+      # the longest still moment of the whole run.
+      start_activity!
       self
     end
 
@@ -276,11 +343,15 @@ module Constable
       # whether this result starts a new case always answers no.
       maybe_heartbeat!(result)
       stream(result)
+      # The gap between one result and the next is where a slow test lives, so that is
+      # exactly when something has to be moving.
+      start_activity!
       self
     end
 
     # Ends the live stream, emitting any case whose glyphs are still buffered.
     def flush!
+      stop_activity!
       return self unless streaming?
 
       # The expanded stream never buffers -- every line was written as it happened, so
@@ -1251,8 +1322,11 @@ module Constable
     # --- output --------------------------------------------------------------------
 
     def write(text)
-      @io.write(text)
-      @io.flush if @io.respond_to?(:flush)
+      activity_mutex.synchronize do
+        erase_activity!
+        @io.write(text)
+        @io.flush if @io.respond_to?(:flush)
+      end
       text
     end
 
