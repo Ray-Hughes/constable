@@ -121,6 +121,7 @@ module Constable
       started = monotonic
       # A cold-case file is one work item but an unknown number of tests until its own
       # engine has run it, so claim a total only when every item is a native investigation.
+      warn_about_tight_timeout!(ordered)
       announced = ordered.all?(&:native?) ? ordered.size : nil
       @reporter.start(total: announced, seed: @seed, forecast: forecast_for(ordered))
 
@@ -829,6 +830,25 @@ module Constable
     end
 
     # Read once, in the parent, before any fork -- same as the duration index.
+    # A timeout below what this suite has actually taken will fail working files.
+    #
+    # A blunt floor was the other option and it is worse: `--timeout 60` to find which of a
+    # thousand files is hanging is exactly the right thing to do, and a floor high enough to
+    # protect a slow suite would silently ignore it. So the data answers instead -- the
+    # blotter knows how long each file took, and says so when the limit is under that.
+    def warn_about_tight_timeout!(items)
+      return if @timeout.zero?
+
+      slowest = file_durations.values.map { |row| row[:seconds].to_f }.max.to_i
+      return if slowest.zero? || slowest < @timeout
+
+      Constable.warn!(
+        "--timeout #{@timeout}s is under the #{slowest}s this suite's slowest file has taken. " \
+        "Files over the limit will be failed as hung when they are only slow. Raise it, or " \
+        "narrow the run to the files you are chasing."
+      )
+    end
+
     # What this run is about to cost, from what the blotter has seen before.
     #
     # A suite that takes 45 minutes should say so at the start rather than leaving you to
@@ -968,7 +988,7 @@ module Constable
 
       owner.constable_close_shared_scope!
     rescue StandardError => e
-      Constable.warn("could not roll back shared fixtures for #{owner}: #{e.message}")
+      Constable.warn!("could not roll back shared fixtures for #{owner}: #{e.message}")
     end
 
     # Only a cold item carries a path; a native one knows its file through its investigation.
