@@ -836,7 +836,7 @@ module Constable
     # thousand files is hanging is exactly the right thing to do, and a floor high enough to
     # protect a slow suite would silently ignore it. So the data answers instead -- the
     # blotter knows how long each file took, and says so when the limit is under that.
-    def warn_about_tight_timeout!(items)
+    def warn_about_tight_timeout!(_items)
       return if @timeout.zero?
 
       slowest = file_durations.values.map { |row| row[:seconds].to_f }.max.to_i
