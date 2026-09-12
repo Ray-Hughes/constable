@@ -1344,6 +1344,44 @@ module Constable
       assert_match(/\A      ✓ second/, lines[4])
     end
 
+    # The path is an array, and printing it as one joined line threw the structure away: a
+    # test whose context differed from the last got the whole path again, so a case where
+    # every test sits in its own context became heading, test, heading, test all the way
+    # down.
+    def test_only_the_groups_that_changed_get_a_heading
+      write_config("output: expanded\n")
+      Constable.reset!
+      io = StringIO.new
+      reporter = Reporter.new(io: io, config: Constable.config, color: false)
+      [%w[#all merged], %w[#all remanded]].each_with_index do |path, index|
+        reporter.record(Result.new(identity: index.to_s, case_name: "C", description: "works",
+                                   file: "f.rb", line: 1, kind: :native, status: :passed,
+                                   duration: 0.01, docket_path: path))
+      end
+      reporter.flush!
+      lines = io.string.lines.map(&:chomp).reject(&:empty?)
+
+      assert_equal 1, lines.count { |line| line.strip == "#all" }, "shared groups print once"
+      assert_equal 1, lines.count { |line| line.strip == "merged" }
+      assert_equal 1, lines.count { |line| line.strip == "remanded" }
+    end
+
+    def test_each_group_is_indented_one_level_deeper
+      write_config("output: expanded\n")
+      Constable.reset!
+      io = StringIO.new
+      reporter = Reporter.new(io: io, config: Constable.config, color: false)
+      reporter.record(Result.new(identity: "x", case_name: "C", description: "works",
+                                 file: "f.rb", line: 1, kind: :native, status: :passed,
+                                 duration: 0.01, docket_path: ["#save", "when valid"]))
+      reporter.flush!
+      lines = io.string.lines.map(&:chomp).reject(&:empty?)
+
+      assert_equal "    #save", lines[2]
+      assert_equal "      when valid", lines[3]
+      assert_match(/\A        ✓ works/, lines[4])
+    end
+
     # The group is a heading now, so repeating it on every test under it is the noise the
     # heading exists to remove.
     def test_the_group_name_is_not_repeated_on_each_test

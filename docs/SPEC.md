@@ -392,6 +392,35 @@ Usually the engine catches the interrupt first and reports it as the example fai
 is better than a file-level result because it names the exact test. Either way the message
 says what the limit was and what to do about it.
 
+## Expanded output
+
+`output: expanded` (or `--expanded`) nests four deep: case, file, the `docket` groups inside
+it, then the tests.
+
+```
+  AppealSeriesIssuesCase
+  test/cases/models/appeal_series_issues_case.rb
+    #all
+      when an appeal was merged
+        ✓ does not show as a last_action                970ms
+      when an issue spans a remand
+        when there is a draft decision
+          ! does not show the draft disposition         15ms
+```
+
+Only the groups that **changed** get a heading, so a shared parent prints once. The path is
+an array on `Result#docket_path`; printing it joined is what used to throw the structure
+away, giving every test the whole path again.
+
+A group can legitimately appear twice in one case. Native tests are shuffled every run to
+prove isolation, so two tests in one context may genuinely run at different points —
+re-ordering the display to merge them would lie about execution order, which is exactly what
+you need when debugging an order dependence.
+
+Descriptions are clipped to the terminal width. `it { is_expected.to eq(...) }` has no
+description, so the engine writes one from the matcher — which means the full `inspect` of
+whatever was compared. The full text stays on the failure and in the blotter.
+
 ## Preferences — yours, not the team's
 
 `.constable/config.yml` is a team agreement. `.constable/preferences.yml` is not, and is

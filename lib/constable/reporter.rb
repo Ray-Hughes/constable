@@ -584,22 +584,41 @@ module Constable
         end
         @banner_named_file = nil
         @stream_case = name
-        @stream_docket = nil
+        @stream_docket = []
         @stream_open = true
       end
 
-      docket = Array(result.docket_path).join(" ")
-      if docket != @stream_docket.to_s
-        @stream_docket = docket
-        writeln("#{ENTRY_INDENT}#{paint(docket, :dim)}") unless docket.empty?
-      end
-
+      write_docket_headings(Array(result.docket_path))
       writeln(expanded_line(result))
+    end
+
+    # One heading per group, at its own depth, and only for the groups that changed.
+    #
+    # Joining the path into a single line meant a test whose context differed from the last
+    # one got the whole path again -- so "#all when there are no issues on one appeal" and
+    # "#all when an issue spans a remand" each printed in full, and a case where every test
+    # sits in its own context became heading, test, heading, test all the way down. The path
+    # is an array; printing it as one is what threw the structure away.
+    def write_docket_headings(path)
+      previous = Array(@stream_docket)
+      return if path == previous
+
+      # A blank line before a new top-level group, so the groups read as blocks.
+      shared = path.zip(previous).take_while { |a, b| a == b }.size
+      writeln if shared.zero? && !previous.empty?
+
+      path.each_with_index do |segment, depth|
+        next if depth < shared
+
+        writeln("#{ENTRY_INDENT}#{"  " * depth}#{paint(segment, :dim)}")
+      end
+      @stream_docket = path
     end
 
     def expanded_line(result)
       glyph = paint(result.glyph, COLORS[result.status])
-      indent = @stream_docket.to_s.empty? ? ENTRY_INDENT : "#{ENTRY_INDENT}  "
+      depth  = Array(@stream_docket).size
+      indent = ENTRY_INDENT + ("  " * depth)
       line   = "#{indent}#{glyph} #{expanded_description(result)}"
 
       stamp = expanded_duration(result)
