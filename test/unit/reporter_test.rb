@@ -1244,7 +1244,7 @@ module Constable
       output = opening({ seconds: 2700, tests: 6435, known: 16, total: 69, partial: true })
 
       refute_match(/45m/, output)
-      assert_match(/53 of 69 never run here/, output)
+      assert_match(/53 of 69 have not run here/, output)
     end
 
     def test_a_partial_but_usable_estimate_says_how_partial
@@ -1264,6 +1264,80 @@ module Constable
       output = opening(nil)
 
       refute_match(/starting/, output)
+    end
+
+    # `it { is_expected.to eq(...) }` has no description, so RSpec writes one from the
+    # matcher -- which means the full `inspect` of whatever was compared. Four hundred
+    # characters per line, wrapped over four rows, is not a test name.
+    def expanded_for(description, case_name: "ThingSpec", columns: 110)
+      write_config("output: expanded\n")
+      Constable.reset!
+      io = StringIO.new
+      def io.tty? = true
+      previous = ENV.fetch("COLUMNS", nil)
+      ENV["COLUMNS"] = columns.to_s
+      reporter = Reporter.new(io: io, config: Constable.config, color: false)
+      reporter.record(Result.new(identity: "x", case_name: case_name, description: description,
+                                 file: "f.rb", line: 1, kind: :cold, status: :passed, duration: 0.05))
+      reporter.flush!
+      io.string
+    ensure
+      ENV["COLUMNS"] = previous
+    end
+
+    def test_a_description_longer_than_the_terminal_is_clipped
+      output = expanded_for("x" * 400)
+      body = output.lines.find { |line| line.include?("xxx") }
+
+      assert_operator body.chomp.length, :<=, 110
+      assert_includes body, "…"
+    end
+
+    def test_a_short_description_is_untouched
+      output = expanded_for("adds two numbers")
+
+      assert_includes output, "adds two numbers"
+      refute_includes output, "…"
+    end
+
+    # The case name is the line above. RSpec repeats it inside the description, and a
+    # nested describe repeats it twice.
+    def test_the_repeated_case_name_is_stripped
+      output = expanded_for("Thing Thing.identifier is a UUID", case_name: "ThingSpec")
+      body = output.lines.find { |line| line.include?("identifier") }
+
+      assert_includes body, "identifier is a UUID"
+      refute_includes body, "Thing Thing"
+    end
+
+    # Stripping must never leave nothing behind.
+    def test_a_description_that_is_only_the_case_name_survives
+      output = expanded_for("Thing", case_name: "ThingSpec")
+
+      assert_includes output, "Thing"
+    end
+
+    # The clock must not cut a case in half. Firing on whatever test crosses the interval
+    # closes the stream line mid-case, so the case gets a second line for the rest of its
+    # glyphs -- which is the repetition the scheduler grouping exists to prevent.
+    def test_the_clock_waits_for_a_case_boundary
+      write_config("heartbeat: 1\n")
+      Constable.reset!
+      io = StringIO.new
+      reporter = Reporter.new(io: io, config: Constable.config, color: false)
+
+      reporter.record(passing("Long"))
+      sleep 1.1
+      reporter.record(passing("Long"))
+      reporter.record(passing("Long"))
+      reporter.record(passing("Next"))
+      reporter.flush!
+
+      lines = io.string.lines.map(&:chomp).reject(&:empty?)
+      long = lines.select { |line| line.start_with?("Long") }
+
+      assert_equal 1, long.size, "the clock split a case across lines:\n#{io.string}"
+      assert_match(/✓✓✓/, long.first, "all three glyphs belong on one line")
     end
 
     # Time-based, not per-test: a fast suite must never print one.

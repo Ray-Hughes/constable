@@ -16,12 +16,13 @@ module Constable
       parole_violation: "⛓"
     }.freeze
 
-    attr_reader :identity, :case_name, :description, :file, :line, :kind, :tier
+    attr_reader :identity, :case_name, :description, :file, :line, :kind, :tier, :docket_path
     attr_accessor :status, :duration, :failure, :warnings, :retries, :jail_reason,
                   :parole_day, :times_jailed, :seed
 
     def initialize(identity:, case_name:, description:, file:, line:, kind: :native, tier: nil,
-                   status: :passed, duration: 0.0, failure: nil, warnings: [], retries: [])
+                   status: :passed, duration: 0.0, failure: nil, warnings: [], retries: [],
+                   docket_path: [])
       @identity    = identity
       @case_name   = case_name
       @description = description
@@ -29,6 +30,9 @@ module Constable
       @line        = line
       @kind        = kind
       @tier        = tier
+      # The enclosing docket descriptions, kept separate from the description rather than
+      # only pre-joined into it -- the expanded stream nests by them.
+      @docket_path = Array(docket_path)
       @status      = status
       @duration    = duration
       @failure     = failure
@@ -74,6 +78,7 @@ module Constable
       {
         identity: @identity, case_name: @case_name, description: @description,
         file: @file, line: @line, kind: @kind, tier: @tier, status: @status,
+        docket_path: @docket_path,
         duration: @duration, failure: @failure&.to_h, warnings: @warnings,
         retries: @retries, jail_reason: @jail_reason, parole_day: @parole_day,
         times_jailed: @times_jailed, seed: @seed
@@ -85,6 +90,7 @@ module Constable
       result = new(
         identity: hash[:identity], case_name: hash[:case_name], description: hash[:description],
         file: hash[:file], line: hash[:line], kind: (hash[:kind] || :native).to_sym,
+        docket_path: hash[:docket_path] || [],
         tier: hash[:tier], status: (hash[:status] || :passed).to_sym,
         duration: hash[:duration].to_f, warnings: hash[:warnings] || [], retries: hash[:retries] || []
       )

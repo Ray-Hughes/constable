@@ -24,6 +24,9 @@ module Constable
   #   exit reporter.exit_status
   class Reporter
     # The summary's frame. 60 columns wide, as published in the spec.
+    # How much of an expanded line is not the description: indent, glyph, duration column.
+    EXPANDED_STAMP_COLUMN_SLACK = 18
+
     RULE_WIDTH = 60
     HEAVY_RULE = ("━" * RULE_WIDTH).freeze
     # Separates entries inside a section. Shorter than the frame so it reads as a divider
@@ -151,14 +154,34 @@ module Constable
       @heartbeat_seconds ||= @config.respond_to?(:heartbeat) ? @config.heartbeat.to_i : 0
     end
 
+    # Time-paced, but aligned to case boundaries.
+    #
+    # Firing on whatever test happens to cross the threshold means closing the stream line
+    # mid-case, so the case gets a second line for its remaining glyphs -- which is the
+    # repetition the scheduler grouping exists to prevent, reintroduced by the clock.
+    #
+    # So the interval says *when it is due* and the next case boundary says *when it
+    # prints*. The gap between those is at most one case, which on any suite worth timing
+    # is seconds. This is what "do it per file" wants, without a frame per file: on 1,294
+    # files that would be more separator lines than test lines.
     def maybe_heartbeat!(result)
       return if heartbeat_seconds.zero? || !streaming?
 
       now = monotonic
-      return if now - @last_heartbeat < heartbeat_seconds
+      @heartbeat_due ||= false
+      @heartbeat_due = true if now - @last_heartbeat >= heartbeat_seconds
+      return unless @heartbeat_due && case_boundary?(result)
 
+      @heartbeat_due = false
       @last_heartbeat = now
       emit_heartbeat(now, result)
+    end
+
+    # The stream groups by case, so the boundary is the moment the next case's first result
+    # arrives -- which is the same test that would open a new line anyway.
+    def case_boundary?(result)
+      name = result.respond_to?(:case_name) ? result.case_name.to_s : ""
+      @stream_case.nil? || @stream_case != name
     end
 
     # Framed, because unframed it reads as an annotation on the test above it. The first
@@ -237,11 +260,8 @@ module Constable
       bits = []
       bits << "~#{format_elapsed(forecast[:seconds])}" if confident && forecast[:seconds].to_f >= 1
       bits << "~#{forecast[:tests]} tests" if confident && forecast[:tests].to_i.positive?
-      bits << if confident && forecast[:partial]
-                "estimated from #{known} of #{total}"
-              elsif !confident
-                "#{total - known} of #{total} never run here, so no estimate yet"
-              end
+      bits << "estimated from #{known} of #{total}" if confident && forecast[:partial]
+      bits << "no estimate yet — #{total - known} of #{total} have not run here" unless confident
       bits.compact.join("  ·  ")
     end
 
@@ -252,8 +272,10 @@ module Constable
 
       @failed_live += 1 if result.failed?
       @streamed += 1
-      stream(result)
+      # Before streaming, not after: #stream updates @stream_case, so asking afterwards
+      # whether this result starts a new case always answers no.
       maybe_heartbeat!(result)
+      stream(result)
       self
     end
 
@@ -439,20 +461,65 @@ module Constable
       stamp = expanded_duration(result)
       return line if stamp.nil?
 
-      # Pad to a column so the durations line up, but never truncate a description --
-      # a clipped test name is not something you can grep for.
       visible = strip_ansi(line).length
       gap = [EXPANDED_STAMP_COLUMN - visible, 1].max
       "#{line}#{" " * gap}#{paint(stamp, :dim)}"
     end
 
+    # An `it { is_expected.to eq(...) }` has no description, so RSpec writes one from the
+    # matcher -- and that means the full `inspect` of whatever was compared. Four hundred
+    # characters of "#<Appeal id: 319, aod_based_on_age: nil, ...>" per line, wrapped over
+    # four rows, is not a test name; it is the reason the expanded stream was unreadable.
+    #
+    # This used to refuse to truncate, on the grounds that a clipped name cannot be grepped
+    # for. That holds for a name someone wrote and not for one a matcher generated. And a
+    # line longer than the terminal wraps anyway, so the choice is not "whole name or
+    # clipped" but "clipped, or four unreadable rows". The full text is still on the failure
+    # and still in the blotter.
+    def terminal_width
+      @terminal_width ||= begin
+        from_env = ENV["COLUMNS"].to_i
+        if from_env.positive? then from_env
+        elsif @io.respond_to?(:winsize) then begin
+          @io.winsize[1]
+        rescue StandardError
+          100
+        end
+        else 100
+        end
+      rescue StandardError
+        100
+      end
+    end
+
+    def truncate_description(text)
+      room = terminal_width - EXPANDED_STAMP_COLUMN_SLACK
+      return text if room < 20 || text.length <= room
+
+      "#{text[0, room - 1].rstrip}…"
+    end
+
     def expanded_description(result)
-      description = result.description.to_s
+      description = truncate_description(strip_case_prefix(result))
       description = "(no description)" if description.empty?
       # A jailed test never ran its body, so say why rather than implying it passed.
       return "#{description} #{paint("— #{result.jail_reason}", :dim)}" if jail_reason_worth_showing?(result)
 
       description
+    end
+
+    # The case name is already the line above. RSpec repeats it inside the description, and
+    # a nested describe repeats it twice -- "FinderConsoleMethods FinderConsoleMethods.
+    # _appeal identifier is a UUID ..." -- which is three-quarters noise before the test
+    # name even starts.
+    def strip_case_prefix(result)
+      description = result.description.to_s
+      name = result.case_name.to_s.sub(/(?:Case|Spec)\z/, "")
+      return description if name.empty?
+
+      description.sub(/\A(?:#{Regexp.escape(name)}[\s.#:]*)+/, "").then do |stripped|
+        stripped.empty? ? description : stripped
+      end
     end
 
     def jail_reason_worth_showing?(result)
