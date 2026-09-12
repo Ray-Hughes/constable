@@ -347,9 +347,61 @@ module Constable
         end
       SPEC
 
-      assert_includes result.source, "allow(clock).to receive(:now)"
+      assert_includes result.source, "impersonate(clock, :now)"
+      assert_nil flag_named(result, :rspec_mocks)
+      refute_predicate result, :flagged?
+    end
+
+    def test_and_return_becomes_a_returns_argument
+      result = convert(<<~SPEC)
+        describe User do
+          it "stubs" do
+            allow(clock).to receive(:now).and_return(42)
+          end
+        end
+      SPEC
+
+      assert_includes result.source, "impersonate(clock, :now, returns: 42)"
+    end
+
+    def test_and_raise_becomes_a_raises_argument
+      result = convert(<<~SPEC)
+        describe User do
+          it "stubs" do
+            allow(client).to receive(:fetch).and_raise(Timeout::Error)
+          end
+        end
+      SPEC
+
+      assert_includes result.source, "impersonate(client, :fetch, raises: Timeout::Error)"
+    end
+
+    def test_allow_any_instance_of_becomes_impersonate_any
+      result = convert(<<~SPEC)
+        describe User do
+          it "stubs" do
+            allow_any_instance_of(Client).to receive(:fetch).and_return(:ok)
+          end
+        end
+      SPEC
+
+      assert_includes result.source, "impersonate_any(Client, :fetch, returns: :ok)"
+    end
+
+    # `expect(x).to receive(:y)` sets an expectation before the call and verifies at the end
+    # of the example. Rewriting it as an assertion afterwards moves when the failure
+    # surfaces, which is a behaviour change wearing a conversion's clothes.
+    def test_a_message_expectation_is_still_refused
+      result = convert(<<~SPEC)
+        describe User do
+          it "expects" do
+            expect(mailer).to receive(:deliver)
+          end
+        end
+      SPEC
+
+      assert_includes result.source, "expect(mailer).to receive(:deliver)"
       refute_nil flag_named(result, :rspec_mocks)
-      assert_predicate result, :flagged?
     end
 
     # ---- --cold: move it without converting it --------------------------------------

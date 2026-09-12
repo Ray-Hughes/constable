@@ -56,6 +56,28 @@ tests in it than the code had.
 keeps, and says how many in its summary. With `--delete`, which is the documented default,
 the source is gone and nothing is needed.
 
+### Stubs, so the largest conversion blocker stops being one
+
+Constable had no mocking library, so `allow(x).to receive(:y)` meant a file could not be a
+native case -- 4,801 occurrences on the suite this was measured against, half of everything
+still blocked after the last round.
+
+`impersonate(obj, :method, returns:)` replaces one method and records what it receives;
+`impersonate_any` covers every instance; `decoy` is a stand-in with nothing behind it; and
+`attest(x).to have_been_asked(:m).with(...).once` reads the record. Everything is restored
+at teardown, failure or not, because Constable owns the lifecycle.
+
+Two deliberate differences from rspec-mocks. Stubbing a method the object does not have is
+refused rather than optional -- that stub passes forever and proves nothing, which is what a
+rename leaves behind. And there is no proxy or signature reflection per stub, which is where
+rspec-mocks spends its time.
+
+`modernize` converts `allow`, `and_return`, `and_raise` and `allow_any_instance_of`.
+`expect(x).to receive(:y)` stays refused: it verifies at the end of the example, so turning
+it into an assertion afterwards moves when the failure surfaces.
+
+Conversion on the same suite, same command, across this round: **131 -> 541 files**.
+
 ### `witness_all`: one fixture per case, not per test
 
 `witness` is per test by design. For an expensive factory that means paying for it on every

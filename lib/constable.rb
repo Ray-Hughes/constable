@@ -58,6 +58,7 @@ module Constable
   autoload :Runner,        "constable/runner"
   autoload :Shard,         "constable/shard"
   autoload :SharedFixtures, "constable/shared_fixtures"
+  autoload :Impersonation, "constable/impersonation"
   autoload :Selection,     "constable/selection"
   autoload :Storage,       "constable/storage"
   autoload :Warrants,      "constable/warrants"

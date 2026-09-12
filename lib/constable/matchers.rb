@@ -1025,6 +1025,86 @@ module Constable
 
       [false, "expected #{Matchers.describe(actual)} to be a #{klass}, but it is a #{actual.class}", nil]
     end
+    # Call assertions for Impersonation. `attest(client).to have_been_asked(:fetch)`, with
+    # `.with(...)` and `.times(n)` refining it.
+    #
+    # The failure message says what the method actually received, because "expected fetch to
+    # have been called" and nothing else is the least useful sentence in testing.
+    class AskedDeferred < Deferred
+      def with(*args, **kwargs)
+        @constable_args = args
+        @constable_kwargs = kwargs
+        self
+      end
+
+      def times(count)
+        @constable_times = count
+        self
+      end
+
+      def once  = times(1)
+      def twice = times(2)
+      def never = times(0)
+
+      def constable_expectation
+        { args: defined?(@constable_args) ? @constable_args : nil,
+          kwargs: defined?(@constable_kwargs) ? @constable_kwargs : nil,
+          times: defined?(@constable_times) ? @constable_times : nil }
+      end
+
+      # Deferred#invoke passes only the args, which is right for every matcher whose
+      # refinements are arguments. `.with(...).once` refines the matcher itself, so the
+      # block has to be handed the object carrying them.
+      def invoke(actual)
+        @matcher.block.call(actual, *@args, self, &@block)
+      end
+
+      def description
+        parts = ["have been asked #{@args.first.inspect}"]
+        parts << "with #{Matchers.format_args(@constable_args)}" if defined?(@constable_args)
+        parts << "#{@constable_times} time(s)" if defined?(@constable_times)
+        parts.join(" ")
+      end
+    end
+
+    define_builtin(:have_been_asked, deferred_class: AskedDeferred) do |actual, name, deferred = nil|
+      unless actual.respond_to?(:constable_ledger) || actual.respond_to?(:constable_calls, true)
+        next [false, "#{Matchers.describe(actual)} has no impersonated methods -- " \
+                     "`have_been_asked` reads what `impersonate` recorded, so the object has " \
+                     "to have been impersonated first.", nil]
+      end
+
+      ledger = actual.respond_to?(:constable_ledger) ? actual.constable_ledger : nil
+      calls = ledger ? ledger.calls(name) : []
+      wanted = deferred.respond_to?(:constable_expectation) ? deferred.constable_expectation : {}
+
+      matching = calls
+      if wanted[:args] || wanted[:kwargs]
+        matching = calls.select do |call|
+          (wanted[:args].nil? || call.args == wanted[:args]) &&
+            (wanted[:kwargs].nil? || wanted[:kwargs].empty? || call.kwargs == wanted[:kwargs])
+        end
+      end
+
+      expected_times = wanted[:times]
+      satisfied = expected_times.nil? ? matching.any? : matching.size == expected_times
+
+      next true if satisfied
+
+      received =
+        if calls.empty?
+          "it was never called"
+        else
+          shapes = calls.map do |call|
+            parts = call.args.map(&:inspect) + call.kwargs.map { |k, v| "#{k}: #{v.inspect}" }
+            "(#{parts.join(", ")})"
+          end
+          "it received: #{shapes.join(", ")}"
+        end
+      wanted_desc = expected_times.nil? ? "to have been asked" : "to have been asked #{expected_times} time(s)"
+      [false, "expected #{name.inspect} #{wanted_desc}, but #{received}", nil]
+    end
+
     builtins[:be_an]      = builtins[:be_a]
     builtins[:be_kind_of] = builtins[:be_a]
 

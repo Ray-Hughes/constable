@@ -591,6 +591,45 @@ a 152-test file it broke 13 tests and saved 5%, because the examples that skip t
 are exactly the ones relying on the row existing. `witness_all` keeps it existing and stops
 paying to rebuild it.
 
+### Stubs and call assertions
+
+Constable shipped no mocking library, which made `allow(x).to receive(:y)` the single
+largest reason a legacy file could not be converted. "Use a stub object instead" is fine
+advice for a file being written and useless for ten thousand that already exist.
+
+```ruby
+investigate "retries once" do
+  impersonate(client, :fetch, raises: Timeout::Error)
+  impersonate(logger, :warn)
+
+  attest { subject.call }.to raise_error(Timeout::Error)
+  attest(logger).to have_been_asked(:warn).with("retrying").once
+end
+```
+
+| | |
+| --- | --- |
+| `impersonate(obj, :m, returns:)` | replace one method, and record what it receives |
+| `impersonate(obj, :m) { ... }` | replace it with a body |
+| `impersonate(obj, :m, raises:)` | make it raise |
+| `impersonate_any(Klass, :m)` | every instance |
+| `decoy(:api, ping: :pong)` | a stand-in with nothing behind it |
+| `have_been_asked(:m)` | `.with(...)`, `.once`, `.twice`, `.never`, `.times(n)` |
+
+Everything is restored at teardown, including after a failure, because Constable owns the
+lifecycle and does not need you to remember.
+
+Two deliberate differences from rspec-mocks. **Stubbing a method the object does not have
+is refused**, not optional — that stub passes forever and proves nothing, which is exactly
+what a rename leaves behind. `allow_missing: true` when the method really is defined later.
+And there is no proxy or signature reflection per stub, which is where rspec-mocks spends
+its time; the singleton method is replaced directly and the original put on a restore list.
+
+`constable modernize` converts the common forms for you. `expect(x).to receive(:y)` is
+deliberately not one of them: it sets an expectation before the call and verifies at the end
+of the example, so rewriting it as an assertion afterwards would move when the failure
+surfaces.
+
 ### Escape hatches, always visible
 
 ```ruby

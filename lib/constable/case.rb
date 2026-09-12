@@ -22,6 +22,7 @@ module Constable
     # `attest` expectation sugar live in their own components, mixed in here so every
     # investigation body has both without asking.
     extend Constable::SharedFixtures::ClassMethods
+    include Constable::Impersonation
     include Constable::DSL
     include Constable::Matchers::Expectations
 
@@ -328,6 +329,9 @@ module Constable
       constable_swallow(errors) { before_teardown }
       self.class.teardowns.each { |block| constable_swallow(errors) { instance_exec(&block) } }
       constable_swallow(errors) { after_teardown }
+      # After the user's teardowns, so one of them can still assert on what was called; and
+      # unconditionally, so a failing test cannot leave a method replaced for the next one.
+      constable_swallow(errors) { constable_restore_impersonations! }
       errors.first
     end
 

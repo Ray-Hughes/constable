@@ -763,6 +763,9 @@ module Constable
         receiver, name, *args = node.children
 
         if %i[to not_to to_not].include?(name) && mock_expectation?(args.first)
+          converted = convert_mock_expectation(node, receiver, name, args.first)
+          return converted if converted
+
           # Flagged, not merely noted. "Untouched" leaves the construct alone *and lets the
           # file convert*, which for rspec-mocks means writing a native case that dies on
           # its first `allow` with `NoMethodError`. Measured while porting a real
@@ -854,6 +857,84 @@ module Constable
       # carries any matcher name straight across. Without this check the first anyone
       # hears about it is a NoMethodError at runtime, naming the matcher -- or worse, an
       # internal deferred class -- rather than the line that needs a decision.
+      # `allow(x).to receive(:y)` and friends, rewritten onto Impersonation.
+      #
+      # This was a refusal for a good reason -- Constable had no mocking library, so a
+      # converted file died on its first `allow` with NoMethodError. It has one now, so the
+      # refusal is obsolete for the forms that map cleanly:
+      #
+      #   allow(x).to receive(:y)                    -> impersonate(x, :y)
+      #   allow(x).to receive(:y).and_return(1)      -> impersonate(x, :y, returns: 1)
+      #   allow(x).to receive(:y).and_raise(Boom)    -> impersonate(x, :y, raises: Boom)
+      #   expect(x).to have_received(:y)             -> attest(x).to have_been_asked(:y)
+      #   allow_any_instance_of(K).to receive(:y)    -> impersonate_any(K, :y)
+      #
+      # `expect(x).to receive(:y)` is deliberately not in that list. It sets an expectation
+      # *before* the call and verifies at the end of the example, which is a different shape
+      # from asserting afterwards -- converting it would move when the failure surfaces.
+      def convert_mock_expectation(node, receiver, direction, matcher_node)
+        return nil unless receiver&.type == :send
+
+        subject = mock_subject(receiver)
+        return nil unless subject
+
+        spec = receive_spec(matcher_node)
+        return nil unless spec
+
+        target, any_instance = subject
+        return nil if any_instance && direction != :to
+
+        method_name = spec[:method]
+        return nil unless method_name
+
+        call = any_instance ? "impersonate_any" : "impersonate"
+        arguments = ["#{source_of(target)}, #{method_name}"]
+        arguments << "returns: #{spec[:returns]}" if spec[:returns]
+        arguments << "raises: #{spec[:raises]}" if spec[:raises]
+
+        replacement = "#{call}(#{arguments.join(", ")})"
+        replace(node.loc.expression, replacement)
+        record_converted(:impersonate, node, first_line(node), replacement)
+        true
+      end
+
+      # allow(x) / allow_any_instance_of(K) -> [node, any_instance?]
+      def mock_subject(receiver)
+        case receiver.children[1]
+        when :allow then [receiver.children[2], false]
+        when :allow_any_instance_of then [receiver.children[2], true]
+        end
+      end
+
+      # receive(:y).and_return(1) -> { method: ":y", returns: "1" }
+      def receive_spec(node)
+        returns = nil
+        raises = nil
+        current = node
+
+        while current&.type == :send
+          case current.children[1]
+          when :and_return
+            return nil unless current.children.size == 3
+
+            returns = source_of(current.children[2])
+          when :and_raise
+            return nil unless current.children.size == 3
+
+            raises = source_of(current.children[2])
+          when :receive
+            arg = current.children[2]
+            return nil unless arg && %i[sym str].include?(arg.type)
+
+            return { method: source_of(arg), returns: returns, raises: raises }
+          else
+            return nil
+          end
+          current = current.children[0]
+        end
+        nil
+      end
+
       def flag_unknown_matcher(node, matcher_node)
         name = root_matcher_name(matcher_node)
         return if name.nil?
