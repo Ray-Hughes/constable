@@ -14,4 +14,6 @@ group :development, :test do
   # Needed to exercise the cold-case adapters in our own suite.
   gem "rspec-core", ">= 3.10"
   gem "rspec-expectations", ">= 3.10"
+  # witness_all delegates its transaction handling here rather than reimplementing it.
+  gem "test-prof", ">= 1.0"
 end

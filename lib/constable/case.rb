@@ -21,6 +21,7 @@ module Constable
     # The runtime DSL (freeze_time, stub_network!, unsafe, assertion primitives) and the
     # `attest` expectation sugar live in their own components, mixed in here so every
     # investigation body has both without asking.
+    extend Constable::SharedFixtures::ClassMethods
     include Constable::DSL
     include Constable::Matchers::Expectations
 

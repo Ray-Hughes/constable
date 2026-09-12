@@ -561,6 +561,41 @@ The generated `test/case_helper.rb` carries this note too.
 
 Native and cold cases run side by side in one `constable test`. No big-bang cutover.
 
+### `witness_all` — one fixture for a whole case
+
+`witness` is memoized per test, which is the right default and is also why an expensive
+fixture gets paid for on every test that uses it. `witness_all` builds it once:
+
+```ruby
+class UserCase < UnitCase
+  witness_all(:appeal) { create(:appeal, :with_post_intake_tasks) }
+
+  investigate "is assigned" do
+    attest(appeal.tasks).to be_present
+  end
+end
+```
+
+Measured on a real app, 15 tests sharing one expensive factory: **2.0s to 0.9s**.
+
+This is not `before(:all)`, and the difference is what makes it safe to offer at all. The
+records live in a transaction opened before the case and rolled back after it, with each
+investigation in a nested transaction of its own, so nothing written to the database reaches
+the next test. That part is [test-prof's `before_all`](https://github.com/test-prof/test-prof),
+which Constable delegates to rather than reimplementing — add `gem "test-prof"` to use it.
+
+What a rollback cannot undo is a mutation to the Ruby object, since every test is handed the
+same instance. So each one is re-read from the database before use. The saving is the
+`INSERT`; the `SELECT` that makes it safe is the cheap half. `reload: false` declines it.
+
+A case using `witness_all` is scheduled as one unit, so its tests stay together on one
+worker — a transaction opened in one process is no use to another.
+
+**On `let!`:** converting it to a lazy `let` looks like the same optimization and is not. On
+a 152-test file it broke 13 tests and saved 5%, because the examples that skip the fixture
+are exactly the ones relying on the row existing. `witness_all` keeps it existing and stops
+paying to rebuild it.
+
 ### Escape hatches, always visible
 
 ```ruby

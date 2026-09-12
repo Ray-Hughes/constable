@@ -397,6 +397,8 @@ module Constable
       items.flat_map do |item|
         run_item(item).each { |result| @reporter.record(result) }
       end
+    ensure
+      close_shared_scope!
     end
 
     # Workers never write to the blotter -- they ship results back over a pipe and the
@@ -468,6 +470,7 @@ module Constable
               run_item(item).each { |result| write_message(writer, :result, result.to_h) }
               write_message(writer, :progress, position + 1)
             end
+            close_shared_scope!
           rescue Exception => e # rubocop:disable Lint/RescueException
             write_message(writer, :worker_error, "#{e.class}: #{e.message}")
             writer.close
@@ -750,12 +753,27 @@ module Constable
       buckets = Array.new(count) { [] }
       loads = Array.new(count, 0.0)
 
-      items.sort_by { |item| -weight_of(item, index) }.each do |item|
+      # A case with witness_all fixtures is one unit of work: its transaction spans the
+      # whole case, so splitting it across workers would hand half the tests a scope that
+      # was opened in another process. Those go out together; everything else is still
+      # balanced test by test.
+      grouped, loose = partition_shared_fixture_items(items)
+
+      (grouped + loose).sort_by { |group| -group.sum { |item| weight_of(item, index) } }.each do |group|
         slot = loads.index(loads.min)
-        buckets[slot] << item
-        loads[slot] += weight_of(item, index, default: 0.05)
+        buckets[slot].concat(group)
+        loads[slot] += group.sum { |item| weight_of(item, index, default: 0.05) }
       end
       buckets.reject(&:empty?)
+    end
+
+    # [[items of one shared-fixture case], ...], [[single item], ...]
+    def partition_shared_fixture_items(items)
+      shared, loose = items.partition do |item|
+        item.native? && item.investigation&.case_class.respond_to?(:shared_fixtures?) &&
+          item.investigation.case_class.shared_fixtures?
+      end
+      [shared.group_by { |item| item.investigation.case_class }.values, loose.map { |item| [item] }]
     end
 
     # What one item is expected to cost.
@@ -847,7 +865,33 @@ module Constable
     end
 
     def run_item!(item)
+      enter_shared_scope(item)
       item.cold? ? run_cold(item) : [run_native(item)]
+    end
+
+    # A witness_all fixture lives in a transaction spanning its whole case, so the case's
+    # investigations have to run together and on one worker. They are scheduled adjacently
+    # for exactly that reason (see #balance); this closes the previous case's scope when the
+    # run moves on, and #close_shared_scope! catches the last one.
+    def enter_shared_scope(item)
+      klass = item.native? ? item.investigation&.case_class : nil
+      return if klass == @shared_scope_owner
+
+      close_shared_scope!
+      @shared_scope_owner = klass
+      return unless klass.respond_to?(:shared_fixtures?) && klass.shared_fixtures?
+
+      klass.constable_open_shared_scope!
+    end
+
+    def close_shared_scope!
+      owner = @shared_scope_owner
+      @shared_scope_owner = nil
+      return unless owner.respond_to?(:constable_close_shared_scope!)
+
+      owner.constable_close_shared_scope!
+    rescue StandardError => e
+      Constable.warn("could not roll back shared fixtures for #{owner}: #{e.message}")
     end
 
     # Only a cold item carries a path; a native one knows its file through its investigation.

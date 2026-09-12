@@ -45,6 +45,25 @@ tests in it than the code had.
 keeps, and says how many in its summary. With `--delete`, which is the documented default,
 the source is gone and nothing is needed.
 
+### `witness_all`: one fixture per case, not per test
+
+`witness` is per test by design. For an expensive factory that means paying for it on every
+test in the file. `witness_all` builds it once and re-reads it per test: 2.0s to 0.9s on 15
+tests sharing one `create(:appeal, :with_post_intake_tasks)`.
+
+Constable's stance has been that there is no `before(:all)`, and the reason still holds —
+this is not that. Records live in a transaction spanning the case, each test nested inside
+it, so nothing written reaches the next test. That is test-prof's `before_all`, delegated to
+rather than reimplemented. The one thing a rollback cannot undo is a mutation to the shared
+Ruby object, so each test re-reads its record; `reload: false` declines that.
+
+Cases using it are scheduled as one unit, since a transaction opened in one worker is no use
+to another.
+
+Worth recording the negative result that led here: rewriting `let!` as a lazy `let` on a
+152-test file broke 13 tests and saved 5%. The examples that skip the fixture are the ones
+that need the row to exist, so where it is safe it saves nothing.
+
 ### A hung test stopped the whole suite, with nothing to show for it
 
 There was no timeout anywhere. A test that never returns does not fail -- it parks the run,
