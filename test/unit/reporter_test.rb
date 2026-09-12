@@ -1362,8 +1362,8 @@ module Constable
       lines = io.string.lines.map(&:chomp).reject(&:empty?)
 
       assert_equal 1, lines.count { |line| line.strip == "#all" }, "shared groups print once"
-      assert_equal 1, lines.count { |line| line.strip == "merged" }
-      assert_equal 1, lines.count { |line| line.strip == "remanded" }
+      assert_equal(1, lines.count { |line| line.strip == "merged" })
+      assert_equal(1, lines.count { |line| line.strip == "remanded" })
     end
 
     def test_each_group_is_indented_one_level_deeper
