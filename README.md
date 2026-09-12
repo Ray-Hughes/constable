@@ -415,7 +415,7 @@ $ constable modernize spec/controllers/users_controller_spec.rb --alongside
 `before` → `briefing`, `expect` → `attest`, and `def test_foo` → `investigate "foo"`. It
 **flags `before(:all)` and `let!` rather than converting them** — those need a human decision —
 and leaves custom matchers and `shared_examples` alone, logging everything to
-`constable_modernize_report.md`. It writes nothing unless you ask it to.
+`.constable/docs/modernize-report.md`. It writes nothing unless you ask it to.
 
 #### Porting a directory at a time
 

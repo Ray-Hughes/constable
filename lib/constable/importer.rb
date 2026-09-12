@@ -13,7 +13,7 @@ module Constable
   #
   # **Modernize** is the opt-in AST rewrite into the native DSL, one file at a time, and
   # it is deliberately partial. Anything it cannot convert with certainty is *flagged* --
-  # written into `constable_modernize_report.md` for a human, never guessed at. It writes
+  # written into `.constable/docs/modernize-report.md` for a human, never guessed at. It writes
   # nothing by default.
   module Importer
     autoload :Modernizer, "constable/importer/modernizer"

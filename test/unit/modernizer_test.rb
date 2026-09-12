@@ -803,7 +803,7 @@ module Constable
 
       run = Importer.modernize("spec/models/user_spec.rb", config: Constable.config, root: tmp_root)
 
-      assert_equal File.join(tmp_root, "constable_modernize_report.md"), run.report_path
+      assert_equal File.join(tmp_root, ".constable/docs/modernize-report.md"), run.report_path
       assert_path_exists run.report_path
       assert_equal run.report, File.read(run.report_path)
     end

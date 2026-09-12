@@ -21,9 +21,13 @@ module Constable
     #   * The rewritten source is re-parsed before it is written anywhere. If it doesn't
     #     parse, nothing is written and the file is reported as failed.
     #   * Nothing is written at all unless the caller asks (`write:`); the deliverable of
-    #     a partial conversion is `constable_modernize_report.md`.
+    #     a partial conversion is `.constable/docs/modernize-report.md`.
     class Modernizer
-      REPORT_FILENAME = "constable_modernize_report.md"
+      # Under .constable/docs/ rather than loose in the project root. A tool that drops a
+      # file next to the README every time it runs is a tool people gitignore.
+      REPORT_DIR = ".constable/docs"
+      REPORT_FILENAME = "modernize-report.md"
+      REPORT_PATH = File.join(REPORT_DIR, REPORT_FILENAME)
 
       # :none      -- dry run. Report only. The default.
       # :alongside -- write foo_spec.rb's conversion to foo_case.rb, never clobbering.
@@ -151,7 +155,8 @@ module Constable
           text = report_for(results, write_mode: write)
           report_path = nil
           if report
-            report_path = File.join(root, REPORT_FILENAME)
+            report_path = File.join(root, REPORT_PATH)
+            FileUtils.mkdir_p(File.dirname(report_path))
             File.write(report_path, text)
           end
           Run.new(results: results, report: text, report_path: report_path, write_mode: write,
@@ -1071,7 +1076,7 @@ module Constable
         nil
       end
 
-      # Renders constable_modernize_report.md. When a conversion is partial -- and it
+      # Renders .constable/docs/modernize-report.md. When a conversion is partial -- and it
       # usually is -- this file, not the rewritten source, is the deliverable.
       class Report
         def initialize(results, write_mode: :none)

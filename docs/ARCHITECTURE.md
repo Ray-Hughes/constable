@@ -234,7 +234,7 @@ Generators: `constable:install` writes `test/case_helper.rb`, `test/support/`,
 - **Reopener (default, verbatim)**: superclass swap or config path match. No AST rewriting.
 - **Modernizer (opt-in)**: `parser`-gem AST rewrite per SPEC.md's conversion table.
   `before(:all)` is flagged, never auto-converted. Custom matchers / `shared_examples` are
-  left untouched and logged to `constable_modernize_report.md`.
+  left untouched and logged to `.constable/docs/modernize-report.md`.
 
 ### M. RuboCop extension — `rubocop-constable/` (its own gemspec, own publish)
 Cops: `NoSleep`, `NoUnfrozenTime`, `NoNetworkWithoutStub`, `NoSharedMutableState`,

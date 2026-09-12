@@ -264,7 +264,7 @@ constable modernize spec/controllers/users_controller_spec.rb
 | `before { }` | `briefing do ... end` |
 | `before(:all)` | flagged, not auto-converted — needs a human decision |
 | Minitest `def test_foo` | `investigate "foo" do ... end` |
-| Custom matchers / `shared_examples` | left untouched, logged in `constable_modernize_report.md` |
+| Custom matchers / `shared_examples` | left untouched, logged in `.constable/docs/modernize-report.md` |
 
 ### Write modes
 
