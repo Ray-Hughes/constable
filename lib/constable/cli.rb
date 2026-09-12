@@ -882,7 +882,7 @@ module Constable
               "(required by relative path)"
         end
         if Array(run.excluded).any?
-          say "  #{Array(run.excluded).size} original(s) excluded in test/cold_cases.rb " \
+          say "  #{Array(run.excluded).size} original(s) excluded in the cold_cases block " \
               "so they don't run twice (the port kept them; --delete removes them instead)"
         end
         if run.remaining.to_i.positive?

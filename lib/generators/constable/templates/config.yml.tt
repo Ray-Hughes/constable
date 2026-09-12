@@ -21,7 +21,8 @@
 
 # Cold cases -- adopting an existing RSpec or Minitest suite -- are NOT configured here.
 #
-# They are declared in test/cold_cases.rb, which `constable import` writes:
+# They are declared in the Constable.cold_cases block in test/case_helper.rb, which
+# `constable import` fills in:
 #
 #     Constable.cold_cases do
 #       rspec "spec/**/*_spec.rb"

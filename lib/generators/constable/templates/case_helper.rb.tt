@@ -31,11 +31,20 @@ end
 # can `include` from here.
 Dir[Rails.root.join("test/support/**/*.rb")].sort.each { |f| require f }
 
-# The link to a legacy RSpec or Minitest suite, if there is one. `constable import` writes
-# it; it does not exist until you run that. Its globs decide which existing spec or test
-# files run as cold cases, so this has to load before the suite is selected.
-cold_cases = Rails.root.join("test/cold_cases.rb")
-require cold_cases if File.exist?(cold_cases)
+# The link to a legacy RSpec or Minitest suite. `constable import --from=rspec` fills this
+# in; until then it is empty and Constable runs only what is under test/cases.
+#
+# These globs decide which existing spec or test files run as cold cases: kept where they
+# are, run through their own real engine, reported alongside native cases. Deleting the
+# block unlinks them, and narrowing a glob shrinks what stays cold as directories are
+# ported across with `constable modernize`.
+#
+# Naming the engine is also what settles a file the _spec.rb / _test.rb convention cannot
+# answer for. Convention wins where it applies, so one broad glob still dispatches per file.
+Constable.cold_cases do
+  # rspec    "spec/**/*_spec.rb"
+  # minitest "test/legacy/**/*_test.rb"
+end
 
 # --- Tiers -------------------------------------------------------------------------
 #

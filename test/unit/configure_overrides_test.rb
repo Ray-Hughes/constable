@@ -38,7 +38,7 @@ module Constable
     end
 
     # cold_cases is the one name in the raiser list with no config key behind it: its home
-    # is test/cold_cases.rb, so it belongs to neither list's other half.
+    # is the case_helper's cold_cases block, so it belongs to neither list's other half.
     HOMED_ELSEWHERE = %i[cold_cases].freeze
 
     def test_the_two_lists_stay_in_step
@@ -53,7 +53,7 @@ module Constable
         Constable.configure { |c| c.cold_cases = ["spec/**/*_spec.rb"] }
       end
 
-      assert_match(%r{test/cold_cases\.rb}, error.message)
+      assert_match(%r{test/case_helper\.rb}, error.message)
       assert_match(/Constable\.cold_cases do/, error.message)
     end
 
@@ -64,7 +64,7 @@ module Constable
 
       error = assert_raises(ConfigurationError) { Constable.reset! && Constable.config }
 
-      assert_match(%r{test/cold_cases\.rb}, error.message)
+      assert_match(%r{test/case_helper\.rb}, error.message)
       assert_match(/constable import --from=rspec/, error.message)
     end
 

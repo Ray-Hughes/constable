@@ -91,7 +91,7 @@ module Constable
       @configuration ||= Configuration.new
     end
 
-    # The contents of test/cold_cases.rb:
+    # The cold_cases block in test/case_helper.rb:
     #
     #     Constable.cold_cases do
     #       rspec    "spec/**/*_spec.rb"
@@ -250,7 +250,8 @@ module Constable
     # in a config key meant the first `constable test` ran a thousand specs nobody could
     # see a reason for. It gets a file, so the link is visible in the tree.
     def self.cold_cases_message
-      "cold_cases is declared in test/cold_cases.rb, not Constable.configure:\n\n    " \
+      "cold_cases is declared in the Constable.cold_cases block in test/case_helper.rb, " \
+        "not Constable.configure:\n\n    " \
         "Constable.cold_cases do\n      " \
         "rspec \"spec/**/*_spec.rb\"\n    " \
         "end\n\n" \
@@ -287,7 +288,7 @@ module Constable
     attr_reader :cold_case_links
 
     # Settings live in config.yml, with one exception: the cold-case links live in
-    # test/cold_cases.rb, and this is how they reach the loader.
+    # the case_helper's Constable.cold_cases block, and this is how they reach the loader.
     def overrides
       links = @cold_case_links
       return {} if links.nil? || links.globs.empty?

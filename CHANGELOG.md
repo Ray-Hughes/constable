@@ -5,6 +5,17 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+### The cold-case link lives in case_helper.rb, not a file of its own
+
+It was `test/cold_cases.rb`. One fewer file, and the block ships in the generated helper
+with its examples commented out, so `constable import` edits something already in front of
+you rather than conjuring a file. Deleting the block still unlinks the suite, and an absent
+block still means no cold cases.
+
+Both engines verified end to end on a real app: import, run, and `modernize --port` for
+RSpec and for Minitest, including that porting without `--delete` writes its `except` line
+into the right block rather than at the first `end` it finds.
+
 ### Adoption was invisible, so the first run was a surprise
 
 Linking a legacy suite was one key in `.constable/config.yml`. Nothing else changed, nothing

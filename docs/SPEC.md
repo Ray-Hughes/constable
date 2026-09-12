@@ -214,7 +214,7 @@ end
 ```
 
 ```ruby
-# test/cold_cases.rb — written by `constable import`, or don't touch a file at all
+# test/case_helper.rb — filled in by `constable import`, or write it yourself
 Constable.cold_cases do
   rspec "spec/controllers/**/*_spec.rb"
 end
@@ -497,8 +497,7 @@ Failure messages are specific, not generic: the assertion's own context (respons
 
 ## Cold-case links
 
-Cold-case globs are the one thing that is not a config setting. They live in
-`test/cold_cases.rb`, as executable Ruby:
+Cold-case globs are the one thing that is not a config setting. They live in the `Constable.cold_cases` block in `test/case_helper.rb`, as executable Ruby:
 
 ```ruby
 Constable.cold_cases do
@@ -507,8 +506,8 @@ Constable.cold_cases do
 end
 ```
 
-Loaded by the generated `case_helper.rb`, and by the runner directly, so it works in an app
-whose helper predates the file or has none. Globs de-duplicate, so loading twice is safe.
+It is part of the generated `case_helper.rb`, which the runner loads before it asks the
+selection what to run. Globs de-duplicate, so declaring one twice is harmless.
 
 Naming the engine is also the only way to settle a file the `_spec.rb` / `_test.rb`
 convention cannot answer for; without it such a file raises rather than being guessed at.
@@ -528,7 +527,7 @@ end
 exist, the glob still matches the source, and the same tests would otherwise run twice.
 With `--delete` the source is gone and no exclusion is needed.
 
-Assigning `cold_cases` through `Constable.configure` raises and names this file. The reason
+Assigning `cold_cases` through `Constable.configure` raises and names this block. The reason
 it is not a config key is visibility: it determines what `constable test` runs at all, and
 a line in a YAML file made the first run look like it ran a legacy suite for no reason.
 

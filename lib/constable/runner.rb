@@ -179,13 +179,6 @@ module Constable
                                                           .find { |p| File.exist?(p) }
       require helper if helper
 
-      # The cold-case link. The generated case_helper requires this too, but loading it
-      # here as well means it works in an app whose helper predates the file, and in one
-      # that has no helper at all. `require` is idempotent and the globs de-duplicate, so
-      # being loaded twice costs nothing.
-      link = File.join(Constable.root, "test/cold_cases.rb")
-      require link if File.exist?(link)
-
       # Between requiring the helper and asking the selection anything.
       #
       # Ordering is the whole point. case_helper.rb is where Constable.configure runs, so

@@ -156,23 +156,18 @@ $ constable import --from=rspec
 $ constable test --full                     # the whole suite, cold cases and all
 ```
 
-`import` writes one file, `test/cold_cases.rb`, and changes nothing else:
+`import` fills in one block in `test/case_helper.rb` and changes nothing else:
 
 ```ruby
-# RSpec is linked to Constable.
-#
-# These files run through real RSpec, in place, and report as cold cases alongside
-# native ones -- same summary, same flake history, same CI gate.
-#
-# Delete this file to unlink them.
-
 Constable.cold_cases do
-  rspec "spec/**/*_spec.rb"  # 1,277 files
+  rspec "spec/**/*_spec.rb"
 end
 ```
 
-That file **is** the link, not a description of one. Deleting it unlinks the suite;
-narrowing a glob shrinks what stays cold as you port directories across.
+That block **is** the link, not a description of one. Deleting it unlinks the suite;
+narrowing a glob shrinks what stays cold as you port directories across. It ships with the
+generated helper, with its example lines commented out, so adoption is an edit to something
+already in front of you rather than a file appearing from nowhere.
 
 Porting does that bookkeeping for you. With `delete: true` the original spec is removed, so
 the glob stops matching it and nothing runs twice. When you keep the original instead --
@@ -399,7 +394,7 @@ class LegacyUsersSpec < Constable::ColdCase::RSpec
 end
 ```
 
-**Or nothing changes at all** — declare the path in `test/cold_cases.rb`:
+**Or nothing changes at all** — declare the path in the helper's `cold_cases` block:
 
 ```ruby
 Constable.cold_cases do
@@ -407,9 +402,9 @@ Constable.cold_cases do
 end
 ```
 
-`constable import` writes that file. It is the one place cold-case globs live, and the
-reason it is a file rather than a config key is visibility: it sits in the test tree, so
-the link between your legacy suite and Constable is something you can see and delete.
+`constable import` fills that block in. It is the one place cold-case globs live, and the
+reason it is there rather than in a config key is visibility: the helper is the file you
+already open, so the link between your legacy suite and Constable is something you see.
 
 ```console
 $ constable import --from=rspec        # reopen everything, verbatim

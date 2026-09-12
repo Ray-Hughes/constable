@@ -24,7 +24,7 @@ module Constable
       STRATEGIES = %i[auto config superclass].freeze
 
       # Where the cold-case link lives. Not config.yml: see #apply_config_globs.
-      LINK_PATH = "test/cold_cases.rb"
+      LINK_PATHS = ["test/case_helper.rb", "spec/case_helper.rb"].freeze
 
       ENGINES = {
         rspec: {
@@ -130,7 +130,7 @@ module Constable
           unless @globs_added.empty?
             lines << ""
             lines << "  Your #{@from} files stay exactly where they are and are not changed."
-            lines << "  #{dry_run? ? "This would be written to" : "Written to"} #{LINK_PATH}:"
+            lines << "  #{dry_run? ? "This would be added to" : "Added to"} #{@config_path}:"
             lines << ""
             lines << "    Constable.cold_cases do"
             @globs_added.each { |glob| lines << "      #{@from} #{glob.inspect}" }
@@ -227,7 +227,7 @@ module Constable
 
       def call
         result = Result.new(from: @from, strategy: @strategy, root: @root,
-                            config_path: LINK_PATH, dry_run: @dry_run)
+                            config_path: link_relative, dry_run: @dry_run)
         adopt_declared_globs!
         candidates = discover(result)
         return result if candidates.empty?
@@ -243,7 +243,7 @@ module Constable
       # the config knows nothing about what is already linked. Without this, a second
       # import reports every previously adopted file as newly adopted.
       def adopt_declared_globs!
-        declared = existing_cold_cases(File.join(@root, LINK_PATH))
+        declared = existing_cold_cases(link_path)
         return if declared.empty? || !@config.respond_to?(:apply_overrides!)
 
         @config.apply_overrides!(cold_cases: declared)
@@ -402,17 +402,47 @@ module Constable
       def apply_config_globs(globs, result)
         return if globs.empty?
 
-        path = File.join(@root, LINK_PATH)
+        path = link_path
         existing = existing_cold_cases(path)
         result.existing_globs.concat(existing)
         fresh = globs.reject { |glob| existing.include?(glob) }
         result.globs_added.concat(fresh)
         result.covered.concat(covered_files(globs))
 
-        return if fresh.empty? || dry_run?
+        return if fresh.empty? || dry_run? || path.nil?
 
-        FileUtils.mkdir_p(File.dirname(path))
-        File.write(path, link_file(existing + fresh))
+        File.write(path, rewrite_link_block(File.read(path), fresh))
+      end
+
+      def link_path
+        LINK_PATHS.map { |candidate| File.join(@root, candidate) }.find { |p| File.exist?(p) }
+      end
+
+      def link_relative = LINK_PATHS.find { |c| File.exist?(File.join(@root, c)) } || LINK_PATHS.first
+
+      # The generated case_helper ships `Constable.cold_cases do ... end` with its two lines
+      # commented out, so adopting a suite is an edit to a block that is already there rather
+      # than a file appearing from nowhere. Rewriting the block in place is what keeps the
+      # surrounding comments -- which explain what a cold case is -- attached to it.
+      def rewrite_link_block(source, fresh)
+        lines = fresh.map { |glob| "  #{@from} #{glob.inspect}" }
+        block = /Constable\.cold_cases do\n(.*?)\nend/m
+
+        if source.match?(block)
+          return source.sub(block) do
+            "Constable.cold_cases do\n#{(kept_lines(::Regexp.last_match(1)) + lines).join("\n")}\nend"
+          end
+        end
+
+        "#{source.rstrip}\n\nConstable.cold_cases do\n#{lines.join("\n")}\nend\n"
+      end
+
+      # Whatever the block already had, minus the commented examples the template ships --
+      # those are documentation until someone runs import, and noise afterwards.
+      def kept_lines(body)
+        body.lines.map(&:chomp).reject do |line|
+          line.strip.empty? || line.strip.match?(/\A#\s*(?:rspec|minitest)\s/)
+        end
       end
 
       def engine_label = @from.to_s == "rspec" ? "RSpec" : "Minitest"
@@ -449,7 +479,7 @@ module Constable
       # Read back the globs already declared, without executing the file -- import runs
       # without booting the app, so `Constable.cold_cases` is not callable here.
       def existing_cold_cases(path)
-        return [] unless File.exist?(path)
+        return [] if path.nil? || !File.exist?(path)
 
         File.read(path).scan(/^\s*(?:rspec|minitest)\s+["']([^"']+)["']/).flatten
       rescue StandardError

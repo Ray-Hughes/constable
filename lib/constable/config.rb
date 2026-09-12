@@ -77,7 +77,8 @@ module Constable
 
       if loaded.is_a?(Hash) && loaded.key?("cold_cases")
         raise Constable::ConfigurationError,
-              "#{CONFIG_PATH} sets cold_cases, which moved to test/cold_cases.rb:\n\n    " \
+              "#{CONFIG_PATH} sets cold_cases, which moved to the Constable.cold_cases block " \
+              "in test/case_helper.rb:\n\n    " \
               "Constable.cold_cases do\n      " \
               "rspec \"spec/**/*_spec.rb\"\n    " \
               "end\n\n" \

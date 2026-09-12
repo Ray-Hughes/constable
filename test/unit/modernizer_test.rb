@@ -875,13 +875,14 @@ module Constable
           end
         end
       RUBY
-      write_file("test/cold_cases.rb", %(Constable.cold_cases do\n  rspec "spec/**/*_spec.rb"\nend\n))
+      write_file("test/case_helper.rb",
+                 %(require "constable"\n\nConstable.cold_cases do\n  rspec "spec/**/*_spec.rb"\nend\n))
 
       run = Importer::Modernizer.run(["spec/models/user_spec.rb"], root: tmp_root, write: :port,
                                                                    report: false, delete_original: false)
 
       assert_equal ["spec/models/user_spec.rb"], run.excluded
-      assert_match(%r{except "spec/models/user_spec\.rb"}, read("test/cold_cases.rb"))
+      assert_match(%r{except "spec/models/user_spec\.rb"}, read("test/case_helper.rb"))
       assert_path_exists File.join(tmp_root, "spec/models/user_spec.rb")
     end
 
@@ -894,13 +895,14 @@ module Constable
           end
         end
       RUBY
-      write_file("test/cold_cases.rb", %(Constable.cold_cases do\n  rspec "spec/**/*_spec.rb"\nend\n))
+      write_file("test/case_helper.rb",
+                 %(require "constable"\n\nConstable.cold_cases do\n  rspec "spec/**/*_spec.rb"\nend\n))
 
       run = Importer::Modernizer.run(["spec/models/user_spec.rb"], root: tmp_root, write: :port,
                                                                    report: false, delete_original: true)
 
       assert_empty Array(run.excluded)
-      refute_match(/except/, read("test/cold_cases.rb"))
+      refute_match(/except/, read("test/case_helper.rb"))
       refute_path_exists File.join(tmp_root, "spec/models/user_spec.rb")
     end
 
@@ -912,14 +914,15 @@ module Constable
           end
         end
       RUBY
-      write_file("test/cold_cases.rb", %(Constable.cold_cases do\n  rspec "spec/**/*_spec.rb"\nend\n))
+      write_file("test/case_helper.rb",
+                 %(require "constable"\n\nConstable.cold_cases do\n  rspec "spec/**/*_spec.rb"\nend\n))
 
       2.times do
         Importer::Modernizer.run(["spec/models/user_spec.rb"], root: tmp_root, write: :port,
                                                                report: false, delete_original: false)
       end
 
-      assert_equal 1, read("test/cold_cases.rb").scan("except ").size
+      assert_equal 1, read("test/case_helper.rb").scan("except ").size
     end
   end
 end

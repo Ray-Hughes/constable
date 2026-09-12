@@ -249,7 +249,7 @@ module Constable
       config = generated(".constable/config.yml")
 
       refute_match(/^cold_cases:/, config)
-      assert_match(%r{test/cold_cases\.rb}, config)
+      assert_match(%r{test/case_helper\.rb}, config)
       assert_match(/Constable\.cold_cases do/, config)
     end
 

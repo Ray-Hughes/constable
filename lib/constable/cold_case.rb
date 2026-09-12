@@ -134,7 +134,7 @@ module Constable
         return :rspec    if path.end_with?("_spec.rb")
         return :minitest if path.end_with?("_test.rb")
 
-        # test/cold_cases.rb says which engine each glob belongs to. It sits *below* the
+        # The cold_cases block says which engine each glob belongs to. It sits *below* the
         # naming convention deliberately: a glob is broad and may cover both kinds, so
         # `rspec "legacy/*.rb"` must not claim legacy/thing_test.rb. What it answers is the
         # case nothing else can -- a file whose name follows neither convention.

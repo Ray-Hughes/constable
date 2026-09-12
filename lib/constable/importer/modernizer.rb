@@ -167,8 +167,10 @@ module Constable
         def exclude_ported_originals(results, root, write)
           return [] unless %i[port port_cold].include?(write)
 
-          link = File.join(root, "test/cold_cases.rb")
-          return [] unless File.exist?(link)
+          link = %w[test/case_helper.rb spec/case_helper.rb]
+                 .map { |candidate| File.join(root, candidate) }
+                 .find { |path| File.exist?(path) }
+          return [] if link.nil?
 
           source = File.read(link)
           fresh = results.select(&:written?).map { |result| relative_to(result.path, root) }
@@ -179,9 +181,11 @@ module Constable
           fresh
         end
 
+        # Into the cold_cases block, not the end of the file -- the helper has plenty of
+        # other `end`s and the last one is never the right one.
         def insert_exclusions(source, paths)
           lines = paths.map { |path| "  except #{path.inspect}" }.join("\n")
-          source.sub(/\nend\s*\z/, "\n#{lines}\nend\n")
+          source.sub(/(Constable\.cold_cases do\n.*?)\nend/m) { "#{::Regexp.last_match(1)}\n#{lines}\nend" }
         end
 
         def relative_to(path, root) = path.to_s.delete_prefix("#{root}/")

@@ -34,7 +34,10 @@ module Constable
 
     def config_for(root = tmp_root) = Config.load(root: root)
 
+    # A generated app always has case_helper.rb with the cold_cases block in it, so import
+    # edits a block that is already there. Tests start from that same shape.
     def import(**kwargs)
+      seed_case_helper unless File.exist?(File.join(tmp_root, LINK_PATH))
       defaults = { from: :rspec, config: config_for, root: tmp_root }
       Importer.run(**defaults, **kwargs)
     end
@@ -45,7 +48,13 @@ module Constable
 
     def read(relative_path) = File.read(File.join(tmp_root, relative_path))
 
-    LINK_PATH = "test/cold_cases.rb"
+    LINK_PATH = "test/case_helper.rb"
+
+    # The generated case_helper ships the block with its examples commented out, so import
+    # edits what is already there. A test that never wrote one needs the same starting point.
+    def seed_case_helper(body = "  # rspec \"spec/**/*_spec.rb\"")
+      write_file(LINK_PATH, "require \"constable\"\n\nConstable.cold_cases do\n#{body}\nend\n")
+    end
 
     # The link lives in test/cold_cases.rb now, as executable Ruby rather than a config
     # key, so read it the way the importer does -- by pattern, without executing it.
@@ -273,15 +282,12 @@ module Constable
 
     # The file exists to be read by a person, so it has to say what it is and how to undo
     # it -- not just carry the globs.
-    def test_the_link_file_explains_itself
+    def test_the_block_carries_the_glob
       seed_rspec("spec/models/user_spec.rb")
       import(paths: ["spec/models"])
 
-      assert_match(/RSpec is linked to Constable/, link_file)
-      assert_match(/Delete this file to unlink them/, link_file)
       assert_match(/Constable\.cold_cases do/, link_file)
-      assert_match(%r{rspec "spec/\*\*/\*_spec\.rb"}, link_file)
-      assert_match(/# 1 file$/, link_file)
+      assert_match(%r{^  rspec "spec/\*\*/\*_spec\.rb"$}, link_file)
     end
 
     # A generated file that has to be corrected before it can be committed is a generated
@@ -319,6 +325,54 @@ module Constable
       assert_equal({ rspec: ["spec/**/*_spec.rb"] }, Constable.configuration.cold_case_links.globs)
     end
 
+    # The template ships the block with its examples commented out. Those are documentation
+    # until someone runs import, and noise in the file afterwards.
+    def test_import_clears_the_commented_examples
+      seed_case_helper("  # rspec    \"spec/**/*_spec.rb\"\n  # minitest \"test/legacy/**/*_test.rb\"")
+      seed_rspec("spec/models/user_spec.rb")
+      import
+
+      refute_match(/# rspec/, link_file)
+      refute_match(/# minitest/, link_file)
+      assert_match(/^  rspec "spec/, link_file)
+    end
+
+    # The block is edited in place, so everything around it survives -- the comments that
+    # explain what a cold case is, and the rest of the helper.
+    def test_import_keeps_the_rest_of_the_helper
+      write_file(LINK_PATH, <<~RUBY)
+        require "constable"
+
+        # A comment that explains the block below.
+        Constable.cold_cases do
+        end
+
+        class UnitCase < Constable::Case
+          tier :unit
+        end
+      RUBY
+      seed_rspec("spec/models/user_spec.rb")
+      import
+
+      assert_match(/A comment that explains the block below/, link_file)
+      assert_match(/class UnitCase < Constable::Case/, link_file)
+      assert_match(/^  rspec "spec/, link_file)
+    end
+
+    # Both engines, same mechanism -- this is the half that had no coverage.
+    def test_rspec_and_minitest_can_both_be_linked
+      seed_case_helper("")
+      seed_rspec("spec/models/user_spec.rb")
+      import(from: :rspec)
+
+      write_file("test/legacy/thing_test.rb",
+                 "require \"minitest/autorun\"\nclass ThingTest < Minitest::Test\n  def test_a; end\nend\n")
+      import(from: :minitest, config: Config.load(root: tmp_root))
+
+      assert_match(/^  rspec "spec/, link_file)
+      assert_match(/^  minitest "test/, link_file)
+    end
+
     def test_a_second_import_does_not_duplicate_the_glob
       seed_rspec("spec/models/user_spec.rb")
       import
@@ -332,8 +386,7 @@ module Constable
                  "require \"minitest/autorun\"\nclass UserTest < Minitest::Test\n  def test_a; end\nend\n")
       import(from: :minitest)
 
-      assert_match(/Minitest is linked to Constable/, link_file)
-      assert_match(%r{minitest "test/\*\*/\*_test\.rb"}, link_file)
+      assert_match(%r{^  minitest "test/\*\*/\*_test\.rb"$}, link_file)
     end
 
     # ---- dry run -----------------------------------------------------------------
@@ -468,7 +521,7 @@ module Constable
       summary = import.summary
 
       assert_match(/Constable\.cold_cases do/, summary)
-      assert_match(%r{test/cold_cases\.rb}, summary)
+      assert_match(%r{test/case_helper\.rb}, summary)
       refute_match(%r{\.constable/config\.yml}, summary)
     end
 
