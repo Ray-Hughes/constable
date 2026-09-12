@@ -1178,4 +1178,54 @@ module Constable
       @stubbed = nil
     end
   end
+
+  # The run clock. Unframed it reads as an annotation on the test above it -- the honest
+  # first reaction to a bare "· 1m 22s elapsed" after a case line was "did something fail?".
+  class HeartbeatTest < TestCase
+    def report(heartbeat:, results:, sleep_between: 0)
+      write_config("heartbeat: #{heartbeat}\n")
+      Constable.reset!
+      io = StringIO.new
+      reporter = Reporter.new(io: io, config: Constable.config, color: false)
+      results.each do |result|
+        reporter.record(result)
+        sleep(sleep_between) if sleep_between.positive?
+      end
+      io.string
+    end
+
+    def passing(name)
+      Result.new(identity: "x", case_name: name, description: "d", file: "f.rb", line: 1,
+                 kind: :native, status: :passed)
+    end
+
+    def test_no_clock_when_it_is_off
+      output = report(heartbeat: 0, results: [passing("A"), passing("B")])
+
+      refute_match(/elapsed|─/, output)
+    end
+
+    def test_the_clock_is_framed_by_rules
+      output = report(heartbeat: 1, results: [passing("A"), passing("B")], sleep_between: 1.1)
+      lines = output.lines.map(&:chomp)
+      index = lines.index { |line| line.match?(/\d+s/) && line.match?(/tests/) }
+
+      refute_nil index, "no clock line in:\n#{output}"
+      assert_match(/─{10,}/, lines[index - 1], "the clock needs a rule above it")
+      assert_match(/─{10,}/, lines[index + 1], "the clock needs a rule below it")
+    end
+
+    def test_the_clock_says_what_it_is_on
+      output = report(heartbeat: 1, results: [passing("A"), passing("Later")], sleep_between: 1.1)
+
+      assert_match(/on Later/, output)
+    end
+
+    # Time-based, not per-test: a fast suite must never print one.
+    def test_a_fast_run_prints_no_clock
+      output = report(heartbeat: 30, results: Array.new(50) { passing("A") })
+
+      refute_match(/elapsed|tests  ·/, output)
+    end
+  end
 end

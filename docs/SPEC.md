@@ -406,8 +406,12 @@ preferences at all.
 `heartbeat: N` prints a line every N seconds while a run streams:
 
 ```
-  · 13s elapsed  ·  38 tests  ·  now: LegacyColocatedSpec
+  ────────────────────────────────────────────────────────
+  1m 22s   341 tests  ·  31 failed  ·  on LegacyCheckTaskTreeSpec
+  ────────────────────────────────────────────────────────
 ```
+
+Framed, because unframed it reads as an annotation on the case line above it.
 
 Time-based rather than per-test, so a fast suite never prints one and a slow one prints a
 handful instead of a wall.

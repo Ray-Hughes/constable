@@ -161,14 +161,23 @@ module Constable
       emit_heartbeat(now, result)
     end
 
+    # Framed, because unframed it reads as an annotation on the test above it. The first
+    # version printed a bare "· 1m 22s elapsed · 341 tests" straight after a case line and
+    # the honest first reaction was "did something just fail?". A rule above and below says
+    # this is the run talking, not a result.
     def emit_heartbeat(now, result)
       elapsed = format_elapsed(now - @started_at)
-      parts = ["#{elapsed} elapsed", "#{@streamed} tests"]
-      parts << "#{@failed_live} failed" if @failed_live.positive?
-      parts << "now: #{result.case_name}" if result.respond_to?(:case_name) && result.case_name
+      stats = ["#{@streamed} tests"]
+      stats << "#{@failed_live} failed" if @failed_live.positive?
+
+      stats << "on #{result.case_name}" if result.respond_to?(:case_name) && result.case_name
 
       close_stream_line if @stream_open
-      writeln(paint("#{INDENT}· #{parts.join("  ·  ")}", :dim))
+      writeln
+      writeln(paint(INDENT + THIN_RULE, :dim))
+      writeln("#{INDENT}#{paint(pad(elapsed, 9), :bold)}#{paint(stats.join("  ·  "), :dim)}")
+      writeln(paint(INDENT + THIN_RULE, :dim))
+      writeln
     end
 
     def format_elapsed(seconds)

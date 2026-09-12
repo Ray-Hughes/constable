@@ -662,8 +662,13 @@ A suite that takes half an hour gives no sign of how far in it is. Step away, co
 there is no honest answer to "has this been running ten minutes or forty".
 
 ```
-  · 13s elapsed  ·  38 tests  ·  now: LegacyColocatedSpec
+  ────────────────────────────────────────────────────────
+  1m 22s   341 tests  ·  31 failed  ·  on LegacyCheckTaskTreeSpec
+  ────────────────────────────────────────────────────────
 ```
+
+Framed on purpose. Unframed it sits under a case line and reads as an annotation on *that
+case* — the honest first reaction to a bare `· 1m 22s elapsed` is "did something just fail?".
 
 Time-based rather than per-test, so a fast suite never prints one and a slow one prints a
 handful instead of a wall. Off by default; `constable config heartbeat 30` turns it on for
