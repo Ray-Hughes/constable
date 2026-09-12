@@ -509,20 +509,27 @@ module Constable
 
     # ---- the deliberate refusals ---------------------------------------------------
 
-    def test_let_bang_is_flagged_because_eager_and_lazy_are_not_the_same_thing
+    # This was a refusal until witness_all existed. `let!` means the record is there before
+    # every example, and `witness` is lazy -- so the swap was a silent behaviour change and
+    # the file kept its RSpec body. witness_all is the eager one, so it converts.
+    def test_let_bang_becomes_witness_all
       result = convert("describe User do\n  let!(:existing) { create(:user) }\nend\n")
 
-      assert_includes result.source, "let!(:existing) { create(:user) }"
-      flag = flag_named(result, :eager_let)
+      assert_includes result.source, "witness_all(:existing)"
+      refute_includes result.source, "let!"
+      assert_nil flag_named(result, :eager_let)
+    end
 
-      refute_nil flag
-      assert_match(/`let!` is eager/, flag[:reason])
+    def test_a_dynamic_let_bang_is_still_refused
+      result = convert("describe User do\n  let!(*names) { create(:user) }\nend\n")
+
+      refute_nil flag_named(result, :dynamic_let)
     end
 
     def test_an_anonymous_subject_becomes_a_witness_and_the_report_says_so
       result = convert("describe User do\n  subject { described_class.new }\nend\n")
 
-      assert_includes result.source, "witness(:subject) { described_class.new }"
+      assert_includes result.source, "witness(:subject) { User.new }"
       entry = result.converted.find { |c| c[:kind] == :subject }
 
       assert_equal "witness(:subject)", entry[:to]
@@ -542,18 +549,33 @@ module Constable
       refute_nil flag_named(result, :eager_subject)
     end
 
-    def test_after_and_around_hooks_are_flagged
+    # `after` maps one-to-one onto `teardown`, which Case has always had. Flagging it was
+    # costing whole files their conversion over a construct with an exact counterpart.
+    def test_after_becomes_teardown_and_around_is_still_refused
       result = convert("describe User do\n  after { cleanup }\n  around { |ex| ex.run }\nend\n")
 
-      assert_includes result.source, "after { cleanup }"
+      assert_includes result.source, "teardown { cleanup }"
+      assert_nil flag_named(result, :after_hook)
+
       assert_includes result.source, "around { |ex| ex.run }"
-      refute_nil flag_named(result, :after_hook)
       refute_nil flag_named(result, :around_hook)
     end
 
-    def test_described_class_is_flagged
+    # `describe User` gives described_class an unambiguous answer, so it is substituted
+    # rather than handed back to a human to copy from four lines up.
+    def test_described_class_is_substituted_when_the_describe_names_a_class
       result = convert("describe User do\n  let(:x) { described_class.new }\nend\n")
 
+      assert_includes result.source, "User.new"
+      refute_includes result.source, "described_class"
+      assert_nil flag_named(result, :described_class)
+    end
+
+    # `describe "a string"` has no class behind it, so there is nothing to substitute.
+    def test_described_class_is_still_flagged_when_the_describe_names_a_string
+      result = convert("describe \"billing\" do\n  let(:x) { described_class.new }\nend\n")
+
+      assert_includes result.source, "described_class"
       refute_nil flag_named(result, :described_class)
     end
 
@@ -702,7 +724,7 @@ module Constable
       assert_includes result.source, "attest {"
       assert_includes result.source, "before(:all) { seed_the_world }"
       assert_includes result.source, %(shared_examples "an authorized action" do)
-      assert_equal %i[eager_let described_class before_all one_liner_example shared_examples].sort,
+      assert_equal %i[before_all one_liner_example shared_examples].sort,
                    kinds(result.flags).sort
       assert_equal %i[describe_metadata], kinds(result.untouched).uniq
     end
@@ -811,7 +833,8 @@ module Constable
       assert_includes report, "`let(:user)` -> `witness(:user)`"
       assert_includes report, "### Flagged -- NOT converted, still as written"
       assert_includes report, "**before_all**"
-      assert_includes report, "**eager_let**"
+      # eager_let is deliberately absent: let! converts to witness_all now.
+      refute_includes report, "**eager_let**"
       # shared_examples moved from "left untouched" to "flagged" -- a converted file that
       # still calls that DSL cannot run, so it has to block conversion rather than be noted.
       assert_includes report, "**shared_examples**"

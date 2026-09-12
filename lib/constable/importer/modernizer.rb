@@ -558,6 +558,9 @@ module Constable
       def convert_to_case_class(node, send_node)
         args = send_node.children[2..] || []
         @class_name = case_class_name(args.first)
+        # `describe User` names a real constant, so `described_class` inside it has an
+        # answer and does not need a human to supply it.
+        @described_class = source_of(args.first) if args.first&.type == :const
         replace(block_head(node), "class #{@class_name} < #{@base}")
         close_brace_block(node)
         record_converted(:case_class, node, "#{source_of(send_node)} do",
@@ -615,14 +618,24 @@ module Constable
         name = send_node.children[1]
         args = send_node.children[2..] || []
 
+        # `let!` used to be flagged, because `witness` is lazy and swapping one for the other
+        # changes when the record is created. `witness_all` is the eager one, so the swap is
+        # no longer silent: the record exists before every investigation, which is the whole
+        # meaning of `let!`.
+        #
+        # Not identical, and the difference is worth stating. `let!` rebuilds per example;
+        # `witness_all` builds once and re-reads, inside a transaction the case rolls back.
+        # A test that mutates the record still sees its own changes and still cannot leak
+        # them. What changes is the cost: one INSERT for the case instead of one per test.
         if name == :let!
-          # `let!` runs eagerly before every example; `witness` is lazy and memoized
-          # per-test. Swapping one for the other changes when the record is created,
-          # which is exactly the kind of silent behaviour change this tool won't make.
-          return flag(:eager_let, node,
-                      "`let!` is eager -- it runs before every example whether or not it is referenced. " \
-                      "`witness` is lazy. Move the side effect into a `briefing` block, then declare the " \
-                      "value as `witness`.")
+          unless args.size == 1 && %i[sym str].include?(args.first.type)
+            return flag(:dynamic_let, node, "`#{source_of(send_node)}` does not name a single literal helper.")
+          end
+
+          replace(send_node.loc.selector, "witness_all")
+          record_converted(:witness_all, node, source_of(send_node), "witness_all(#{source_of(args.first)})")
+          to_do_end(node)
+          return visit_children_of_block(node, in_case: false)
         end
         unless args.size == 1 && %i[sym str].include?(args.first.type)
           return flag(:dynamic_let, node, "`#{source_of(send_node)}` does not name a single literal helper.")
@@ -663,14 +676,20 @@ module Constable
         args = send_node.children[2..] || []
         scope = args.first && args.first.type == :sym ? args.first.children[0] : nil
 
-        if name != :before || args.size > 1 || !HOOK_SCOPES_OK.include?(scope)
+        # `after` was flagged as having no counterpart. It has one: `teardown`, which Case has
+        # carried all along. The guidance was right that most after blocks are redundant once
+        # the transaction rolls back -- but "redundant" is a judgement for the author, and
+        # refusing to convert a construct that maps one-to-one was costing whole files their
+        # conversion over it.
+        target = { before: "briefing", after: "teardown" }[name]
+        if target.nil? || args.size > 1 || !HOOK_SCOPES_OK.include?(scope)
           return flag(hook_flag_kind(name, scope), node, hook_flag_reason(name, scope, send_node))
         end
 
-        replace(send_node.loc.expression, "briefing")
+        replace(send_node.loc.expression, target)
         to_do_end(node)
-        record_converted(:briefing, node, "#{source_of(send_node)} #{node.loc.begin.source}",
-                         "briefing do")
+        record_converted(target.to_sym, node, "#{source_of(send_node)} #{node.loc.begin.source}",
+                         "#{target} do")
         visit_children_of_block(node, in_case: true)
       end
 
@@ -790,8 +809,20 @@ module Constable
           end
         when :described_class
           if receiver.nil?
-            flag(:described_class, node,
-                 "`described_class` has no meaning once `describe X` is a real class. Name the class directly.")
+            # `describe User` gives this an unambiguous answer, so substitute it. Flagging it
+            # was asking a human to copy a constant from four lines up, and costing the file
+            # its conversion when nobody did.
+            #
+            # `describe "some string"` genuinely has no class behind it, and that stays a
+            # flag -- there is nothing to substitute.
+            if @described_class
+              replace(node.loc.expression, @described_class)
+              record_converted(:described_class, node, "described_class", @described_class)
+            else
+              flag(:described_class, node,
+                   "`described_class` needs `describe SomeClass` to have a meaning, and this " \
+                   "file describes a string. Name the class directly.")
+            end
           end
         when :to_not
           replace(node.loc.selector, "not_to")
