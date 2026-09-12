@@ -912,13 +912,9 @@ module Constable
     # why it is off unless asked for; against a run that never ends, a named failure and a
     # finished suite is the better trade.
     def run_item(item)
-      return run_item!(item) unless @timeout.positive?
-
-      begin
-        explain_timeouts(Timeout.timeout(@timeout) { run_item!(item) }, item)
-      rescue Timeout::Error
-        [timed_out(item)]
-      end
+      explain_timeouts(Timeout.timeout(@timeout) { run_item!(item) }, item)
+    rescue Timeout::Error
+      [timed_out(item)]
     end
 
     # Usually the engine catches the interrupt before we do -- RSpec and Minitest both treat

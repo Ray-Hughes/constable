@@ -106,10 +106,34 @@ module Constable
       assert_predicate runner.results.find { |r| r.file.include?("fine_case") }, :passed?
     end
 
-    # Off unless asked for: interrupting a running test can leave state behind, so it is a
-    # choice rather than something that happens to everyone by default.
-    def test_no_timeout_by_default
-      assert_equal 0, Constable.config.timeout
+    # Always on. It used to default to off, on the reasoning that interrupting a running
+    # test is a real intervention -- true, and still the wrong default, because the cost of
+    # not having it is a run that never ends with nothing to show for it.
+    def test_a_timeout_is_always_set
+      assert_equal 300, Constable.config.timeout
+    end
+
+    def test_a_timeout_cannot_be_turned_off
+      write_config("timeout: 0\n")
+      Constable.reset!
+
+      assert_equal 300, Constable.config.timeout
+    end
+
+    # A floor on what can be set, not a default. An item is a whole file for a cold case,
+    # and on a real suite 60 files legitimately take more than ten seconds.
+    def test_a_timeout_below_the_floor_is_raised_to_it
+      write_config("timeout: 2\n")
+      Constable.reset!
+
+      assert_equal 10, Constable.config.timeout
+    end
+
+    def test_a_timeout_above_the_floor_is_respected
+      write_config("timeout: 45\n")
+      Constable.reset!
+
+      assert_equal 45, Constable.config.timeout
     end
 
     def test_a_slow_test_under_the_limit_is_left_alone

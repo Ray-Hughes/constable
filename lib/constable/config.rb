@@ -10,7 +10,7 @@ module Constable
   # tier base classes, one-time global setup) lives in test/case_helper.rb instead.
   class Config
     DEFAULTS = {
-      "timeout" => 0,
+      "timeout" => 300,
       "heartbeat" => 0,
       "slowest" => 5,
       "storage" => { "adapter" => "sqlite", "path" => ".constable/constable.sqlite3", "url" => nil },
@@ -316,11 +316,26 @@ module Constable
       seconds.positive? ? seconds : 0
     end
 
-    # Seconds before a single file is declared hung and failed. 0 is off, which is the
-    # default: killing a test mid-flight is a real intervention and should be asked for.
+    # Seconds before one item is declared hung, failed by name, and the run allowed to
+    # finish. Always on, and there is no value that turns it off.
+    #
+    # It used to default to 0, on the reasoning that raising into a running test is a real
+    # intervention and should be asked for. That is true and it is still the wrong default:
+    # the cost of not having it is a run that never ends, with no output and no way to tell
+    # which of a thousand files is responsible. Measured once at 58 minutes of wall clock
+    # against 10 minutes of CPU.
+    #
+    # MINIMUM is a floor on what can be *set*, not a default. An item is a whole file for a
+    # cold case, and on the suite this was measured against 60 files legitimately take more
+    # than ten seconds -- the slowest 266. A ten-second default would fail every one of them.
+    TIMEOUT_MINIMUM = 10
+    TIMEOUT_DEFAULT = 300
+
     def timeout
-      seconds = @raw["timeout"].to_i
-      seconds.positive? ? seconds : 0
+      seconds = @raw.fetch("timeout", TIMEOUT_DEFAULT).to_i
+      return TIMEOUT_DEFAULT unless seconds.positive?
+
+      [seconds, TIMEOUT_MINIMUM].max
     end
 
     def cold_case_except = Array(@raw["cold_case_except"])

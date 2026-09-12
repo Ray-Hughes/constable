@@ -1317,6 +1317,62 @@ module Constable
       assert_includes output, "Thing"
     end
 
+    # Three levels: the file, the groups inside it, the tests inside those. It used to be
+    # two, with the group name repeated inline on every test under it.
+    def test_expanded_nests_case_then_group_then_test
+      write_config("output: expanded\n")
+      Constable.reset!
+      io = StringIO.new
+      reporter = Reporter.new(io: io, config: Constable.config, color: false)
+      %w[first second].each do |name|
+        reporter.record(Result.new(identity: name, case_name: "ThingCase",
+                                   description: "#save #{name}", file: "test/cases/thing_case.rb",
+                                   line: 1, kind: :native, status: :passed, duration: 0.01,
+                                   docket_path: ["#save"]))
+      end
+      reporter.flush!
+      lines = io.string.lines.map(&:chomp).reject(&:empty?)
+
+      assert_equal "  ThingCase", lines[0]
+      assert_equal "  test/cases/thing_case.rb", lines[1]
+      assert_equal "    #save", lines[2]
+      assert_match(/\A      ✓ first/, lines[3])
+      assert_match(/\A      ✓ second/, lines[4])
+    end
+
+    # The group is a heading now, so repeating it on every test under it is the noise the
+    # heading exists to remove.
+    def test_the_group_name_is_not_repeated_on_each_test
+      write_config("output: expanded\n")
+      Constable.reset!
+      io = StringIO.new
+      reporter = Reporter.new(io: io, config: Constable.config, color: false)
+      reporter.record(Result.new(identity: "x", case_name: "ThingCase",
+                                 description: "#save when valid persists", file: "f.rb", line: 1,
+                                 kind: :native, status: :passed, duration: 0.01,
+                                 docket_path: ["#save", "when valid"]))
+      reporter.flush!
+      body = io.string.lines.find { |line| line.include?("persists") }
+
+      assert_match(/✓ persists/, body)
+      refute_match(/when valid persists/, body)
+    end
+
+    def test_a_case_without_groups_still_nests_two_deep
+      write_config("output: expanded\n")
+      Constable.reset!
+      io = StringIO.new
+      reporter = Reporter.new(io: io, config: Constable.config, color: false)
+      reporter.record(Result.new(identity: "x", case_name: "FlatCase", description: "works",
+                                 file: "f.rb", line: 1, kind: :native, status: :passed,
+                                 duration: 0.01))
+      reporter.flush!
+      lines = io.string.lines.map(&:chomp).reject(&:empty?)
+
+      assert_equal "  FlatCase", lines[0]
+      assert_match(/\A    ✓ works/, lines[2])
+    end
+
     # A slow test leaves the terminal completely still, and the honest reaction to that is
     # to reach for ctrl-c -- the one thing that makes it worse.
     def spinning(tty:, in_ci: nil)
@@ -1352,8 +1408,12 @@ module Constable
       output = spinning(tty: true)
 
       refute_match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*\z/, output, "a frame survived to the end of the run")
-      assert_equal output.count("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"), output.scan("\b \b").size,
-                   "every frame drawn has to be erased"
+      # The frame carries an elapsed stamp, so an erase is N backspaces, N spaces, N
+      # backspaces -- not a fixed three bytes.
+      drawn = output.count("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+      erased = output.scan(/\010+ +\010+/).size
+
+      assert_equal drawn, erased, "every frame drawn has to be erased"
     end
 
     # The clock is asked on each result whether it is due, which makes it silent during

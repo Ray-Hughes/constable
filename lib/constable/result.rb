@@ -49,6 +49,7 @@ module Constable
         line: investigation.line,
         kind: investigation.kind,
         tier: investigation.tier,
+        docket_path: investigation.docket_path,
         **attrs
       )
     end

@@ -79,21 +79,19 @@ coverage_html: false     # generate a browsable report by default
 
 fail_on_warnings: false  # CI: fail the build when the warning count doesn't trend down
 
-# Seconds before a file that has produced no result is declared hung, failed by name, and
-# the run allowed to continue. 0 is off.
+# Seconds before one item is declared hung, failed by name, and the run allowed to carry on.
 #
-# A test that never finishes does not fail -- it stops the suite, and the symptom is a
-# terminal that sits there. No output, nothing recorded, and no way to tell which file did
-# it. That is the failure this exists for, and it is most often a browser-driven feature
-# spec waiting on something that never arrives.
+# Always on. There is no value that turns it off, and the floor is 10 seconds.
 #
-# Off by default because interrupting a running test is a real intervention: it raises into
-# whatever the test was doing and can leave state behind. Against a run that would otherwise
-# never end, a named failure and a finished suite is the better trade.
+# A test that never finishes does not fail -- it parks the run, and the only symptom is a
+# terminal that sits there. No output, nothing recorded, and no way to tell which of a
+# thousand files is responsible. Measured once at 58 minutes of wall clock against 10
+# minutes of CPU, with nothing to show for it.
 #
-# 300 is a reasonable starting point for a suite with system tests in it; a per-run
-# `--timeout 60` is the quicker way to find out which file is hanging.
-timeout: 0
+# Raise it for a suite with genuinely slow files. An item is a whole file for a cold case,
+# so this is the budget for the file, not for one test: on one real suite 60 files take more
+# than 10 seconds and the slowest takes 266.
+timeout: 300
 
 # Seconds between "still going" lines while a run streams. 0 is off.
 #

@@ -281,12 +281,19 @@ module Constable
     end
 
     # Called with the mutex held.
+    #
+    # The frame carries the elapsed time with it, so there is always a running clock on
+    # screen rather than one that appears every thirty seconds and vanishes again. It sits
+    # after whatever the stream last wrote and takes itself back before the next write.
     def draw_activity!
       report_stall!
       erase_activity!
-      @io.write(ACTIVITY_FRAMES[@activity_frame % ACTIVITY_FRAMES.size])
+      text = "#{ACTIVITY_FRAMES[@activity_frame % ACTIVITY_FRAMES.size]} " \
+             "#{format_elapsed(monotonic - @started_at)}"
+      @io.write(paint(text, :dim))
       @io.flush if @io.respond_to?(:flush)
       @activity_frame += 1
+      @activity_width = text.length
       @activity_shown = true
     end
 
@@ -310,7 +317,10 @@ module Constable
       return unless @activity_shown
 
       @activity_shown = false
-      @io.write("\b \b")
+      width = @activity_width.to_i
+      return if width.zero?
+
+      @io.write(("\b" * width) + (" " * width) + ("\b" * width))
       @io.flush if @io.respond_to?(:flush)
     end
 
@@ -543,6 +553,13 @@ module Constable
     # Workers interleave, so a case can come back after another has spoken. It gets a
     # second header rather than having its later tests silently appended under the
     # wrong one -- the same honesty rule the concise stream follows.
+    # Three levels: the file, the groups inside it, the tests inside those.
+    #
+    # It used to be two -- case name, then every test flat beneath it, each carrying its
+    # docket path repeated inline. So "#icn_identifier?" appeared at the head of nine
+    # consecutive lines, and reading which tests belonged together meant reading nine
+    # near-identical prefixes. The grouping was in the data the whole time; it was only ever
+    # flattened on the way out.
     def stream_expanded(result)
       name = result.case_name.to_s
       name = "(anonymous)" if name.empty?
@@ -550,8 +567,16 @@ module Constable
       if @stream_case != name
         writeln if @stream_case
         writeln(INDENT + paint(name, :bold))
+        writeln("#{INDENT}#{paint(result.file.to_s, :dim)}") unless result.file.to_s.empty?
         @stream_case = name
+        @stream_docket = nil
         @stream_open = true
+      end
+
+      docket = Array(result.docket_path).join(" ")
+      if docket != @stream_docket.to_s
+        @stream_docket = docket
+        writeln("#{ENTRY_INDENT}#{paint(docket, :dim)}") unless docket.empty?
       end
 
       writeln(expanded_line(result))
@@ -559,7 +584,8 @@ module Constable
 
     def expanded_line(result)
       glyph = paint(result.glyph, COLORS[result.status])
-      line  = "#{ENTRY_INDENT}#{glyph} #{expanded_description(result)}"
+      indent = @stream_docket.to_s.empty? ? ENTRY_INDENT : "#{ENTRY_INDENT}  "
+      line   = "#{indent}#{glyph} #{expanded_description(result)}"
 
       stamp = expanded_duration(result)
       return line if stamp.nil?
@@ -603,7 +629,7 @@ module Constable
     end
 
     def expanded_description(result)
-      description = truncate_description(strip_case_prefix(result))
+      description = truncate_description(strip_docket_prefix(strip_case_prefix(result), result))
       description = "(no description)" if description.empty?
       # A jailed test never ran its body, so say why rather than implying it passed.
       return "#{description} #{paint("— #{result.jail_reason}", :dim)}" if jail_reason_worth_showing?(result)
@@ -623,6 +649,16 @@ module Constable
       description.sub(/\A(?:#{Regexp.escape(name)}[\s.#:]*)+/, "").then do |stripped|
         stripped.empty? ? description : stripped
       end
+    end
+
+    # The docket path is its own heading in expanded mode, so repeating it on every test
+    # beneath that heading is the noise the heading exists to remove.
+    def strip_docket_prefix(description, result)
+      docket = Array(result.docket_path).join(" ")
+      return description if docket.empty? || !description.start_with?(docket)
+
+      stripped = description[docket.length..].to_s.lstrip
+      stripped.empty? ? description : stripped
     end
 
     def jail_reason_worth_showing?(result)

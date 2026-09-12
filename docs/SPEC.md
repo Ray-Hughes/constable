@@ -378,9 +378,15 @@ of the example, so rewriting it as an assertion afterwards moves when the failur
 ## Timeouts
 
 A test that never returns does not fail — it parks the run, and the only symptom is a
-terminal that sits there. `--timeout N`, or `timeout:` in config.yml, fails that file by name
-and lets the suite finish. Off by default: raising into a running test can leave state
-behind, so it is asked for rather than assumed.
+terminal that sits there. `--timeout N`, or `timeout:` in config.yml, fails that item by name
+and lets the suite finish.
+
+**Always on**, default 300 seconds, and no value turns it off. It used to default to off, on
+the reasoning that raising into a running test is a real intervention — true, and still the
+wrong default, because the cost of not having it is a run that never ends with nothing to
+show for it. The floor is 10 seconds, and that is a floor on what can be *set*, not a
+default: an item is a whole file for a cold case, and on one real suite 60 files legitimately
+take longer than that, the slowest 266 seconds.
 
 Usually the engine catches the interrupt first and reports it as the example failing, which
 is better than a file-level result because it names the exact test. Either way the message
