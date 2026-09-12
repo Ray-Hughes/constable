@@ -122,8 +122,9 @@ module Constable
       # command prints the same thing in a CI log as it does on a terminal.
       @show    = Array(show).flat_map { |value| value.to_s.split(",") }.map(&:strip).reject(&:empty?)
       @config  = config || Constable.config
-      @color   = resolve_color(color)
-      @slowest = slowest.to_i
+      # A preference beats the terminal sniff, and an explicit argument beats both.
+      @color   = resolve_color(color.nil? ? @config.color : color)
+      @slowest = (slowest == DEFAULT_SLOWEST ? @config.slowest : slowest).to_i
       # Resolved lazily: the reporter is built before case_helper.rb has run, so reading
       # the config now would miss anything Constable.configure sets.
       @requested_mode = mode
@@ -134,7 +135,54 @@ module Constable
       @warning_count = 0
       @history = {}
       @finished = false
+      @started_at = monotonic
+      @last_heartbeat = @started_at
+      @streamed = 0
     end
+
+    # How long the run has been going.
+    #
+    # A suite that takes half an hour gives no sign of how far in it is. You step away,
+    # come back, and the only honest answer to "has this been running ten minutes or
+    # forty" is to have watched it. So every `heartbeat` seconds the stream says where it
+    # is -- time-based rather than per-test, so a fast suite never prints one and a slow
+    # one prints a handful.
+    def heartbeat_seconds
+      @heartbeat_seconds ||= @config.respond_to?(:heartbeat) ? @config.heartbeat.to_i : 0
+    end
+
+    def maybe_heartbeat!(result)
+      return if heartbeat_seconds.zero? || !streaming?
+
+      now = monotonic
+      return if now - @last_heartbeat < heartbeat_seconds
+
+      @last_heartbeat = now
+      emit_heartbeat(now, result)
+    end
+
+    def emit_heartbeat(now, result)
+      elapsed = format_elapsed(now - @started_at)
+      parts = ["#{elapsed} elapsed", "#{@streamed} tests"]
+      parts << "#{@failed_live} failed" if @failed_live.positive?
+      parts << "now: #{result.case_name}" if result.respond_to?(:case_name) && result.case_name
+
+      close_stream_line if @stream_open
+      writeln(paint("#{INDENT}· #{parts.join("  ·  ")}", :dim))
+    end
+
+    def format_elapsed(seconds)
+      seconds = seconds.to_i
+      return "#{seconds}s" if seconds < 60
+
+      minutes, secs = seconds.divmod(60)
+      return "#{minutes}m #{secs.to_s.rjust(2, "0")}s" if minutes < 60
+
+      hours, mins = minutes.divmod(60)
+      "#{hours}h #{mins.to_s.rjust(2, "0")}m"
+    end
+
+    def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
     # --- lifecycle -----------------------------------------------------------------
 
@@ -159,7 +207,9 @@ module Constable
       return self if result.nil?
 
       @failed_live += 1 if result.failed?
+      @streamed += 1
       stream(result)
+      maybe_heartbeat!(result)
       self
     end
 

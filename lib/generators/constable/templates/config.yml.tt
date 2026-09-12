@@ -95,6 +95,22 @@ fail_on_warnings: false  # CI: fail the build when the warning count doesn't tre
 # `--timeout 60` is the quicker way to find out which file is hanging.
 timeout: 0
 
+# Seconds between "still going" lines while a run streams. 0 is off.
+#
+# A suite that takes half an hour gives no sign of how far in it is: you step away, come
+# back, and cannot tell whether it has been running ten minutes or forty. Every N seconds
+# the stream says how long it has been going, how many tests are done, and what it is on.
+#
+# Time-based rather than per-test on purpose -- a fast suite never prints one, and a slow
+# one prints a handful rather than a wall.
+#
+# This is also settable per developer in .constable/preferences.yml, which is gitignored,
+# so wanting a clock does not mean committing one for everybody.
+heartbeat: 0
+
+# How many rows the SLOWEST section prints after a run.
+slowest: 5
+
 parallel_workers: auto   # or an explicit integer
 
 # How a parallel worker gets a database of its own.

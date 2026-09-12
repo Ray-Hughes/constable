@@ -746,13 +746,20 @@ module Constable
       buckets = Array.new(count) { [] }
       loads = Array.new(count, 0.0)
 
-      # A case with witness_all fixtures is one unit of work: its transaction spans the
-      # whole case, so splitting it across workers would hand half the tests a scope that
-      # was opened in another process. Those go out together; everything else is still
-      # balanced test by test.
-      grouped, loose = partition_shared_fixture_items(items)
+      # A case is one unit of work, not a bag of independent tests.
+      #
+      # These used to be balanced test by test, which sorted every investigation in the run
+      # by duration and so scattered one case's tests across the whole schedule. Two costs.
+      # The output went flat and repetitive -- the live stream groups by case, so a case
+      # whose tests arrive in four separate bursts gets four separate lines, and reading it
+      # is impossible. And a witness_all fixture could not work at all, since its
+      # transaction spans the case and half the tests would land in another process.
+      #
+      # Balancing is coarser now, bounded by the largest case rather than the largest test.
+      # On a real suite that is a rounding error, and legible output every run is not.
+      grouped = items.group_by { |item| scheduling_group(item) }.values
 
-      (grouped + loose).sort_by { |group| -group.sum { |item| weight_of(item, index) } }.each do |group|
+      grouped.sort_by { |group| -group.sum { |item| weight_of(item, index) } }.each do |group|
         slot = loads.index(loads.min)
         buckets[slot].concat(group)
         loads[slot] += group.sum { |item| weight_of(item, index, default: 0.05) }
@@ -760,13 +767,10 @@ module Constable
       buckets.reject(&:empty?)
     end
 
-    # [[items of one shared-fixture case], ...], [[single item], ...]
-    def partition_shared_fixture_items(items)
-      shared, loose = items.partition do |item|
-        item.native? && item.investigation&.case_class.respond_to?(:shared_fixtures?) &&
-          item.investigation.case_class.shared_fixtures?
-      end
-      [shared.group_by { |item| item.investigation.case_class }.values, loose.map { |item| [item] }]
+    # What has to stay together: a native item belongs to its case class, a cold item is
+    # already a whole file.
+    def scheduling_group(item)
+      item.native? ? item.investigation&.case_class : item.path
     end
 
     # What one item is expected to cost.

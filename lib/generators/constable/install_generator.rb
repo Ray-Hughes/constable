@@ -72,6 +72,13 @@ module Constable
         # each machine keeps its own, and CI starts clean.
         /.constable/*.sqlite3
         /.constable/*.sqlite3-*
+
+        # Your own preferences -- output mode, colour, the run clock. Yours rather than the
+        # team's, which is the entire point of the file.
+        /.constable/preferences.yml
+
+        # Written by `constable modernize`, regenerated every run.
+        /.constable/docs/
       TEXT
 
       NEW_SETTINGS_HEADER = <<~TEXT

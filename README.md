@@ -630,6 +630,42 @@ deliberately not one of them: it sets an expectation before the call and verifie
 of the example, so rewriting it as an assertion afterwards would move when the failure
 surfaces.
 
+### Preferences: yours, not the team's
+
+`.constable/config.yml` is a team agreement. How many workers CI gets, what the coverage
+gate is, whether flakes are jailed — answers that have to be the same for everyone or they
+are not answers. But some of what a run does is nobody else's business, and editing a shared
+file to change it means either committing a preference for the whole team or carrying a
+dirty file forever.
+
+```console
+$ constable config                      # what is set, and where it came from
+$ constable config output expanded      # a line per test, for you
+$ constable config heartbeat 30         # say how long it has been going, every 30s
+$ constable config color false
+$ constable config output --unset
+```
+
+That writes `.constable/preferences.yml`, which the installer gitignores.
+
+The list is short and closed: `output`, `heartbeat`, `color`, `slowest`. A setting that
+changes what **passes** is not a preference, and is refused here — a suite that is green on
+one machine and red on another, with the difference in a file nobody else can see, is worse
+than no preferences at all.
+
+### The run clock
+
+A suite that takes half an hour gives no sign of how far in it is. Step away, come back, and
+there is no honest answer to "has this been running ten minutes or forty".
+
+```
+  · 13s elapsed  ·  38 tests  ·  now: LegacyColocatedSpec
+```
+
+Time-based rather than per-test, so a fast suite never prints one and a slow one prints a
+handful instead of a wall. Off by default; `constable config heartbeat 30` turns it on for
+you, `heartbeat:` in config.yml for everyone.
+
 ### Escape hatches, always visible
 
 ```ruby

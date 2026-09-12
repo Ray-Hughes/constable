@@ -11,6 +11,8 @@ module Constable
   class Config
     DEFAULTS = {
       "timeout" => 0,
+      "heartbeat" => 0,
+      "slowest" => 5,
       "storage" => { "adapter" => "sqlite", "path" => ".constable/constable.sqlite3", "url" => nil },
       "warrants" => false,
       "warrant_retries" => 5,
@@ -43,6 +45,26 @@ module Constable
 
     CONFIG_PATH = ".constable/config.yml"
 
+    # Your own preferences, layered over the project's.
+    #
+    # .constable/config.yml is a team agreement: how many workers CI gets, what the coverage
+    # gate is, whether flakes are jailed. Answers that have to be the same for everyone or
+    # they are not answers. But some of what a test run does is nobody else's business --
+    # whether the output is expanded, whether it is coloured, how often it says how long it
+    # has been going. Editing a shared file to change those means either committing a
+    # preference for the whole team or carrying a dirty file forever.
+    #
+    # So there is a second file, gitignored, holding only the settings where one developer
+    # differing from another costs nothing. `constable config` writes it.
+    #
+    # The list is deliberately short and deliberately closed. A setting that changes what
+    # PASSES is not a preference, and letting it be overridden here would mean a suite that
+    # is green on one machine and red on another, with the difference in a file nobody else
+    # can see. Those raise rather than being quietly applied.
+    PREFERENCES_PATH = ".constable/preferences.yml"
+
+    PREFERENCE_KEYS = %w[output heartbeat color slowest].freeze
+
     # Settings for `constable modernize`, so a port can be configured once and run as
     # `constable modernize PATH`. A flag on the command line always wins over the file --
     # the file says what this project does by default, the flag says what this invocation
@@ -60,7 +82,35 @@ module Constable
 
     def self.load(root: Constable.root, overrides: {})
       path = File.join(root.to_s, CONFIG_PATH)
-      new(read_file(path), root: root, overrides: overrides)
+      raw = read_file(path)
+      raw = deep_merge_hashes(raw, preferences(root))
+      new(raw, root: root, overrides: overrides)
+    end
+
+    # Read, filtered to what a preference is allowed to be, and loudly refused otherwise.
+    # Silently dropping the rest would leave someone staring at a setting they wrote that
+    # does nothing.
+    def self.preferences(root)
+      path = File.join(root.to_s, PREFERENCES_PATH)
+      raw = read_file(path)
+      return {} if raw.empty?
+
+      unknown = raw.keys.map(&:to_s) - PREFERENCE_KEYS
+      unless unknown.empty?
+        raise Constable::ConfigurationError,
+              "#{PREFERENCES_PATH} sets #{unknown.sort.join(", ")}, which #{unknown.one? ? "is" : "are"} " \
+              "not #{unknown.one? ? "a preference" : "preferences"}. That file holds only settings where " \
+              "one developer differing from another costs nothing: #{PREFERENCE_KEYS.join(", ")}. " \
+              "Anything that changes what passes belongs in #{CONFIG_PATH}, where the rest of the team " \
+              "can see it."
+      end
+      raw
+    end
+
+    def self.deep_merge_hashes(base, other)
+      base.merge(other) do |_key, a, b|
+        a.is_a?(Hash) && b.is_a?(Hash) ? deep_merge_hashes(a, b) : b
+      end
     end
 
     # A typo in config.yml used to surface as a raw Psych::SyntaxError, or -- for a file
@@ -189,7 +239,11 @@ module Constable
     end
 
     def expanded_output? = output_mode == :expanded
-    def storage            = @raw["storage"] || {}
+
+    # Readable under its own key as well, so `constable config` can print every preference
+    # without a table mapping key names to differently named readers.
+    def output = output_mode
+    def storage = @raw["storage"] || {}
 
     # Storage is the one setting that cannot be written in Ruby -- the blotter is opened
     # before test/case_helper.rb loads, so `constable jail` and `constable status` can read
@@ -240,6 +294,26 @@ module Constable
                               File.fnmatch?(glob.to_s, path.to_s, File::FNM_PATHNAME | File::FNM_EXTGLOB)
       end
       nil
+    end
+
+    # Colour, when it is set explicitly. nil means "decide from the terminal", which is the
+    # right default and what NO_COLOR and a non-tty already answer.
+    def color
+      return nil unless @raw.key?("color")
+
+      truthy(@raw["color"])
+    end
+
+    # How many rows the SLOWEST section shows.
+    def slowest
+      count = @raw.fetch("slowest", 5).to_i
+      count.negative? ? 0 : count
+    end
+
+    # Seconds between "still going" lines during a run. 0 is off.
+    def heartbeat
+      seconds = @raw["heartbeat"].to_i
+      seconds.positive? ? seconds : 0
     end
 
     # Seconds before a single file is declared hung and failed. 0 is off, which is the

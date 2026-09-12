@@ -366,6 +366,44 @@ module Constable
       exit(run.ok? ? EXIT_CLEAN : EXIT_FAILED)
     end
 
+    desc "config [KEY VALUE]", "Your own preferences, layered over the project's"
+    long_desc <<~DESC
+      With no arguments, prints what is set. With a key and value, writes it to
+      .constable/preferences.yml -- gitignored, so it is yours rather than the team's.
+      `constable config KEY --unset` removes one.
+
+      Only settings where one developer differing from another costs nothing live there.
+      Anything that changes what passes belongs in .constable/config.yml, where the rest of
+      the team can see it, and is refused here.
+    DESC
+    option :unset, type: :boolean, default: false, desc: "Remove the setting instead"
+    def config(key = nil, value = nil)
+      path = File.join(Constable.root, Config::PREFERENCES_PATH)
+      return show_preferences(path) if key.nil?
+
+      unless Config::PREFERENCE_KEYS.include?(key.to_s)
+        say "#{key} is not a preference. Those are: #{Config::PREFERENCE_KEYS.join(", ")}."
+        say "Anything that changes what passes belongs in #{Config::CONFIG_PATH}, where the " \
+            "rest of the team can see it."
+        exit(EXIT_USAGE)
+      end
+
+      current = File.exist?(path) ? (YAML.safe_load_file(path) || {}) : {}
+      if options[:unset]
+        current.delete(key.to_s)
+      elsif value.nil?
+        say "constable config #{key} VALUE -- or --unset to remove it"
+        exit(EXIT_USAGE)
+      else
+        current[key.to_s] = coerce_preference(value)
+      end
+
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, "# Yours, not the team's. Gitignored.\n#{current.to_yaml.sub(/\A---\n/, "")}")
+      say "#{options[:unset] ? "unset" : "set"} #{key} in #{Config::PREFERENCES_PATH}"
+      exit(EXIT_CLEAN)
+    end
+
     desc "version", "Print the version"
     def version
       say "constable #{Constable::VERSION} (gem: constable-rails)"
@@ -676,6 +714,32 @@ module Constable
     subcommand "history", HistoryCommand
 
     no_commands do
+      def show_preferences(path)
+        say ""
+        say "  PREFERENCES"
+        say "  #{"-" * 11}"
+        Config::PREFERENCE_KEYS.each do |key|
+          value = Constable.config.respond_to?(key) ? Constable.config.public_send(key) : nil
+          say "  #{key.ljust(12)} #{value.inspect}"
+        end
+        say ""
+        say "  #{File.exist?(path) ? Config::PREFERENCES_PATH : "#{Config::PREFERENCES_PATH} (not written yet)"}"
+        say "  set one with:  constable config output expanded"
+        say ""
+        exit(EXIT_CLEAN)
+      end
+
+      # YAML types from a shell argument: "true"/"false" are booleans, digits are integers,
+      # everything else stays a string.
+      def coerce_preference(value)
+        case value
+        when "true"  then true
+        when "false" then false
+        when /\A-?\d+\z/ then value.to_i
+        else value
+        end
+      end
+
       def report_prunable(heading, entries)
         return if entries.empty?
 
