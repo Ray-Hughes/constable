@@ -1319,12 +1319,12 @@ module Constable
 
     # A slow test leaves the terminal completely still, and the honest reaction to that is
     # to reach for ctrl-c -- the one thing that makes it worse.
-    def spinning(tty:, ci: nil)
+    def spinning(tty:, in_ci: nil)
       Constable.reset!
       io = StringIO.new
       io.define_singleton_method(:tty?) { tty }
       previous = ENV.fetch("CI", nil)
-      ci.nil? ? ENV.delete("CI") : ENV["CI"] = ci
+      in_ci.nil? ? ENV.delete("CI") : ENV["CI"] = in_ci
       reporter = Reporter.new(io: io, config: Constable.config, color: false)
       reporter.record(passing("A"))
       sleep 0.4
@@ -1344,7 +1344,7 @@ module Constable
     end
 
     def test_no_spinner_in_ci_even_on_a_terminal
-      refute_match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/, spinning(tty: true, ci: "true"))
+      refute_match(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/, spinning(tty: true, in_ci: "true"))
     end
 
     # Every frame it draws it must take back, or the summary ends up with debris in it.
