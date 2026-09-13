@@ -308,7 +308,7 @@ module Constable
       port("spec/services/thing_spec.rb")
       written = File.read(File.join(tmp_root, "test/cases/services/thing_case.rb"))
 
-      assert_includes written, %(require_app "services/thing")
+      assert_includes written, %(require "app/services/thing")
       refute_match(%r{\.\./\.\./\.\./}, written)
     end
 

@@ -768,13 +768,29 @@ module Constable
   # `require` will not run the files again, and a cold case dies on "Could not find shared
   # context", naming one that is plainly defined.
   class ColdCaseOuterSharedExamplesTest < TestCase
+    def setup
+      super
+      require "rspec/core"
+      # Before anything: the adapter remembers that it has already adopted an outer world,
+      # and a test that ran earlier will have set that.
+      ColdCase.reset_engines!
+      # A world and configuration of this test's own. Registering a shared context into the
+      # process-wide ones would leave it behind, which is the global state the isolation
+      # tests in this file guard against.
+      @outer_world = ::RSpec.instance_variable_get(:@world)
+      @outer_configuration = ::RSpec.instance_variable_get(:@configuration)
+      ::RSpec.instance_variable_set(:@world, ::RSpec::Core::World.new)
+      ::RSpec.instance_variable_set(:@configuration, ::RSpec::Core::Configuration.new)
+    end
+
     def teardown
       ColdCase.reset_engines!
+      ::RSpec.instance_variable_set(:@world, @outer_world)
+      ::RSpec.instance_variable_set(:@configuration, @outer_configuration)
       super
     end
 
     def test_a_shared_context_registered_before_the_session_is_still_found
-      require "rspec/core"
       ::RSpec.shared_context("constable_outer_context") do
         let(:carried) { :from_the_outer_world }
       end

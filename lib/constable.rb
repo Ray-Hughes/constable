@@ -2,9 +2,6 @@
 
 require "constable/version"
 require "constable/worker_databases"
-# Not autoloaded: `require_app` is called at the top of a case file, before anything has
-# touched the Constable namespace, so an autoload would never fire.
-require "constable/require_app"
 
 # Constable -- an opinionated, strict Rails testing framework.
 #
@@ -114,9 +111,7 @@ module Constable
     # what triggers loading it.
     def procedure(description = nil, &) = Procedure.new(description, &)
 
-    # Loads an adopted suite's support files -- see Constable::SupportFiles. Defined here
-    # rather than in that file so the autoload actually fires: a method defined inside an
-    # autoloaded file cannot be the thing that triggers loading it.
+    # Loads an adopted suite's support files -- see Constable::SupportFiles.
     def load_support(*globs, root: Constable.root)
       SupportFiles.load(*globs, root: root)
     end

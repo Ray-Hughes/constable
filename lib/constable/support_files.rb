@@ -62,10 +62,16 @@ module Constable
       # name. Loading those same files without that leaves them raising LoadError on a
       # require that has always worked.
       #
-      # The roots of whatever was asked for, plus each file's own directory, so a bare
-      # require resolves the way it does under RSpec.
+      # The roots of whatever was asked for, each file's own directory, and the app root
+      # itself -- so a bare require resolves the way it does under RSpec, and a path named
+      # from the root (`require "app/services/thing"`) resolves too.
+      #
+      # The root is what removes the need for a helper. Counting `../` breaks when a file
+      # moves; `Rails.root.join(...).to_s` is a mouthful; a path from the root is neither,
+      # and is just `require`.
       def add_load_paths!(paths, root)
         dirs = paths.map { |path| File.dirname(path) }
+        dirs << root.to_s
         dirs += %w[spec test lib].map { |dir| File.join(root.to_s, dir) }
         dirs.uniq.each do |dir|
           next unless File.directory?(dir)

@@ -476,15 +476,18 @@ module Constable
             else
               # Not another `require_relative`. Repointing one produces
               # "../../../../app/services/..." -- correct, unreadable, and wrong again the
-              # moment the file moves a directory. `require_app` names the file from the app
-              # root, so it survives both.
+              # moment the file moves a directory.
+              #
+              # A path named from the app root is neither, and is plain `require`: the root
+              # is on $LOAD_PATH because Constable.load_support puts it there, the same way
+              # RSpec puts `spec` and `lib` there.
               #
               # Worth knowing: under Zeitwerk most of these are unnecessary altogether. They
               # are kept because a rewrite cannot tell which ones Rails would autoload, and
               # deleting a require that turns out to matter is a worse failure than a
               # redundant one.
               from_root = resolved.delete_prefix("#{root_of(result)}/").delete_suffix(".rb")
-              "require_app #{quote}#{from_root.delete_prefix("app/")}#{quote}"
+              "require #{quote}#{from_root}#{quote}"
             end
           end
           File.write(target_path, rewritten) if rewritten != source

@@ -5,6 +5,28 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-09-13
+
+### `require_app` is gone; a plain `require` does the job
+
+3.0.3 added `require_app` because a ported spec's `require_relative "../../app/services/x"`
+is wrong by however many directories the port moved it, and repointing gives
+`"../../../../app/services/x"` -- correct, unreadable, wrong again on the next move.
+
+It turned out the helper was solving a load-path problem with a method. `Constable.load_support`
+now puts the app root on `$LOAD_PATH`, the same way RSpec puts `spec` and `lib` there, so a
+path named from the root is just `require`:
+
+```ruby
+require "app/services/claim_change_history/change_history_reporter"
+require ".rubocop/custom_cop/top_level_constants_per_file"
+```
+
+Survives the file moving, needs no helper, and is one concept fewer. `require_app` is
+removed -- it existed for two releases and `modernize` is what wrote every call to it, so
+re-running it is the upgrade.
+
+
 ## [3.1.1] - 2026-09-13
 
 ### Shared contexts registered before the session were lost
