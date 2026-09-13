@@ -721,15 +721,27 @@ module Constable
   # configuration exists then; ours is built afterwards and has never heard of the setting,
   # and the plugin will not run again to tell it.
   class ColdCasePluginSettingsTest < TestCase
+    SETTING = :constable_fake_plugin_setting
+
+    def setup
+      super
+      require "rspec/core"
+      # A configuration of this test's own. Adding the setting to the process-wide one
+      # would leave it behind, which is exactly the global state the isolation tests in
+      # this file guard against.
+      @outer_configuration = ::RSpec.instance_variable_get(:@configuration)
+      ::RSpec.instance_variable_set(:@configuration, ::RSpec::Core::Configuration.new)
+    end
+
     def teardown
       ColdCase.reset_engines!
+      ::RSpec.instance_variable_set(:@configuration, @outer_configuration)
       super
     end
 
     def test_a_setting_a_plugin_added_before_us_reaches_the_session_configuration
-      require "rspec/core"
       outer = ::RSpec.configuration
-      outer.add_setting(:constable_fake_plugin_setting, default: :installed)
+      outer.add_setting(SETTING, default: :installed)
 
       write_file("spec/plugin_spec.rb", <<~SPEC)
         RSpec.configure { |c| c.constable_fake_plugin_setting = :set_by_the_spec }
