@@ -434,8 +434,22 @@ spec/models/widget_spec.rb — 12 converted
 ```
 
 `spec/models/widget_spec.rb` becomes `test/cases/models/widget_case.rb`, directories and
-all. A file that converts cleanly is written as a native case; **a flagged one is written
-verbatim as a cold case instead**, because a flagged conversion is not runnable — the
+all. A file that converts cleanly is written as a native case.
+
+A file where **some** tests convert and some do not is split in two:
+
+```
+test/cases/models/user_case.rb          # the tests that converted, native
+test/cases/models/user_legacy_case.rb   # the rest, still RSpec, still running
+```
+
+Shared setup is kept in both halves, both run, and the test count does not change. A file of
+twenty tests where one uses rspec-mocks used to move all twenty verbatim — nineteen
+conversions thrown away for the twentieth.
+
+A flag that sits **outside** every example, like a `let!` at the describe level, belongs to
+the whole file and there is nothing to separate. **That one is written verbatim as a cold
+case**, because a flagged conversion is not runnable — the
 flagged constructs are left as they were, so the class raises the moment it loads. Porting
 a broken file and calling it progress is worse than not moving it, so `--port` picks the
 form that runs and tells you which it used. `--port --cold` forces the verbatim form even

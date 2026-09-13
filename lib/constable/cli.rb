@@ -949,6 +949,11 @@ module Constable
           say "  #{Array(run.carried).size} support file(s) copied alongside " \
               "(required by relative path)"
         end
+        split = run.results.count { |result| result.written_as == :split }
+        if split.positive?
+          say "  #{split} file(s) split -- the tests that converted are native, the rest " \
+              "stayed RSpec in a _legacy_case.rb beside them"
+        end
         if Array(run.excluded).any?
           say "  #{Array(run.excluded).size} original(s) excluded in the cold_cases block " \
               "so they don't run twice (the port kept them; --delete removes them instead)"

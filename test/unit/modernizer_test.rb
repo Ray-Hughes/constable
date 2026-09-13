@@ -1000,4 +1000,108 @@ module Constable
       assert_equal 1, read("test/case_helper.rb").scan("except ").size
     end
   end
+
+  # A file of twenty tests where one uses rspec-mocks used to move all twenty verbatim,
+  # because a flagged conversion is not runnable and the unit of the decision was the file.
+  # Nineteen conversions thrown away for the twentieth.
+  class ModernizerSplitTest < TestCase
+    MIXED = <<~SPEC
+      describe User do
+        let(:user) { create(:user) }
+
+        it "is valid" do
+          expect(user).to be_valid
+        end
+
+        it "notifies on save" do
+          expect(mailer).to receive(:deliver)
+          user.save
+        end
+
+        it "is persisted" do
+          expect(user).to be_persisted
+        end
+      end
+    SPEC
+
+    def port(source, path: "spec/models/user_spec.rb")
+      write_file(path, source)
+      Importer::Modernizer.run([path], root: tmp_root, write: :port, report: false,
+                                       delete_original: false)
+    end
+
+    def read(relative) = File.read(File.join(tmp_root, relative))
+
+    def test_the_clean_examples_become_a_native_case
+      port(MIXED)
+      native = read("test/cases/models/user_case.rb")
+
+      assert_match(/investigate "is valid"/, native)
+      assert_match(/investigate "is persisted"/, native)
+      refute_match(/notifies on save/, native)
+    end
+
+    def test_the_flagged_example_stays_rspec_in_a_sibling
+      port(MIXED)
+      legacy = read("test/cases/models/user_legacy_case.rb")
+
+      assert_match(/ColdCase::RSpec/, legacy)
+      assert_match(/notifies on save/, legacy)
+      refute_match(/is valid/, legacy)
+    end
+
+    # Both halves need the shared setup, so it is kept rather than divided.
+    def test_shared_setup_survives_in_both_halves
+      port(MIXED)
+
+      assert_match(/witness\(:user\)/, read("test/cases/models/user_case.rb"))
+      assert_match(/let\(:user\)/, read("test/cases/models/user_legacy_case.rb"))
+    end
+
+    def test_both_halves_are_valid_ruby
+      port(MIXED)
+      %w[user_case user_legacy_case].each do |name|
+        source = read("test/cases/models/#{name}.rb")
+
+        assert RubyVM::InstructionSequence.compile(source), "#{name} does not parse"
+      end
+    end
+
+    def test_the_run_reports_the_split
+      run = port(MIXED)
+
+      assert_equal :split, run.results.first.written_as
+      assert_match(/legacy_case\.rb\z/, run.results.first.split_to)
+    end
+
+    # A flag outside every example -- a let! at the describe level, an unconvertible before
+    # -- belongs to the whole file, and there is nothing to split.
+    def test_a_file_level_flag_still_moves_verbatim
+      run = port(<<~SPEC)
+        describe User do
+          before(:all) { @shared = create(:user) }
+
+          it "is valid" do
+            expect(@shared).to be_valid
+          end
+        end
+      SPEC
+
+      assert_equal :cold, run.results.first.written_as
+      refute_path_exists File.join(tmp_root, "test/cases/models/user_legacy_case.rb")
+    end
+
+    # Nothing to separate: every example is clean, or none is.
+    def test_a_fully_clean_file_is_not_split
+      run = port(<<~SPEC)
+        describe User do
+          it "is valid" do
+            expect(user).to be_valid
+          end
+        end
+      SPEC
+
+      assert_equal :native, run.results.first.written_as
+    end
+  end
 end

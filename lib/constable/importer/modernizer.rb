@@ -53,7 +53,7 @@ module Constable
       Result = Struct.new(
         :path, :relative_path, :dialect, :class_name, :original, :source,
         :converted, :flags, :untouched, :error, :write_mode, :written_to, :written_as,
-        :removed_original,
+        :removed_original, :examples, :split_to,
         keyword_init: true
       ) do
         def ok?       = error.nil?
@@ -268,7 +268,7 @@ module Constable
         # untouched, run through real RSpec, results folded into the same report. This
         # writes exactly that, so a port can move every file and convert the ones worth
         # converting on its own schedule.
-        def cold_wrap(result, root, target = nil)
+        def cold_wrap(result, root, target = nil, body: nil)
           target ||= alongside_path(result.path)
           result.written_as ||= :cold
           if File.exist?(target)
@@ -277,13 +277,13 @@ module Constable
           end
 
           FileUtils.mkdir_p(File.dirname(target))
-          File.write(target, cold_source(result))
+          File.write(target, cold_source(result, body))
           result.written_to = target.delete_prefix("#{root}/")
         end
 
         # The original bytes, between a header line and a final `end`. Nothing inside is
         # parsed, reindented or touched -- that is the whole promise of a cold case.
-        def cold_source(result)
+        def cold_source(result, body = nil)
           <<~RUBY
             # frozen_string_literal: true
 
@@ -294,7 +294,7 @@ module Constable
             # `let!`, `before(:all)`, shared examples, rspec-mocks. Convert it with
             # `constable modernize` when it is worth doing; there is no deadline.
             class #{cold_class_name(result)} < Constable::ColdCase::RSpec
-            #{indent(result.original.to_s.rstrip)}
+            #{indent((body || result.original).to_s.rstrip)}
             end
           RUBY
         end
@@ -328,8 +328,7 @@ module Constable
             # ends up in the native tree and the suite still passes, which is the whole
             # point of porting a directory at a time.
             if result.flagged?
-              cold_wrap(result, root, port_path(result.path, root))
-              result.written_as = :cold
+              split_or_cold(result, root)
             else
               write_to(result, port_path(result.path, root), root)
               result.written_as = :native
@@ -340,6 +339,75 @@ module Constable
           when :alongside
             write_to(result, alongside_path(result.path), root)
           end
+        end
+
+        # A file of twenty tests where one of them uses rspec-mocks used to move all twenty
+        # verbatim, because a flagged conversion is not runnable and the unit of the decision
+        # was the file. Nineteen conversions thrown away for the twentieth.
+        #
+        # So the flags are attributed to the examples that raised them. If every flag sits
+        # inside an example, the file splits: the clean examples become a native case, the
+        # flagged ones stay RSpec in a sibling, and both run.
+        #
+        # A flag outside any example -- a `let!` at the describe level, an unconvertible
+        # `before` -- belongs to the whole file, and there is nothing to split. That stays
+        # verbatim, which is what always happened.
+        def split_or_cold(result, root)
+          clean, flagged = partition_examples(result)
+          if clean.empty? || flagged.empty?
+            cold_wrap(result, root, port_path(result.path, root))
+            result.written_as = :cold
+            return
+          end
+
+          native_source = drop_lines(result.source, flagged)
+          unless parses?(native_source)
+            cold_wrap(result, root, port_path(result.path, root))
+            result.written_as = :cold
+            return
+          end
+
+          converted = result.dup
+          converted.source = native_source
+          write_to(converted, port_path(result.path, root), root)
+          result.written_to = converted.written_to
+          result.written_as = :split
+
+          legacy = result.dup
+          legacy.class_name = "#{result.class_name}Legacy" if result.class_name
+          cold_wrap(legacy, root, legacy_path(port_path(result.path, root)),
+                    body: drop_lines(result.original, clean))
+          result.split_to = legacy.written_to
+        end
+
+        # [[clean spans], [flagged spans]] -- or [[], []] when a flag sits outside every
+        # example, which means the file cannot be split.
+        def partition_examples(result)
+          spans = Array(result.examples)
+          return [[], []] if spans.empty?
+
+          lines = Array(result.flags).map { |flag| flag[:line].to_i }
+          return [[], []] if lines.any? { |line| spans.none? { |s| line.between?(s[:first], s[:last]) } }
+
+          spans.partition { |span| lines.none? { |line| line.between?(span[:first], span[:last]) } }
+        end
+
+        def drop_lines(source, spans)
+          keep = source.lines
+          spans.each { |span| (span[:first]..span[:last]).each { |n| keep[n - 1] = nil } }
+          keep.compact.join
+        end
+
+        def parses?(source)
+          Parser::CurrentRuby.parse(source)
+          true
+        rescue StandardError
+          false
+        end
+
+        # users_case.rb -> users_legacy_case.rb
+        def legacy_path(path)
+          File.join(File.dirname(path), "#{File.basename(path, ".rb").sub(/_case\z/, "")}_legacy_case.rb")
         end
 
         # Files a ported spec requires by relative path, brought along with it.
@@ -443,6 +511,7 @@ module Constable
         @converted = []
         @flags = []
         @untouched = []
+        @examples = []
         @class_name = nil
         @buffer = ::Parser::Source::Buffer.new(@relative_path, source: source)
         @rewriter = ::Parser::Source::TreeRewriter.new(@buffer)
@@ -475,6 +544,7 @@ module Constable
           converted: @converted.sort_by { |c| c[:line] },
           flags: @flags.sort_by { |f| f[:line] },
           untouched: @untouched.sort_by { |u| u[:line] },
+          examples: @examples.sort_by { |e| e[:first] },
           error: nil
         )
       end
@@ -587,6 +657,10 @@ module Constable
       end
 
       def handle_example(node, send_node, block_args)
+        # Every example's line span, so a flag raised inside one can be attributed to that
+        # example rather than to the whole file. That attribution is what makes a partial
+        # port possible: nineteen clean tests should not stay behind because of a twentieth.
+        @examples << { first: node.loc.expression.first_line, last: node.loc.expression.last_line }
         args = send_node.children[2..] || []
         if args.empty?
           # `it { is_expected.to be_valid }` -- there is no description to carry over and
