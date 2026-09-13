@@ -90,10 +90,11 @@ module Constable
         # exactly what happened porting a real directory: 84 tests, 15 of them
         # `NoMethodError: undefined method 'create'`. So the superclass is a choice, and
         # `--base UnitCase` makes it once for a whole port.
-        @base = base.nil? || base.to_s.empty? ? "Constable::Case" : base.to_s
         @root = (root || config&.root || Constable.root).to_s
         @path = File.absolute_path?(path.to_s) ? path.to_s : File.join(@root, path.to_s)
         @relative_path = @path.delete_prefix("#{@root}/")
+        # After the path: the base is inferred from where the file is going.
+        @base = resolve_base(base)
         @given_source = source
         @dialect = nil
       end
@@ -1454,6 +1455,37 @@ module Constable
         replace(def_head(node), "briefing do")
         record_converted(:briefing, node, "def setup", "briefing do")
         visit(body, in_case: true)
+      end
+
+      # Which tier base class a converted file inherits.
+      #
+      # One base for a whole port is wrong, and wrong in a way that only shows at run time.
+      # A feature spec converted into UnitCase has no Capybara, so every `visit` is a
+      # NoMethodError; a controller spec has no request helpers, so every `get` and `post`
+      # is one too. Measured on a real CI run: 158 undefined `visit`, 136 undefined
+      # `get`/`post`/`patch` -- all of them files that converted cleanly and could never run.
+      #
+      # So the tier decides, from the same `tiers:` globs the runner uses, applied to where
+      # the file is going rather than where it came from. `tier :system` means `SystemCase`,
+      # which is what the generated case_helper defines. An explicit `--base` still wins,
+      # and a file matching no tier falls back to it.
+      def resolve_base(explicit)
+        inferred = base_from_tier
+        return inferred if inferred
+
+        explicit.nil? || explicit.to_s.empty? ? "Constable::Case" : explicit.to_s
+      end
+
+      def base_from_tier
+        return nil unless @config.respond_to?(:tier_for)
+
+        destination = self.class.port_path(@path.to_s, @root)
+        tier = @config.tier_for(destination)
+        return nil unless tier
+
+        "#{tier.to_s.split("_").map(&:capitalize).join}Case"
+      rescue StandardError
+        nil
       end
 
       def declares_subject?(ast)

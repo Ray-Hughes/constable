@@ -351,5 +351,57 @@ module Constable
       assert_includes File.read(File.join(tmp_root, "test/cases/services/thing_case.rb")),
                       %(require_relative "./helper")
     end
+
+    # One base for a whole port is wrong, and wrong in a way that only shows at run time. A
+    # feature spec converted into UnitCase has no Capybara, so every `visit` is a
+    # NoMethodError; a controller spec has no request helpers, so every `get` and `post` is
+    # one too. Measured on a real CI run: 158 undefined `visit`, 136 undefined
+    # `get`/`post`/`patch` -- all files that converted cleanly and could never run.
+    def test_the_base_class_comes_from_the_tier_the_file_lands_in
+      write_config(<<~YAML)
+        tiers:
+          unit:        "test/cases/models/**/*"
+          integration: "test/cases/controllers/**/*"
+          system:      "test/cases/feature/**/*"
+      YAML
+      Constable.reset!
+
+      {
+        "spec/models/user_spec.rb" => "UnitCase",
+        "spec/controllers/users_controller_spec.rb" => "IntegrationCase",
+        "spec/feature/signing_in_spec.rb" => "SystemCase"
+      }.each do |spec, expected|
+        write_file(spec, <<~SPEC)
+          describe "a thing" do
+            it "works" do
+              expect(1).to eq(1)
+            end
+          end
+        SPEC
+        result = Importer::Modernizer.run([spec], config: Constable.config, root: tmp_root,
+                                          write: :port, report: false).results.first
+
+        assert_includes result.source, "< #{expected}", "#{spec} should inherit #{expected}"
+      end
+    end
+
+    # A file matching no tier has nothing to infer from, so an explicit --base still decides.
+    def test_an_explicit_base_is_used_where_no_tier_matches
+      write_config(%(tiers:\n  unit: "test/cases/models/**/*"\n))
+      Constable.reset!
+      write_file("spec/oddballs/thing_spec.rb", <<~SPEC)
+        describe "a thing" do
+          it "works" do
+            expect(1).to eq(1)
+          end
+        end
+      SPEC
+
+      result = Importer::Modernizer.run(["spec/oddballs/thing_spec.rb"], config: Constable.config,
+                                        root: tmp_root, write: :port, report: false,
+                                        base: "MyBaseCase").results.first
+
+      assert_includes result.source, "< MyBaseCase"
+    end
   end
 end

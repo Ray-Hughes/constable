@@ -5,6 +5,22 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-09-13
+
+### A converted file inherits the tier it lands in, not one base for the whole port
+
+`--base UnitCase` applied that base to every file, which is wrong in a way that only shows
+at run time. A feature spec converted into `UnitCase` has no Capybara, so every `visit` is a
+NoMethodError. A controller spec has no request helpers, so every `get` and `post` is one
+too. On a real CI run that was 158 undefined `visit` and 136 undefined
+`get`/`post`/`patch` -- every one of them a file that converted cleanly and could never run.
+
+The tier decides now, from the same `tiers:` globs the runner uses, applied to where the file
+is **going** rather than where it came from. `tier :system` means `SystemCase`, which is what
+the generated case_helper defines. An explicit `--base` still wins, and a file matching no
+tier falls back to it.
+
+
 ## [3.3.0] - 2026-09-13
 
 ### `--failures-to FILE`, so two runs can be diffed
