@@ -1230,6 +1230,12 @@ module Constable
       def convert_mock_expectation(node, receiver, direction, matcher_node)
         return nil unless receiver&.type == :send
 
+        # `expect(client).to have_received(:fetch)` asserts after the call, which is what
+        # `have_been_asked` does -- so it converts, unlike `expect(...).to receive(...)`,
+        # which sets an expectation before the call and verifies at the end of the example.
+        converted = convert_have_received(node, receiver, direction, matcher_node)
+        return converted if converted
+
         subject = mock_subject(receiver)
         return nil unless subject
 
@@ -1251,6 +1257,47 @@ module Constable
         replace(node.loc.expression, replacement)
         record_converted(:impersonate, node, first_line(node), replacement)
         true
+      end
+
+      def convert_have_received(node, receiver, direction, matcher_node)
+        return nil unless receiver.children[1] == :expect && receiver.children[0].nil?
+
+        chain = have_received_chain(matcher_node)
+        return nil unless chain
+
+        subject = receiver.children[2]
+        return nil unless subject
+
+        replacement = "attest(#{source_of(subject)}).#{direction} have_been_asked(#{chain[:method]})"
+        replacement += chain[:suffix]
+        replace(node.loc.expression, replacement)
+        record_converted(:have_been_asked, node, first_line(node), replacement)
+        true
+      end
+
+      # `have_received(:f).with(1).once` -> { method: ":f", suffix: ".with(1).once" }
+      #
+      # The refinements are the same names on both sides, so they ride along as written
+      # rather than being understood.
+      def have_received_chain(node)
+        suffix = +""
+        current = node
+
+        while current&.type == :send
+          if current.children[1] == :have_received
+            arg = current.children[2]
+            return nil unless arg && %i[sym str].include?(arg.type)
+
+            return { method: source_of(arg), suffix: suffix }
+          end
+
+          return nil unless %i[with once twice exactly times at_least at_most].include?(current.children[1])
+
+          args = (current.children[2..] || []).map { |a| source_of(a) }
+          suffix = ".#{current.children[1]}#{"(#{args.join(", ")})" unless args.empty?}#{suffix}"
+          current = current.children[0]
+        end
+        nil
       end
 
       # allow(x) / allow_any_instance_of(K) -> [node, any_instance?]

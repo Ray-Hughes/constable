@@ -426,6 +426,48 @@ module Constable
       assert_includes result.source, "impersonate_any(Client, :fetch, returns: :ok)"
     end
 
+    # `expect(client).to have_received(:fetch)` asserts after the call, which is exactly what
+    # `have_been_asked` does -- so unlike a message expectation, it converts.
+    def test_have_received_becomes_have_been_asked
+      result = convert(<<~SPEC)
+        describe User do
+          it "asserts" do
+            allow(client).to receive(:fetch)
+            subject.call
+            expect(client).to have_received(:fetch)
+          end
+        end
+      SPEC
+
+      assert_includes result.source, "attest(client).to have_been_asked(:fetch)"
+      assert_nil flag_named(result, :rspec_mocks)
+    end
+
+    # The refinements are the same names on both sides, so they ride along as written.
+    def test_have_received_carries_its_refinements
+      result = convert(<<~SPEC)
+        describe User do
+          it "asserts" do
+            expect(client).to have_received(:fetch).with(1).once
+          end
+        end
+      SPEC
+
+      assert_includes result.source, "attest(client).to have_been_asked(:fetch).with(1).once"
+    end
+
+    def test_a_negated_have_received_keeps_its_negation
+      result = convert(<<~SPEC)
+        describe User do
+          it "asserts" do
+            expect(client).not_to have_received(:fetch)
+          end
+        end
+      SPEC
+
+      assert_includes result.source, "attest(client).not_to have_been_asked(:fetch)"
+    end
+
     # `expect(x).to receive(:y)` sets an expectation before the call and verifies at the end
     # of the example. Rewriting it as an assertion afterwards moves when the failure
     # surfaces, which is a behaviour change wearing a conversion's clothes.
