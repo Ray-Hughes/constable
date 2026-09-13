@@ -57,7 +57,11 @@ module Constable
       def investigate(description, &block)
         raise ArgumentError, "investigate(#{description.inspect}) requires a block" unless block
 
+        # Where the block was written -- except inside a procedure, where that is the
+        # procedure's file and the test belongs to the case that follows it. A case selected
+        # by path has to contain the tests it declares, however they got there.
         file, line = block.source_location
+        file = Constable::Procedure.following_from || file
         investigation = Investigation.new(
           case_class: self,
           description: description.to_s,
@@ -84,6 +88,35 @@ module Constable
           constable_witnesses.fetch(name) { constable_witnesses[name] = instance_exec(&block) }
         end
         name
+      end
+
+      # Adopt one or more procedures -- shared behaviour declared elsewhere.
+      #
+      #   class ColocatedTaskCase < UnitCase
+      #     follows TaskProcedure, AssignableProcedure
+      #   end
+      #
+      # Evaluated in this class, so what a procedure declares is indistinguishable from
+      # what the case declares itself -- and a witness the case defines afterwards wins,
+      # which is what makes a procedure worth following rather than copying.
+      def follows(*procedures)
+        procedures.flatten.each do |procedure|
+          unless procedure.respond_to?(:apply_to)
+            raise ArgumentError,
+                  "follows expects a Constable.procedure, got #{procedure.inspect}. " \
+                  "Procedures are constants, so a typo here is a NameError rather than a " \
+                  "lookup that fails at run time."
+          end
+
+          # Attributed to the file that said `follows`, so `constable test <that file>`
+          # runs what the procedure declared. Not an instance variable on this class: a
+          # `docket` inside the procedure builds a subclass, and subclasses do not inherit
+          # instance variables, so the nested investigations would slip back to the
+          # procedure's own file. The failure still points at the procedure's line, which
+          # is where the code to fix actually is.
+          Constable::Procedure.following(self) { procedure.apply_to(self) }
+        end
+        self
       end
 
       # Setup, run before every investigation in this case. Multiple are allowed and a

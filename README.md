@@ -342,9 +342,42 @@ The set is deliberately smaller than RSpec's, so `constable modernize` **flags a
 matcher it does not recognize** rather than converting it into a case that only fails
 once you run it.
 
-### Shared behavior is just Ruby
+### Shared behavior: procedures
 
-There is deliberately no shared-examples mechanism. Reuse across files is a module:
+```ruby
+# test/support/procedures.rb
+TaskProcedure = Constable.procedure do
+  witness(:task) { create(:task) }
+
+  investigate "starts unassigned" do
+    attest(task.assignee).to be_nil
+  end
+end
+
+class ColocatedTaskCase < UnitCase
+  follows TaskProcedure
+end
+```
+
+A procedure is **a constant, not a string in a registry**, and that is the whole difference
+from `shared_examples`. RSpec registers a block under a name and looks it up when the suite
+runs, so a typo surfaces as "Could not find shared examples" mid-run rather than as a
+NameError on the line that made it. The registry is also global, so two files that both
+define `"a task"` quietly fight over the name — which is why real suites end up with names
+like `"a task (from the appeals side)"`.
+
+Inside the block, the ordinary DSL: `investigate`, `witness`, `briefing`, `teardown`,
+`docket`. `follows` evaluates it in the case, so a witness the case declares afterwards
+**wins over the procedure's** — the same scoping `it_behaves_like` has, and the reason to
+follow a procedure rather than copy it. Its tests are attributed to the file that followed
+it, so `constable test that_file.rb` runs them.
+
+`constable modernize` converts same-file `shared_examples` into a class method, which needs
+no procedure at all. On one real suite that was 779 of 882 uses.
+
+### Plain modules still work
+
+For helpers rather than tests, reuse across files is an ordinary module:
 
 ```ruby
 # test/support/authenticatable.rb

@@ -199,8 +199,10 @@ module Constable
       assert_includes result.source, "briefing do\n    @user = User.new\n  end"
     end
 
-    def test_shared_examples_are_left_untouched_and_logged
-      source = <<~SPEC
+    # A definition with no use in the file still becomes a method -- harmless, and the file
+    # converts rather than staying cold over a construct nothing calls.
+    def test_an_unused_definition_still_converts
+      result = convert(<<~SPEC)
         describe User do
           shared_examples "an authorized action" do
             it "allows" do
@@ -209,25 +211,11 @@ module Constable
           end
         end
       SPEC
-      result = convert(source)
 
-      assert_includes result.source,
-                      "  shared_examples \"an authorized action\" do\n    " \
-                      "it \"allows\" do\n      " \
-                      "expect(response).to be_ok\n    " \
-                      "end\n  " \
-                      "end\n"
-      # Flagged rather than merely noted: a converted file that still calls the
-      # shared-examples DSL is a native case invoking a method Constable does not have, and
-      # it dies on load. Blocking conversion is what sends it to a cold case instead, where
-      # the DSL still works.
-      entry = flag_named(result, :shared_examples)
-
-      refute_nil entry
-      assert_match(/plain Ruby module/, entry[:reason])
-      # Nothing inside a shared_examples block is touched either -- not the `it`, not the
-      # `expect` -- because the block isn't an example group we own.
-      refute_includes kinds(result.converted), :investigate
+      assert_includes result.source, "def self.shared_an_authorized_action"
+      # And its body converts, which it never did while the block was left verbatim.
+      assert_includes kinds(result.converted), :investigate
+      assert_nil flag_named(result, :shared_examples)
     end
 
     # Measured on a real port: two files converted cleanly and then died with
@@ -666,6 +654,96 @@ module Constable
       end
     end
 
+    # Constable has no shared-examples DSL on purpose -- shared behaviour is a plain module
+    # each case includes. But that is advice for a file being written, and a file already
+    # using it kept its whole RSpec body over a construct that is, within one class, just a
+    # method.
+    def test_same_file_shared_examples_become_a_class_method
+      result = convert(<<~SPEC)
+        describe Thing do
+          shared_examples "a task" do
+            it "has a status" do
+              expect(1).to eq(1)
+            end
+          end
+
+          it_behaves_like "a task"
+        end
+      SPEC
+
+      assert_includes result.source, "def self.shared_a_task"
+      assert_includes result.source, %(investigate "has a status")
+      assert_match(/^  shared_a_task$/, result.source)
+      assert_nil flag_named(result, :shared_examples)
+    end
+
+    # A use can sit above the definition it names, so the file is scanned before rewriting.
+    def test_a_use_above_its_definition_still_converts
+      result = convert(<<~SPEC)
+        describe Thing do
+          it_behaves_like "a task"
+
+          shared_examples "a task" do
+            it "works" do
+              expect(1).to eq(1)
+            end
+          end
+        end
+      SPEC
+
+      assert_includes result.source, "def self.shared_a_task"
+      assert_nil flag_named(result, :shared_examples)
+    end
+
+    # Prefixed, so a shared example called "save" cannot collide with a method the case or
+    # its tier already has.
+    def test_the_method_name_is_prefixed_and_slugged
+      result = convert(<<~SPEC)
+        describe Thing do
+          shared_examples "an Appeal: with #tasks!" do
+            it "works" do
+              expect(1).to eq(1)
+            end
+          end
+
+          it_behaves_like "an Appeal: with #tasks!"
+        end
+      SPEC
+
+      assert_includes result.source, "def self.shared_an_appeal_with_tasks"
+    end
+
+    # 92 of 882 uses on a real suite name something defined elsewhere. Resolving those means
+    # an index of the whole suite, which this rewriter does not build.
+    def test_a_use_without_a_local_definition_is_refused
+      result = convert(<<~SPEC)
+        describe Thing do
+          it_behaves_like "something defined elsewhere"
+        end
+      SPEC
+
+      assert_includes result.source, "it_behaves_like"
+      refute_nil flag_named(result, :shared_examples)
+    end
+
+    # A block or arguments carry customisation a plain method call cannot.
+    def test_a_parameterised_definition_is_refused
+      result = convert(<<~SPEC)
+        describe Thing do
+          shared_examples "a task" do |kind|
+            it "works" do
+              expect(kind).to eq(1)
+            end
+          end
+
+          it_behaves_like "a task", :urgent
+        end
+      SPEC
+
+      assert_includes result.source, "shared_examples"
+      refute_nil flag_named(result, :shared_examples)
+    end
+
     def test_a_dynamic_let_bang_is_still_refused
       result = convert("describe User do\n  let!(*names) { create(:user) }\nend\n")
 
@@ -869,8 +947,8 @@ module Constable
       assert_includes result.source, %(investigate "creates a user with valid params" do)
       assert_includes result.source, "attest {"
       assert_includes result.source, "before(:all) { seed_the_world }"
-      assert_includes result.source, %(shared_examples "an authorized action" do)
-      assert_equal %i[before_all shared_examples].sort,
+      assert_includes result.source, "def self.shared_an_authorized_action"
+      assert_equal %i[before_all].sort,
                    kinds(result.flags).sort
       assert_equal %i[describe_metadata], kinds(result.untouched).uniq
     end
@@ -979,11 +1057,10 @@ module Constable
       assert_includes report, "`let(:user)` -> `witness(:user)`"
       assert_includes report, "### Flagged -- NOT converted, still as written"
       assert_includes report, "**before_all**"
-      # eager_let is deliberately absent: let! converts to witness_all now.
+      # Deliberately absent: let! becomes a witness plus a briefing, and same-file shared
+      # examples become a class method. Neither blocks conversion any more.
       refute_includes report, "**eager_let**"
-      # shared_examples moved from "left untouched" to "flagged" -- a converted file that
-      # still calls that DSL cannot run, so it has to block conversion rather than be noted.
-      assert_includes report, "**shared_examples**"
+      refute_includes report, "**shared_examples**"
       assert_includes report, "spec/models/user_spec.rb:4"
     end
 

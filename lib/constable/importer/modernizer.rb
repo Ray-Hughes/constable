@@ -114,6 +114,8 @@ module Constable
         # know whether the file declares a subject, and a subject declared in a nested
         # context can be visited after the example that uses it.
         @has_subject = declares_subject?(ast)
+        # Before rewriting: a use can sit above the definition it names.
+        collect_shared_definitions!(ast)
         visit(ast, in_case: false)
         rewritten = @rewriter.process
 
@@ -584,6 +586,7 @@ module Constable
         @untouched = []
         @examples = []
         @has_subject = false
+        @shared_definitions = []
         @class_name = nil
         @buffer = ::Parser::Source::Buffer.new(@relative_path, source: source)
         @rewriter = ::Parser::Source::TreeRewriter.new(@buffer)
@@ -629,6 +632,13 @@ module Constable
         return :minitest if find_node(ast) { |n| n.type == :class && minitest_superclass?(n.children[1]) }
 
         :unknown
+      end
+
+      def each_node(node, &block)
+        return unless node.is_a?(::Parser::AST::Node)
+
+        block.call(node)
+        node.children.each { |child| each_node(child, &block) }
       end
 
       def find_node(node, &block)
@@ -983,11 +993,95 @@ module Constable
       #
       # Blocked, `--port` moves the file verbatim as a cold case, where the whole
       # shared-examples DSL still works.
+      # `shared_examples "a task" do ... end` -> `def self.shared_a_task ... end`
+      #
+      # Constable has no shared-examples DSL on purpose: shared behaviour is a plain Ruby
+      # module that each case includes. But that is advice for a file being written, and a
+      # file already using it kept its RSpec body over a construct that is, within one class,
+      # just a method.
+      #
+      # A class method, specifically. The body calls `investigate` and `witness`, which are
+      # class methods, so calling it from the class body -- or from inside a `docket`, where
+      # `self` is the docket subclass -- registers them exactly where the use site sits. That
+      # is the same scoping `it_behaves_like` has.
+      #
+      # Only when the definition is in this file. 779 of 882 uses on the suite this was
+      # measured against are; the other 92 name something defined elsewhere, and resolving
+      # those means an index of the whole suite, which this rewriter does not build.
       def handle_shared_definition(node, send_node)
-        flag(:shared_examples, node,
-             "`#{source_of(send_node)}` defines shared examples. Constable has no shared-examples DSL " \
-             "on purpose -- shared behaviour is a plain Ruby module in test/support that each case " \
-             "`include`s -- so this file cannot run as a native case until it is extracted by hand.")
+        args = send_node.children[2..] || []
+        name = args.size == 1 && args.first.type == :str ? literal_value(args.first) : nil
+        block_args = node.children[1]
+
+        unless name && block_args.children.empty?
+          return flag(:shared_examples, node, shared_definition_reason(send_node))
+        end
+
+        method_name = shared_method_name(name)
+        replace(block_head(node), "def self.#{method_name}")
+        replace(node.loc.end, "end")
+        record_converted(:shared_examples, node, "#{source_of(send_node)} do",
+                         "def self.#{method_name}",
+                         note: "shared examples in the same file become a class method; the use " \
+                               "sites call it, which registers them in the same place")
+        visit_children_of_block(node, in_case: true)
+      end
+
+      def shared_definition_reason(send_node)
+        "`#{source_of(send_node)}` takes block parameters or a non-literal name, so it cannot " \
+          "become a plain method. Constable has no shared-examples DSL -- shared behaviour is a " \
+          "module each case includes."
+      end
+
+      # "a task" -> shared_a_task. Prefixed, so a shared example called "save" cannot collide
+      # with a method the case or its tier already has.
+      def shared_method_name(description)
+        slug = description.to_s.downcase.gsub(/[^a-z0-9]+/, "_").gsub(/\A_+|_+\z/, "")
+        slug = "unnamed" if slug.empty?
+        "shared_#{slug}"
+      end
+
+      # `it_behaves_like "a task"` -> `shared_a_task`
+      def handle_shared_use(node, send_node)
+        args = send_node.children[2..] || []
+        name = args.size == 1 && args.first.type == :str ? literal_value(args.first) : nil
+
+        unless name && shared_definitions.include?(name)
+          return flag(:shared_examples, node, shared_use_reason(send_node, name))
+        end
+
+        replace(node.loc.expression, shared_method_name(name))
+        record_converted(:shared_examples, node, source_of(node), shared_method_name(name))
+      end
+
+      def shared_use_reason(send_node, name)
+        if name && !shared_definitions.include?(name)
+          "`#{source_of(send_node)}` names shared examples defined in another file. Converting it " \
+            "means knowing which module that became, which is a question about the whole suite " \
+            "rather than this file."
+        else
+          "`#{source_of(send_node)}` passes arguments or a block to shared examples, which a plain " \
+            "method call cannot carry."
+        end
+      end
+
+      # Every shared-example name this file defines, found before rewriting -- a use can sit
+      # above its definition.
+      def shared_definitions
+        @shared_definitions ||= []
+      end
+
+      def collect_shared_definitions!(ast)
+        each_node(ast) do |n|
+          next unless n.type == :block && n.children[0]&.type == :send
+
+          send_node = n.children[0]
+          next unless send_node.children[0].nil? && SHARED_DEFINITIONS.include?(send_node.children[1])
+          next unless n.children[1].children.empty?
+
+          arg = send_node.children[2]
+          shared_definitions << literal_value(arg) if arg&.type == :str
+        end
       end
 
       def handle_matcher_definition(node, send_node)
@@ -1035,6 +1129,8 @@ module Constable
         end
 
         if SHARED_USES.include?(name) && receiver.nil?
+          return handle_shared_use(node, node) if shared_definitions.any?
+
           flag(:shared_examples, node,
                "`#{first_line(node)}` pulls in shared examples, which Constable has no DSL for. This file " \
                "cannot run as a native case; replace it with a plain module `include`, or keep the file " \

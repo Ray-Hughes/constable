@@ -63,6 +63,7 @@ module Constable
   autoload :SharedFixtures, "constable/shared_fixtures"
   autoload :Impersonation, "constable/impersonation"
   autoload :SupportFiles,  "constable/support_files"
+  autoload :Procedure,     "constable/procedure"
   autoload :Selection,     "constable/selection"
   autoload :Storage,       "constable/storage"
   autoload :Warrants,      "constable/warrants"
@@ -107,6 +108,11 @@ module Constable
     # setting, it is the decision that determines what `constable test` runs at all, and
     # it earns a file of its own so it is visible in the test tree.
     def cold_cases(&) = configuration.cold_cases(&)
+
+    # Shared behaviour with a name -- see Constable::Procedure. Defined here rather than in
+    # that file so the autoload fires: a method defined inside an autoloaded file cannot be
+    # what triggers loading it.
+    def procedure(description = nil, &) = Procedure.new(description, &)
 
     # Loads an adopted suite's support files -- see Constable::SupportFiles. Defined here
     # rather than in that file so the autoload actually fires: a method defined inside an
