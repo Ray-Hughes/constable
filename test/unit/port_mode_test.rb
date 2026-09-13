@@ -36,10 +36,13 @@ module Constable
     # `it { ... }` died with `NoMethodError: undefined method 'it'`. Handing someone a
     # broken file and calling it progress is worse than not moving it.
     def test_a_flagged_conversion_is_ported_verbatim_instead_of_broken
+      # A file-level flag, so there is nothing to split out -- the whole file stays cold.
       write_file("spec/models/gadget_spec.rb", <<~SPEC)
         describe "Gadget" do
-          subject { [1, 2] }
-          it { is_expected.to include(1) }
+          before(:all) { @shared = [1, 2] }
+          it "includes one" do
+            expect(@shared).to include(1)
+          end
         end
       SPEC
 

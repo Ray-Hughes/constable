@@ -414,8 +414,13 @@ $ constable import --from=rspec        # reopen everything, verbatim
 $ constable modernize spec/controllers/users_controller_spec.rb --alongside
 ```
 
-`modernize` converts `describe`/`it` → `Constable::Case`/`investigate`, `let` → `witness`,
-`before` → `briefing`, `expect` → `attest`, and `def test_foo` → `investigate "foo"`. It
+`modernize` converts `describe`/`it` → `Constable::Case`/`investigate`, `let` and `let!` →
+`witness` and `witness_all`, `before` → `briefing`, `after` → `teardown`, `expect` → `attest`,
+`allow(x).to receive(:y)` → `impersonate`, and `def test_foo` → `investigate "foo"`.
+
+`it { is_expected.to eq(true) }` becomes `investigate "is expected to eq true"` — that is the
+name RSpec already generates from the matcher and prints in every report, so writing it down
+makes the existing name explicit rather than inventing one. It
 **flags `before(:all)` and `let!` rather than converting them** — those need a human decision —
 and leaves custom matchers and `shared_examples` alone, logging everything to
 `.constable/docs/modernize-report.md`. It writes nothing unless you ask it to.

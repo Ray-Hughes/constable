@@ -291,7 +291,50 @@ module Constable
       assert_includes kinds(result.converted), :not_to
     end
 
-    def test_a_one_liner_it_is_flagged_and_left_exactly_as_written
+    # This was a refusal, on the grounds that naming the example would be inventing the
+    # assertion's intent. That was wrong about where the name comes from: RSpec already
+    # generates one from the matcher, and it is the name that appears in every report and
+    # every failure for these examples today. Writing it down makes the existing name
+    # explicit rather than inventing one.
+    def test_a_one_liner_takes_the_description_rspec_would_have_generated
+      result = convert(<<~SPEC)
+        describe User do
+          subject { User.new }
+          it { is_expected.to be_valid }
+        end
+      SPEC
+
+      assert_includes result.source, %(investigate "is expected to be valid" do)
+      assert_includes result.source, "attest(subject).to be_valid"
+      assert_nil flag_named(result, :one_liner_example)
+    end
+
+    def test_a_negated_one_liner_says_not_to
+      result = convert(<<~SPEC)
+        describe User do
+          subject { User.new }
+          it { is_expected.not_to be_nil }
+        end
+      SPEC
+
+      assert_includes result.source, %(investigate "is expected not to be nil" do)
+    end
+
+    def test_a_matcher_with_arguments_reads_as_a_sentence
+      result = convert(<<~SPEC)
+        describe User do
+          subject { User.new }
+          it { is_expected.to eq(true) }
+        end
+      SPEC
+
+      assert_includes result.source, %(investigate "is expected to eq true" do)
+    end
+
+    # Without a declared subject there is nothing to point at -- RSpec falls back to an
+    # implicit `described_class.new`, and synthesising that would invent a subject the file
+    # never wrote down.
+    def test_a_one_liner_without_a_subject_is_still_refused
       result = convert(<<~SPEC)
         describe User do
           it { is_expected.to be_valid }
@@ -299,12 +342,19 @@ module Constable
       SPEC
 
       assert_includes result.source, "it { is_expected.to be_valid }"
-      flag = flag_named(result, :one_liner_example)
+      refute_nil flag_named(result, :one_liner_example)
+    end
 
-      refute_nil flag
-      assert_match(/no description/, flag[:reason])
-      # The one-liner is reported once, not once for `it` and again for `is_expected`.
-      assert_equal 1, result.flags.size
+    # A body that is not one assertion has no generated name in RSpec either.
+    def test_a_one_liner_with_a_complex_body_is_refused
+      result = convert(<<~SPEC)
+        describe User do
+          subject { User.new }
+          it { expect(subject.save).to eq(true) }
+        end
+      SPEC
+
+      refute_nil flag_named(result, :one_liner_example)
     end
 
     def test_its_is_flagged
@@ -776,7 +826,7 @@ module Constable
       assert_includes result.source, "attest {"
       assert_includes result.source, "before(:all) { seed_the_world }"
       assert_includes result.source, %(shared_examples "an authorized action" do)
-      assert_equal %i[before_all one_liner_example shared_examples].sort,
+      assert_equal %i[before_all shared_examples].sort,
                    kinds(result.flags).sort
       assert_equal %i[describe_metadata], kinds(result.untouched).uniq
     end

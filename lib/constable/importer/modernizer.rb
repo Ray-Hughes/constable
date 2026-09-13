@@ -109,6 +109,10 @@ module Constable
         return failure(source, @error) if ast.nil?
 
         @dialect = detect_dialect(ast)
+        # Asked before rewriting rather than discovered during it. `is_expected` needs to
+        # know whether the file declares a subject, and a subject declared in a nested
+        # context can be visited after the example that uses it.
+        @has_subject = declares_subject?(ast)
         visit(ast, in_case: false)
         rewritten = @rewriter.process
 
@@ -512,6 +516,7 @@ module Constable
         @flags = []
         @untouched = []
         @examples = []
+        @has_subject = false
         @class_name = nil
         @buffer = ::Parser::Source::Buffer.new(@relative_path, source: source)
         @rewriter = ::Parser::Source::TreeRewriter.new(@buffer)
@@ -663,12 +668,32 @@ module Constable
         @examples << { first: node.loc.expression.first_line, last: node.loc.expression.last_line }
         args = send_node.children[2..] || []
         if args.empty?
-          # `it { is_expected.to be_valid }` -- there is no description to carry over and
-          # no subject in the native DSL. Naming it for the user would be inventing an
-          # assertion's intent, so it stays exactly as written.
-          return flag(:one_liner_example, node,
-                      "`#{send_node.children[1]} { ... }` has no description and relies on an implicit " \
-                      "subject. Write it as `investigate \"...\" do attest(subject).to ... end`.")
+          # `it { is_expected.to be_valid }` carries no description, and `investigate`
+          # requires one.
+          #
+          # This used to be a refusal, on the grounds that naming it would be inventing the
+          # assertion's intent. That was wrong about where the name comes from: RSpec
+          # already generates one from the matcher, and it is the name that appears in every
+          # report and every failure for these examples today. Writing it down is not
+          # invention, it is making the existing name explicit.
+          description = generated_description(node)
+          return flag(:one_liner_example, node, one_liner_reason(send_node)) unless description
+
+          # Written whole rather than piecewise. `it { ... }` on one line has to become
+          # `investigate "..." do ... end` on three -- `investigate "x" { }` is a syntax
+          # error, because a brace block binds to the last argument.
+          #
+          # Which also means the body cannot be visited for its own conversions afterwards:
+          # the rewriter works on the original source ranges and this range no longer exists.
+          # So the body is converted by running the rewriter over it on its own.
+          indent = " " * node.loc.expression.column
+          body = convert_fragment(source_of(node.children[2]))
+          replace(node.loc.expression,
+                  "investigate #{description.inspect} do\n#{indent}  #{body}\n#{indent}end")
+          record_converted(:one_liner_example, node, first_line(node),
+                           "investigate #{description.inspect}",
+                           note: "the description is the one RSpec generates from the matcher")
+          return
         end
         unless args.size == 1 && args.first.type == :str
           return flag(:example_metadata, node,
@@ -770,6 +795,60 @@ module Constable
         record_converted(target.to_sym, node, "#{source_of(send_node)} #{node.loc.begin.source}",
                          "#{target} do")
         visit_children_of_block(node, in_case: true)
+      end
+
+      # A one-liner's body, converted on its own. It is a single assertion by the time this
+      # is called -- `generated_description` refuses anything else -- so the only rewrite it
+      # needs is `is_expected` to `attest(subject)`.
+      def convert_fragment(source)
+        source.sub(/\Ais_expected\b/, "attest(subject)")
+      end
+
+      def one_liner_reason(send_node)
+        "`#{send_node.children[1]} { ... }` has no description, and its body is not a single " \
+          "`is_expected`/`expect` assertion, so there is nothing to name it from. Give it a " \
+          "description."
+      end
+
+      # The name RSpec would print for this example, made explicit.
+      #
+      #   it { is_expected.to eq(true) }  -> "is expected to eq true"
+      #   it { is_expected.not_to be_nil } -> "is expected not to be nil"
+      #
+      # Only from a body that is exactly one assertion. Anything else has no generated name
+      # in RSpec either, and guessing one would be the invention this deliberately avoids.
+      def generated_description(node)
+        # No subject, nothing to assert against -- and `attest(subject)` would name a
+        # witness the file never declares.
+        return nil unless @has_subject
+
+        body = node.children[2]
+        return nil unless body&.type == :send
+
+        direction = body.children[1]
+        return nil unless %i[to not_to to_not].include?(direction)
+
+        receiver = body.children[0]
+        return nil unless receiver&.type == :send && receiver.children[0].nil? &&
+                          receiver.children[1] == :is_expected
+
+        matcher = body.children[2]
+        return nil unless matcher
+
+        phrase = describe_matcher(source_of(matcher))
+        return nil if phrase.empty?
+
+        "is expected #{direction == :to ? "to" : "not to"} #{phrase}"
+      end
+
+      # `eq(true)` -> "eq true", `be_valid` -> "be valid", `include("a")` -> 'include "a"'.
+      # Cosmetic only: the description has to be readable, and a Ruby call is not.
+      def describe_matcher(source)
+        text = source.to_s.strip.gsub(/\A([a-z_]+)\((.*)\)\z/m) do
+          "#{::Regexp.last_match(1)} #{::Regexp.last_match(2)}"
+        end
+        text = text.sub(/\Abe_/, "be ").sub(/\Ahave_/, "have ")
+        text.tr("\n", " ").squeeze(" ").strip
       end
 
       def hook_flag_kind(name, scope)
@@ -874,10 +953,22 @@ module Constable
           replace(node.loc.selector, "attest") if receiver.nil?
           record_converted(:attest, node, "expect", "attest") if receiver.nil?
         when :is_expected
+          # `subject` already becomes `witness(:subject)`, so the subject this needs has a
+          # home. Flagging it meant the file kept its RSpec body over a rename.
+          #
+          # Without a declared subject there is nothing to point at: RSpec would fall back
+          # to its implicit `described_class.new`, and synthesising that would be inventing
+          # a subject the file never wrote down.
           if receiver.nil?
-            flag(:is_expected, node,
-                 "`is_expected` needs RSpec's implicit subject. Use `attest(subject)` -- an anonymous " \
-                 "`subject` block is converted to `witness(:subject)` for you.")
+            if @has_subject
+              replace(node.loc.expression, "attest(subject)")
+              record_converted(:is_expected, node, "is_expected", "attest(subject)")
+            else
+              flag(:is_expected, node,
+                   "`is_expected` needs a subject, and this file declares none -- RSpec falls back to " \
+                   "an implicit `described_class.new`. Add `subject { ... }`, or write " \
+                   "`attest(...)` directly.")
+            end
           end
         when :should, :should_not
           flag(:should_syntax, node, "`#{name}` is RSpec's monkey-patched expectation syntax. Use `attest(...).to`.")
@@ -1123,6 +1214,15 @@ module Constable
         replace(def_head(node), "briefing do")
         record_converted(:briefing, node, "def setup", "briefing do")
         visit(body, in_case: true)
+      end
+
+      def declares_subject?(ast)
+        !!find_node(ast) do |node|
+          node.type == :block &&
+            node.children[0]&.type == :send &&
+            node.children[0].children[0].nil? &&
+            %i[subject subject!].include?(node.children[0].children[1])
+        end
       end
 
       def calls_super?(body)
