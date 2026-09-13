@@ -674,11 +674,53 @@ module Constable
       def satisfied = block_form? ? self : @actual
 
       def coerce(matcher)
-        return matcher if matcher.respond_to?(:matches?)
+        return matcher if matcher.is_a?(Deferred)
+        return Foreign.new(matcher) if matcher.respond_to?(:matches?)
 
         raise Constable::Error,
               "attest(...).to expects a matcher, got #{matcher.inspect}. " \
               "Did you mean `attest(x).to eq(#{matcher.inspect})`?"
+      end
+    end
+
+    # A matcher from somewhere else -- shoulda-matchers, rspec-collection_matchers, an app's
+    # own -- made to look like one of ours.
+    #
+    # The protocols differ in two small ways that together make every foreign matcher
+    # unusable: theirs returns a boolean from `matches?` where ours returns
+    # [passed, message, context], and their `failure_message` takes no argument where ours
+    # takes the actual. Without bridging that, `attest(user).to belong_to(:org)` raises
+    # ArgumentError rather than testing anything -- 117 of those on one real suite, every
+    # one a shoulda matcher in a file that had converted cleanly.
+    #
+    # Nothing here reimplements a matcher. It asks the foreign one the question it
+    # understands and translates the answer.
+    class Foreign
+      # The names RSpec has used for the same idea across versions. Shoulda, and anything
+      # else written against RSpec, answers to one of them.
+      POSITIVE = %i[failure_message failure_message_for_should description].freeze
+      NEGATIVE = %i[failure_message_when_negated failure_message_for_should_not description].freeze
+
+      def initialize(matcher) = @matcher = matcher
+
+      def matches?(actual)
+        @actual = actual
+        [!!@matcher.matches?(actual), nil, nil]
+      end
+
+      def failure_message(actual) = message(POSITIVE, actual, "to")
+      def negated_failure_message(actual) = message(NEGATIVE, actual, "not to")
+      def context_for(actual) = Matchers.context_for(actual)
+
+      private
+
+      def message(names, actual, direction)
+        name = names.find { |candidate| @matcher.respond_to?(candidate) }
+        return "expected #{Matchers.describe(actual)} #{direction} match #{@matcher.inspect}" unless name
+
+        text = @matcher.public_send(name).to_s
+        # `description` is the fallback and reads as a phrase, not a sentence.
+        name == :description ? "expected #{Matchers.describe(actual)} #{direction} #{text}" : text
       end
     end
 

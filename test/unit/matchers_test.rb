@@ -811,4 +811,70 @@ module Constable
       assert_raises(Constable::AssertionFailed, &)
     end
   end
+
+  # shoulda-matchers, rspec-collection_matchers, an app's own -- all written against RSpec's
+  # protocol, which differs from ours in two small ways that together make every one of them
+  # unusable: theirs returns a boolean from `matches?` where ours returns
+  # [passed, message, context], and their `failure_message` takes no argument where ours
+  # takes the actual.
+  class ForeignMatcherTest < TestCase
+    # Exactly the shape shoulda and rspec-expectations produce.
+    class BeEven
+      def matches?(actual) = (@actual = actual).even?
+      def failure_message = "expected #{@actual} to be even"
+      def failure_message_when_negated = "expected #{@actual} not to be even"
+    end
+
+    # The older RSpec 2 names, which plenty of gems still carry.
+    class BeOdd
+      def matches?(actual) = (@actual = actual).odd?
+      def failure_message_for_should = "expected #{@actual} to be odd"
+      def failure_message_for_should_not = "expected #{@actual} not to be odd"
+    end
+
+    # A matcher with neither, which still has to produce something a reader can act on.
+    class Bare
+      def matches?(_actual) = false
+      def description = "be acceptable"
+    end
+
+    include Constable::Matchers::Expectations
+
+    def test_a_foreign_matcher_passes
+      attest(4).to BeEven.new
+    end
+
+    def test_a_foreign_matcher_fails_with_its_own_message
+      error = assert_raises(Constable::AssertionFailed) { attest(3).to BeEven.new }
+
+      assert_match(/expected 3 to be even/, error.message)
+    end
+
+    def test_a_foreign_matcher_negates
+      attest(3).not_to BeEven.new
+
+      error = assert_raises(Constable::AssertionFailed) { attest(4).not_to BeEven.new }
+      assert_match(/expected 4 not to be even/, error.message)
+    end
+
+    def test_the_rspec_2_message_names_are_understood
+      error = assert_raises(Constable::AssertionFailed) { attest(4).to BeOdd.new }
+
+      assert_match(/expected 4 to be odd/, error.message)
+    end
+
+    def test_a_matcher_with_only_a_description_still_reads
+      error = assert_raises(Constable::AssertionFailed) { attest(1).to Bare.new }
+
+      assert_match(/expected 1 to be acceptable/, error.message)
+    end
+
+    # Our own matchers must not be wrapped -- they already speak the protocol.
+    def test_a_native_matcher_is_untouched
+      attest(1).to eq(1)
+
+      error = assert_raises(Constable::AssertionFailed) { attest(1).to eq(2) }
+      assert_match(/to eq 2/, error.message)
+    end
+  end
 end

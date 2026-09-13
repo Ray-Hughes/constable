@@ -342,6 +342,19 @@ The set is deliberately smaller than RSpec's, so `constable modernize` **flags a
 matcher it does not recognize** rather than converting it into a case that only fails
 once you run it.
 
+### Matchers from other gems
+
+Anything written against RSpec's matcher protocol works, because Constable adapts it:
+
+```ruby
+attest(user).to belong_to(:organization)      # shoulda-matchers
+attest(list).to have(3).items                 # rspec-collection_matchers
+```
+
+Include whatever builds them on your tier base class — `Shoulda::Matchers::ActiveRecord` and
+friends — and the matchers themselves need nothing. Constable's own matchers are untouched;
+only foreign ones are wrapped.
+
 ### Shared behavior: procedures
 
 ```ruby

@@ -5,6 +5,29 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-09-13
+
+### Matchers from other gems work
+
+shoulda-matchers, rspec-collection_matchers, an app's own -- anything written against RSpec's
+matcher protocol. Two small differences made every one of them unusable: theirs returns a
+boolean from `matches?` where ours returns `[passed, message, context]`, and their
+`failure_message` takes no argument where ours takes the actual.
+
+```ruby
+attest(user).to belong_to(:organization)
+attest(user).to validate_presence_of(:email)
+```
+
+The gap showed up as 117 `NoMethodError`s on a real CI run -- `belong_to`, `allow_value`,
+`validate_presence_of` -- every one in a file that had converted cleanly. The methods that
+*build* those matchers still need including on a tier base class; what Constable now supplies
+is the half that could not be done from outside.
+
+Nothing here reimplements a matcher. It asks the foreign one the question it understands and
+translates the answer, including the RSpec 2 message names plenty of gems still carry.
+
+
 ## [3.4.0] - 2026-09-13
 
 ### A converted file inherits the tier it lands in, not one base for the whole port
