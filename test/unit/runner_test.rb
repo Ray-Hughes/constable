@@ -105,6 +105,47 @@ module Constable
       assert_operator orders.uniq.size, :>, 1, "every seed produced the same order"
     end
 
+    # --- failure list ----------------------------------------------------------------
+
+    # Comparing two runs -- Constable against RSpec, this branch against main, one CI shard
+    # against another -- is the question that keeps coming up, and answering it by reading
+    # two logs does not scale past a handful.
+    def test_the_failure_list_is_one_sorted_line_per_failing_test
+      write_file("test/cases/models/mixed_case.rb", <<~RUBY)
+        class MixedCase < Constable::Case
+          investigate("zeta fails") { attest(1).to eq(2) }
+          investigate("alpha fails") { attest(1).to eq(2) }
+          investigate("passes") { attest(1).to eq(1) }
+        end
+      RUBY
+
+      _status, runner = run_suite
+      path = File.join(tmp_root, "tmp", "failures.txt")
+      capture_stdout { CLI.new.send(:write_failure_list, runner, path) }
+      lines = File.read(path).lines.map(&:chomp).reject(&:empty?)
+
+      assert_equal 2, lines.size, "only failing tests belong in the list"
+      assert_equal lines.sort, lines, "sorted, so a plain diff is the whole comparison"
+      assert(lines.all? { |line| line.include?("mixed_case.rb\t") })
+      assert_includes lines.join("\n"), "alpha fails"
+      refute_includes lines.join("\n"), "passes"
+    end
+
+    def test_a_clean_run_writes_an_empty_list_rather_than_nothing
+      write_file("test/cases/models/green_case.rb", <<~RUBY)
+        class GreenCase < Constable::Case
+          investigate("passes") { attest(1).to eq(1) }
+        end
+      RUBY
+
+      _status, runner = run_suite
+      path = File.join(tmp_root, "tmp", "failures.txt")
+      capture_stdout { CLI.new.send(:write_failure_list, runner, path) }
+
+      assert_path_exists path
+      assert_empty File.read(path).lines.map(&:chomp).reject(&:empty?)
+    end
+
     # --- timeout ------------------------------------------------------------------------
 
     # A test that never finishes does not fail, it stops the suite -- and the symptom is a

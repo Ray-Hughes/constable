@@ -66,7 +66,9 @@ module Constable
                       desc: "Fail a file that produces no result in N seconds instead of hanging"
     option :workers,  type: :numeric, desc: "Parallel workers (default: config, or auto)"
     option :show,     type: :string,  desc: "Expand collapsed sections: --show warnings"
-    option :shard,    type: :string,  desc: "Run one slice of the suite: --shard 3/8 (for a CI matrix)"
+    option :"failures-to", type: :string,
+                           desc: "Write every failing test to FILE, one per line, for diffing runs"
+    option :shard, type: :string, desc: "Run one slice of the suite: --shard 3/8 (for a CI matrix)"
     option :"shard-by-time", type: :boolean, default: false,
                              desc: "Weight --shard by duration (needs identical blotter data everywhere)"
     option :verbose,  type: :boolean, default: false, desc: "Stream log/test.log to stdout"
@@ -104,7 +106,9 @@ module Constable
         timeout: options[:timeout]
       )
 
-      exit(runner.call)
+      status = runner.call
+      write_failure_list(runner, options[:"failures-to"]) if options[:"failures-to"]
+      exit(status)
     end
 
     desc "watchlist", "Everything under supervision right now: jailed, paroled and warranted"
@@ -718,6 +722,23 @@ module Constable
     subcommand "history", HistoryCommand
 
     no_commands do
+      # One failing test per line: file, then the full description.
+      #
+      # Comparing two runs -- Constable against RSpec, this branch against main, one CI
+      # shard against another -- is the question that keeps coming up, and answering it by
+      # reading two logs does not scale past a handful. Sorted, so a plain `diff` of two
+      # files is the whole comparison.
+      def write_failure_list(runner, path)
+        failures = runner.results.reject { |result| result.status == :passed }
+        lines = failures.map do |result|
+          "#{result.file}\t#{[*Array(result.docket_path), result.description].join(" ")}"
+        end
+
+        FileUtils.mkdir_p(File.dirname(path))
+        File.write(path, "#{lines.sort.join("\n")}\n")
+        say "wrote #{failures.size} failing test(s) to #{path}"
+      end
+
       def show_preferences(path)
         say ""
         say "  PREFERENCES"

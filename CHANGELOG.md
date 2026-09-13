@@ -5,6 +5,22 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-09-13
+
+### `--failures-to FILE`, so two runs can be diffed
+
+"Constable fails where RSpec passes" is the question that keeps coming up, and answering it
+by reading two logs does not scale past a handful of tests.
+
+```console
+$ constable test --failures-to tmp/constable-failures.txt
+```
+
+One failing test per line -- file, then the full description -- sorted, so `diff` of two
+files is the whole comparison. Written even when the run is clean, because an empty file is
+an answer and a missing one is ambiguous.
+
+
 ## [3.2.0] - 2026-09-13
 
 ### `require_app` is gone; a plain `require` does the job
