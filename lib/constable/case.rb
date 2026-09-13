@@ -18,6 +18,22 @@ module Constable
   # no `before(:all)` equivalent here and never will be: class-level shared state is the
   # thing this framework exists to make impossible.
   class Case
+    # Names a witness may not take, because Case itself needs them.
+    #
+    # On the class rather than inside `class << self`, so `constable modernize` can read it
+    # as `Case::RESERVED_WITNESS_NAMES` without booting anything -- catching `let(:hash)`
+    # while it is still a decision, rather than writing a file that raises on load.
+    #
+    # Deliberately a list rather than `method_defined?`: a blanket check would reject
+    # ordinary names a tier happens to define (`response` on an integration case), and
+    # shadowing those is a legitimate, if unusual, thing to want.
+    RESERVED_WITNESS_NAMES = %i[
+      class send __send__ __id__ object_id method methods freeze frozen? dup clone
+      hash inspect to_s instance_variable_get instance_variable_set instance_variables
+      attest unsafe witness briefing investigate docket tier setup teardown
+      assert refute flunk skip pass freeze_time travel_to travel_back
+    ].freeze
+
     # The runtime DSL (freeze_time, stub_network!, unsafe, assertion primitives) and the
     # `attest` expectation sugar live in their own components, mixed in here so every
     # investigation body has both without asking.
@@ -175,13 +191,6 @@ module Constable
       # Deliberately a list rather than `method_defined?`: a blanket check would reject
       # ordinary names a tier happens to define (`response` on an integration case), and
       # shadowing those is a legitimate, if unusual, thing to want.
-      RESERVED_WITNESS_NAMES = %i[
-        class send __send__ __id__ object_id method methods freeze frozen? dup clone
-        hash inspect to_s instance_variable_get instance_variable_set instance_variables
-        attest unsafe witness briefing investigate docket tier setup teardown
-        assert refute flunk skip pass freeze_time travel_to travel_back
-      ].freeze
-
       def guard_witness_name!(name)
         if RESERVED_WITNESS_NAMES.include?(name)
           raise ArgumentError,

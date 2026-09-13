@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "pathname"
 require "stringio"
 
 module Constable
@@ -437,16 +438,74 @@ module Constable
               FileUtils.cp(source, target)
               carried << target.delete_prefix("#{root}/")
             end
+            repoint_requires(result, root)
           end
           carried.uniq
         end
 
+        # `require_relative` is relative to the file, and a port moves the file.
+        #
+        # spec/services/x_spec.rb requiring "../../../app/services/x" resolved to <root>/app;
+        # the same line in test/cases/services/x_case.rb is one level deeper and resolves to
+        # <root>/test/app, which does not exist. The file converts, parses, and dies on load
+        # with a LoadError naming a path nobody wrote.
+        #
+        # A companion sitting beside the original is copied beside the port, so its bare
+        # `require_relative "./thing"` still resolves and is left alone. Anything else --
+        # app code, a shared file further up -- is repointed at the same target from where
+        # the file now lives.
+        def repoint_requires(result, root)
+          target_path = File.join(root, result.written_to.to_s)
+          return unless File.file?(target_path)
+
+          from_dir = File.dirname(result.path)
+          to_dir = File.dirname(target_path)
+          return if from_dir == to_dir
+
+          source = File.read(target_path)
+          rewritten = source.gsub(/require_relative\s+(["'])([^"']+)\1/) do
+            quote = ::Regexp.last_match(1)
+            ref = ::Regexp.last_match(2)
+            resolved = File.expand_path(ref.end_with?(".rb") ? ref : "#{ref}.rb", from_dir)
+            # A carried companion moved alongside, so its path still resolves. Anything
+            # outside the test tree stayed where it was and needs repointing.
+            if !File.file?(resolved) || test_tree?(resolved, result)
+              "require_relative #{quote}#{ref}#{quote}"
+            else
+              suffix = ref.end_with?(".rb") ? "" : ".rb"
+              relative = relative_path_from(to_dir, resolved).delete_suffix(suffix)
+              "require_relative #{quote}#{relative}#{quote}"
+            end
+          end
+          File.write(target_path, rewritten) if rewritten != source
+        end
+
+        def relative_path_from(from_dir, target)
+          Pathname.new(target).relative_path_from(Pathname.new(from_dir)).to_s
+        end
+
+        # A companion is a *test* file the spec requires by relative path -- a shared helper,
+        # a fixture builder -- and it moves with the spec so the require still resolves.
+        #
+        # Application code is not a companion. It was being copied too, which duplicated
+        # app/services/... into test/cases/services/... and left a second copy of production
+        # code that nothing updates. Those references get their path rewritten instead.
         def companions_for(result)
+          relative_requires(result).select { |path| test_tree?(path, result) }
+        end
+
+        def relative_requires(result)
           dir = File.dirname(result.path)
           result.original.to_s.scan(/require_relative\s+["']([^"']+)["']/).flatten.filter_map do |ref|
             candidate = File.expand_path(ref.end_with?(".rb") ? ref : "#{ref}.rb", dir)
             candidate if File.file?(candidate)
           end
+        end
+
+        def test_tree?(path, result)
+          root = result.path.to_s.sub(/#{Regexp.escape(result.relative_path.to_s)}\z/, "")
+          relative = path.to_s.delete_prefix(root)
+          relative.start_with?("spec/", "test/")
         end
 
         # Directories the port emptied. Only ever removed when empty, so nothing that was
@@ -739,6 +798,9 @@ module Constable
             return flag(:dynamic_let, node, "`#{source_of(send_node)}` does not name a single literal helper.")
           end
 
+          reserved = reserved_witness_reason(args.first)
+          return flag(:reserved_helper_name, node, reserved) if reserved
+
           helper = literal_value(args.first)
           replace(send_node.loc.selector, "witness")
           insert_after(node.loc.expression, "\n#{" " * node.loc.expression.column}briefing { #{helper} }")
@@ -752,6 +814,9 @@ module Constable
         unless args.size == 1 && %i[sym str].include?(args.first.type)
           return flag(:dynamic_let, node, "`#{source_of(send_node)}` does not name a single literal helper.")
         end
+
+        reserved = reserved_witness_reason(args.first)
+        return flag(:reserved_helper_name, node, reserved) if reserved
 
         replace(send_node.loc.selector, "witness")
         record_converted(:witness, node, source_of(send_node), "witness(#{source_of(args.first)})")
@@ -810,6 +875,19 @@ module Constable
       # needs is `is_expected` to `attest(subject)`.
       def convert_fragment(source)
         source.sub(/\Ais_expected\b/, "attest(subject)")
+      end
+
+      # `let(:hash)` is fine in RSpec and fatal as a `witness`: it would replace
+      # Constable::Case#hash, which the framework itself calls. Case refuses it at load time,
+      # correctly -- but by then the file is already written, so the port produced a file
+      # that could never load. Caught here instead, where it is still a decision.
+      def reserved_witness_reason(arg)
+        name = literal_value(arg)&.to_sym
+        return nil unless name && Constable::Case::RESERVED_WITNESS_NAMES.include?(name)
+
+        "`#{name}` is a method Constable::Case needs, so a witness cannot take that name -- " \
+          "the file would raise the moment it loads. Rename the helper, in the spec or after " \
+          "converting it."
       end
 
       def one_liner_reason(send_node)

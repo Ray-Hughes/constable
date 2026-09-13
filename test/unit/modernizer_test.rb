@@ -636,6 +636,36 @@ module Constable
                       lines.index { |l| l.start_with?("briefing { existing }") })
     end
 
+    # `let(:hash)` is fine in RSpec and fatal as a witness: it would replace
+    # Constable::Case#hash, which the framework itself calls. Case refuses it at load time,
+    # correctly -- but by then the file is written, so the port produced a file that could
+    # never load. Caught here, where it is still a decision.
+    def test_a_reserved_helper_name_is_refused_rather_than_written
+      result = convert("describe User do\n  let(:hash) { {} }\n  let(:fine) { 1 }\nend\n")
+
+      assert_includes result.source, "let(:hash)"
+      assert_includes result.source, "witness(:fine)"
+      refute_nil flag_named(result, :reserved_helper_name)
+      assert_match(/would replace|Constable::Case needs/, flag_named(result, :reserved_helper_name)[:reason])
+    end
+
+    def test_a_reserved_name_is_refused_for_let_bang_too
+      result = convert("describe User do\n  let!(:send) { 1 }\nend\n")
+
+      assert_includes result.source, "let!(:send)"
+      refute_nil flag_named(result, :reserved_helper_name)
+    end
+
+    # Every name Case guards has to be guarded here, or the two drift and the drift shows up
+    # as a file that will not load.
+    def test_every_reserved_name_is_refused
+      Constable::Case::RESERVED_WITNESS_NAMES.each do |name|
+        result = convert("describe User do\n  let(:#{name}) { 1 }\nend\n")
+
+        refute_nil flag_named(result, :reserved_helper_name), "#{name} was converted"
+      end
+    end
+
     def test_a_dynamic_let_bang_is_still_refused
       result = convert("describe User do\n  let!(*names) { create(:user) }\nend\n")
 

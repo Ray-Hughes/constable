@@ -5,6 +5,32 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-09-13
+
+Three bugs a real CI run found, all in the port rather than the runner.
+
+### `let(:hash)` was converted into a file that could never load
+
+`hash` is a method `Constable::Case` needs, so a witness cannot take that name — Case refuses
+it at load time, correctly. But `modernize` did not know, so the port wrote the file and the
+refusal arrived afterwards, as a load error on a file that had already replaced its original.
+Caught during conversion now, where it is still a decision. A test walks the whole reserved
+list, so the two cannot drift.
+
+### `require_relative` broke when the file moved
+
+A spec at `spec/services/x_spec.rb` requiring `"../../../app/services/x"` resolved to
+`<root>/app`. The same line in `test/cases/services/x_case.rb` is one level deeper and
+resolves to `<root>/test/app`, which does not exist. Those paths are repointed at the same
+target from where the file now lives.
+
+### Application code was being copied into the test tree
+
+A companion is a *test* file the spec requires by relative path, and it moves with the spec
+so the require still resolves. `app/services/...` was being copied too, leaving a second copy
+of production code that nothing would ever update.
+
+
 ## [3.0.1] - 2026-09-13
 
 ### An unwritable log killed the run before a single test

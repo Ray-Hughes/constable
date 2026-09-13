@@ -285,5 +285,70 @@ module Constable
 
       assert_path_exists File.join(tmp_root, "spec/models")
     end
+
+    # require_relative is relative to the file, and a port moves the file. A spec at
+    # spec/services/x_spec.rb requiring "../../../app/..." resolved to <root>/app; the same
+    # line one level deeper resolves to <root>/test/app, which does not exist. The file
+    # converts, parses, and dies on load with a LoadError naming a path nobody wrote.
+    def test_a_require_relative_to_app_code_is_repointed
+      write_file("app/services/thing.rb", "class Thing; end\n")
+      write_file("spec/services/thing_spec.rb", <<~SPEC)
+        require_relative "../../app/services/thing"
+
+        describe Thing do
+          it "works" do
+            expect(1).to eq(1)
+          end
+        end
+      SPEC
+
+      port("spec/services/thing_spec.rb")
+      written = File.read(File.join(tmp_root, "test/cases/services/thing_case.rb"))
+      ref = written[/require_relative\s+"([^"]+)"/, 1]
+
+      refute_nil ref
+      assert_path_exists File.expand_path("#{ref}.rb",
+                                          File.join(tmp_root, "test/cases/services"))
+    end
+
+    # App code is not a companion. Copying it duplicated production code into the test tree
+    # and left a second copy nothing updates.
+    def test_app_code_is_not_copied_into_the_test_tree
+      write_file("app/services/thing.rb", "class Thing; end\n")
+      write_file("spec/services/thing_spec.rb", <<~SPEC)
+        require_relative "../../app/services/thing"
+
+        describe Thing do
+          it "works" do
+            expect(1).to eq(1)
+          end
+        end
+      SPEC
+
+      port("spec/services/thing_spec.rb")
+
+      refute_path_exists File.join(tmp_root, "test/cases/services/thing.rb")
+    end
+
+    # A test helper beside the spec does move with it, so its require still resolves as
+    # written and must not be repointed.
+    def test_a_test_helper_companion_still_moves_alongside
+      write_file("spec/services/helper.rb", "module Helper; end\n")
+      write_file("spec/services/thing_spec.rb", <<~SPEC)
+        require_relative "./helper"
+
+        describe "Thing" do
+          it "works" do
+            expect(1).to eq(1)
+          end
+        end
+      SPEC
+
+      port("spec/services/thing_spec.rb")
+
+      assert_path_exists File.join(tmp_root, "test/cases/services/helper.rb")
+      assert_includes File.read(File.join(tmp_root, "test/cases/services/thing_case.rb")),
+                      %(require_relative "./helper")
+    end
   end
 end
