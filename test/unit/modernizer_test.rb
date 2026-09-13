@@ -611,15 +611,29 @@ module Constable
 
     # ---- the deliberate refusals ---------------------------------------------------
 
-    # This was a refusal until witness_all existed. `let!` means the record is there before
-    # every example, and `witness` is lazy -- so the swap was a silent behaviour change and
-    # the file kept its RSpec body. witness_all is the eager one, so it converts.
-    def test_let_bang_becomes_witness_all
+    # `let!` is `let` plus `before { the_value }`, and that is exactly what it becomes.
+    #
+    # It was briefly converted to `witness_all`, which is eager in the wrong way: that builds
+    # once for the whole case, before any briefing, while `let!` runs per example in hook
+    # order and can depend on what an outer `before` created. Caseflow proved it does, with a
+    # foreign key violation from a fixture built before the rows it referenced existed.
+    def test_let_bang_becomes_a_witness_plus_a_briefing
       result = convert("describe User do\n  let!(:existing) { create(:user) }\nend\n")
 
-      assert_includes result.source, "witness_all(:existing)"
+      assert_includes result.source, "witness(:existing) { create(:user) }"
+      assert_includes result.source, "briefing { existing }"
       refute_includes result.source, "let!"
       assert_nil flag_named(result, :eager_let)
+    end
+
+    # The briefing has to come after the witness that defines it, not before.
+    def test_the_briefing_follows_the_witness
+      result = convert("describe User do\n  let!(:existing) { create(:user) }\nend\n")
+      lines = result.source.lines.map(&:strip)
+
+      assert_operator(lines.index { |l| l.start_with?("witness(:existing)") },
+                      :<,
+                      lines.index { |l| l.start_with?("briefing { existing }") })
     end
 
     def test_a_dynamic_let_bang_is_still_refused

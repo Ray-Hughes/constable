@@ -138,13 +138,16 @@ module Constable
       assert_match(/require "constable"/, helper)
     end
 
-    def test_case_helper_auto_requires_support_files
+    # spec/support too: a converted file moves from RSpec's engine to Constable's, and the
+    # helpers it calls have to come with it or it fails at runtime on a method that was
+    # never loaded.
+    def test_case_helper_loads_support_from_both_trees
       install
+      helper = generated("test/case_helper.rb")
 
-      assert_match(
-        %r{Dir\[Rails\.root\.join\("test/support/\*\*/\*\.rb"\)\]\.sort\.each \{ \|f\| require f \}},
-        generated("test/case_helper.rb")
-      )
+      assert_match(/Constable\.load_support/, helper)
+      assert_match(%r{test/support/\*\*/\*\.rb}, helper)
+      assert_match(%r{spec/support/\*\*/\*\.rb}, helper)
     end
 
     def test_case_helper_carries_a_configure_block_with_commented_examples

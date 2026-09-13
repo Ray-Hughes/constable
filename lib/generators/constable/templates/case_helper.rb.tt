@@ -29,7 +29,15 @@ end
 # Shared modules and custom matchers. Sorted, because Dir[] returns filesystem order and
 # that differs between your laptop and CI. Loaded before the tier classes below so they
 # can `include` from here.
-Dir[Rails.root.join("test/support/**/*.rb")].sort.each { |f| require f }
+#
+# spec/support is in the list because a converted file moves from RSpec's engine to
+# Constable's, and the helpers it calls have to come with it -- otherwise a file converts
+# cleanly, parses, and then fails at runtime on a method that was never loaded.
+#
+# A file that calls `RSpec.configure` is skipped, and said so out loud rather than silently:
+# it is configuring RSpec, and Constable owns the transaction, the isolation and the
+# system-tier setup itself. Loading it would install a second, conflicting answer.
+Constable.load_support("test/support/**/*.rb", "spec/support/**/*.rb")
 
 # The link to a legacy RSpec or Minitest suite. `constable import --from=rspec` fills this
 # in; until then it is empty and Constable runs only what is under test/cases.

@@ -722,22 +722,30 @@ module Constable
         name = send_node.children[1]
         args = send_node.children[2..] || []
 
-        # `let!` used to be flagged, because `witness` is lazy and swapping one for the other
-        # changes when the record is created. `witness_all` is the eager one, so the swap is
-        # no longer silent: the record exists before every investigation, which is the whole
-        # meaning of `let!`.
+        # `let!` is `let` plus `before { the_value }`, and that is exactly what it becomes.
         #
-        # Not identical, and the difference is worth stating. `let!` rebuilds per example;
-        # `witness_all` builds once and re-reads, inside a transaction the case rolls back.
-        # A test that mutates the record still sees its own changes and still cannot leak
-        # them. What changes is the cost: one INSERT for the case instead of one per test.
+        # It was briefly converted to `witness_all`, which is eager in the wrong way: it
+        # builds once for the whole case, before any briefing. `let!` runs per example and
+        # in hook order, so it can depend on what an outer `before` created -- and caseflow
+        # proved it does, with a PG::ForeignKeyViolation from a fixture built before the
+        # rows it referenced existed.
+        #
+        # A lazy witness plus a briefing that touches it is the same thing `let!` is: same
+        # timing, same per-test rebuild, same dependence on hook order. `witness_all` is
+        # still there for a human who knows a fixture is safe to share; it is not something
+        # to infer from source.
         if name == :let!
           unless args.size == 1 && %i[sym str].include?(args.first.type)
             return flag(:dynamic_let, node, "`#{source_of(send_node)}` does not name a single literal helper.")
           end
 
-          replace(send_node.loc.selector, "witness_all")
-          record_converted(:witness_all, node, source_of(send_node), "witness_all(#{source_of(args.first)})")
+          helper = literal_value(args.first)
+          replace(send_node.loc.selector, "witness")
+          insert_after(node.loc.expression, "\n#{" " * node.loc.expression.column}briefing { #{helper} }")
+          record_converted(:witness, node, source_of(send_node),
+                           "witness(#{source_of(args.first)}) + briefing { #{helper} }",
+                           note: "`let!` is `let` plus a before hook, so it becomes a lazy witness " \
+                                 "plus a briefing that touches it -- same timing, same hook order")
           to_do_end(node)
           return visit_children_of_block(node, in_case: false)
         end
@@ -1234,6 +1242,8 @@ module Constable
       # ---- rewriting primitives ----------------------------------------------------
 
       def replace(range_or_loc, text) = @rewriter.replace(range_or_loc, text)
+
+      def insert_after(range_or_loc, text) = @rewriter.insert_after(range_or_loc, text)
 
       def range(from, to) = ::Parser::Source::Range.new(@buffer, from, to)
 

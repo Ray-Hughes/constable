@@ -59,6 +59,7 @@ module Constable
   autoload :Shard,         "constable/shard"
   autoload :SharedFixtures, "constable/shared_fixtures"
   autoload :Impersonation, "constable/impersonation"
+  autoload :SupportFiles,  "constable/support_files"
   autoload :Selection,     "constable/selection"
   autoload :Storage,       "constable/storage"
   autoload :Warrants,      "constable/warrants"
@@ -103,6 +104,13 @@ module Constable
     # setting, it is the decision that determines what `constable test` runs at all, and
     # it earns a file of its own so it is visible in the test tree.
     def cold_cases(&) = configuration.cold_cases(&)
+
+    # Loads an adopted suite's support files -- see Constable::SupportFiles. Defined here
+    # rather than in that file so the autoload actually fires: a method defined inside an
+    # autoloaded file cannot be the thing that triggers loading it.
+    def load_support(*globs, root: Constable.root)
+      SupportFiles.load(*globs, root: root)
+    end
 
     def storage
       @storage ||= Storage::Adapter.build(config).tap(&:setup!)

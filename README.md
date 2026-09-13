@@ -728,6 +728,39 @@ Time-based rather than per-test, so a fast suite never prints one and a slow one
 handful instead of a wall. Off by default; `constable config heartbeat 30` turns it on for
 you, `heartbeat:` in config.yml for everyone.
 
+### Adopting an existing suite's support files
+
+A converted file moves from RSpec's engine to Constable's, and the helpers it calls have to
+come with it. Otherwise the file converts cleanly, parses, and then fails at runtime on a
+method that was never loaded.
+
+```ruby
+# test/case_helper.rb
+Constable.load_support("test/support/**/*.rb", "spec/support/**/*.rb")
+```
+
+A file that calls `RSpec.configure` is **skipped, and said so out loud**. It is configuring
+RSpec, and Constable owns the transaction, the isolation and the system-tier setup itself —
+loading it would install a second, conflicting answer. On the suite this was written against
+that was exactly four files: database cleaning, Capybara, cache clearing, timezone.
+
+Loading is only half of it. RSpec does the other half with `config.include SomeHelper`, so
+the modules a case actually calls need including on your tier base classes:
+
+```ruby
+class UnitCase < Constable::Case
+  include DateTimeHelper
+  tier :unit
+end
+```
+
+Per-test hooks from `spec/rails_helper.rb` need the same treatment — `briefing` and
+`teardown` on the base class. Constable rolls back the database and restores its own DSL
+globals, but it cannot know about your `Timecop`, your `RequestStore`, or your fake service
+clients. Without them a converted case inherits state from the one before it, and the
+symptom is oblique: a not-null violation on a column a factory filled from a current user
+nothing had set.
+
 ### Escape hatches, always visible
 
 ```ruby
