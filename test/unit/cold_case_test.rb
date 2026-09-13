@@ -714,4 +714,38 @@ module Constable
       ColdCase.singleton_class.send(:remove_method, :require)
     end
   end
+
+  # `Configuration#add_setting` defines the accessor on that instance's singleton class, and
+  # a plugin adds its settings when its file is required -- once per process. A Gemfile
+  # without `require: false` loads rspec-retry during Rails boot, against whatever
+  # configuration exists then; ours is built afterwards and has never heard of the setting,
+  # and the plugin will not run again to tell it.
+  class ColdCasePluginSettingsTest < TestCase
+    def teardown
+      ColdCase.reset_engines!
+      super
+    end
+
+    def test_a_setting_a_plugin_added_before_us_reaches_the_session_configuration
+      require "rspec/core"
+      outer = ::RSpec.configuration
+      outer.add_setting(:constable_fake_plugin_setting, default: :installed)
+
+      write_file("spec/plugin_spec.rb", <<~SPEC)
+        RSpec.configure { |c| c.constable_fake_plugin_setting = :set_by_the_spec }
+
+        describe "plugin settings" do
+          it "reads what the spec set" do
+            expect(RSpec.configuration.constable_fake_plugin_setting).to eq(:set_by_the_spec)
+          end
+        end
+      SPEC
+
+      results = ColdCase.run_file(File.join(tmp_root, "spec/plugin_spec.rb"),
+                                 config: Constable.config)
+
+      assert_equal 1, results.size
+      assert_predicate results.first, :passed?, results.first.failure&.message
+    end
+  end
 end

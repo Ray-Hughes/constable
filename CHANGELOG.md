@@ -5,6 +5,38 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-09-13
+
+### A plugin's settings vanished from the cold-case session
+
+`Configuration#add_setting` defines the accessor on *that instance's singleton class*, not on
+the class -- so a setting belongs to one Configuration object and no other. A plugin adds its
+settings when its file is required, and `require` runs once per process.
+
+Put together: a Gemfile without `require: false` means Bundler loads rspec-retry during Rails
+boot, against whatever configuration exists then. The cold-case session configuration is
+built afterwards, has never heard of `verbose_retry`, and the plugin will not run again to
+tell it. A `spec_helper` doing `config.verbose_retry = true` then died with NoMethodError --
+naming a setting that is plainly installed, which makes it look like the plugin is broken.
+
+Those settings are carried across now, names and current values only.
+
+### Procedures
+
+Shared behaviour with a name, instead of a string in a global registry. See the README.
+
+### Same-file `shared_examples` convert
+
+They become a class method the use sites call, which registers the investigations exactly
+where `it_behaves_like` would have. On one real suite that is 779 of 882 uses, and conversion
+went 574 to 608 files.
+
+### `require_app`
+
+`require_app "services/thing"` instead of counting `../` or spelling out
+`Rails.root.join(...).to_s`.
+
+
 ## [3.0.3] - 2026-09-13
 
 ### `require_app`, instead of counting `../`

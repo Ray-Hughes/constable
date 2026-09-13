@@ -174,6 +174,7 @@ module Constable
           @session_world = nil
           @session_configuration = nil
           @session_prepared = false
+          @plugins_carried = false
           @ran_before_suite_hooks = nil
           @shared_examples = nil
           nil
@@ -277,6 +278,7 @@ module Constable
 
           ::RSpec.instance_variable_set(:@world, @session_world)
           ::RSpec.instance_variable_set(:@configuration, @session_configuration)
+          carry_plugin_settings!(outer_config)
           prepare_session_configuration(::RSpec.configuration)
           clear_examples
           restore_shared_examples!
@@ -292,6 +294,51 @@ module Constable
           ::RSpec::ExampleGroups.remove_all_constants if outer_world.nil?
           ::RSpec.instance_variable_set(:@world, outer_world)
           ::RSpec.instance_variable_set(:@configuration, outer_config)
+        end
+
+        # Settings an RSpec plugin added to the configuration that existed before us.
+        #
+        # `Configuration#add_setting` defines the accessor on *that instance's singleton
+        # class*, not on the class -- so a setting belongs to one Configuration object and
+        # no other. And a plugin adds its settings when its file is required, which `require`
+        # does once per process.
+        #
+        # Put together: a Gemfile without `require: false` means Bundler loads rspec-retry
+        # during Rails boot, against whatever configuration exists then. Our session
+        # configuration is built afterwards and has never heard of `verbose_retry`, and the
+        # plugin will not run again to tell it. A spec_helper doing
+        # `config.verbose_retry = true` then dies with NoMethodError -- naming a setting that
+        # is plainly installed, which makes it look like the plugin is broken.
+        #
+        # So the settings are carried across. Only the ones a fresh Configuration does not
+        # already have, and only their names and current values: nothing else of the outer
+        # configuration comes with them.
+        def carry_plugin_settings!(outer_config)
+          return unless outer_config
+          return if @plugins_carried
+
+          @plugins_carried = true
+          session = ::RSpec.configuration
+          return if session.equal?(outer_config)
+
+          plugin_setting_names(outer_config).each do |name|
+            next if session.respond_to?(:"#{name}=")
+
+            session.add_setting(name, default: outer_config.public_send(name))
+          rescue StandardError
+            next
+          end
+        end
+
+        def plugin_setting_names(config)
+          config.singleton_class
+                .instance_methods(false)
+                .map(&:to_s)
+                .select { |name| name.end_with?("=") }
+                .map { |name| name.chomp("=").to_sym }
+                .select { |name| config.respond_to?(name) }
+        rescue StandardError
+          []
         end
 
         # stdout belongs to Constable's reporter alone (SPEC.md: "stdout is results
