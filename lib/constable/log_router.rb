@@ -234,12 +234,27 @@ module Constable
         defined?(Rails) && Rails.respond_to?(:logger)
       end
 
+      # A log file it cannot open must not end the run.
+      #
+      # CI found this: the workspace is prepared as root and the suite runs as another user,
+      # so `log/test.log` was unwritable and the whole run died at startup on an EACCES --
+      # before a single test, with a stack trace instead of a reason. Routing logs away from
+      # stdout is a convenience; the tests are the point.
+      #
+      # It falls back to devnull, so log output is discarded rather than dumped into the
+      # results, and says once what happened.
       def open_log(path)
-        FileUtils.mkdir_p(File.dirname(path))
         close_file
+        FileUtils.mkdir_p(File.dirname(path))
         @file = File.open(path, "a")
         @file.sync = true
         @file
+      rescue SystemCallError, IOError => e
+        Constable.warn!(
+          "could not write to #{path} (#{e.class}), so log output is being discarded for " \
+          "this run. Nothing else is affected."
+        )
+        @file = File.open(File::NULL, "a")
       end
 
       def close_file

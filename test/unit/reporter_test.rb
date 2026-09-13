@@ -1510,4 +1510,44 @@ module Constable
       refute_match(/elapsed|tests  ·/, output)
     end
   end
+
+  # CI prepares the workspace as root and runs the suite as another user, so log/test.log
+  # was unwritable and the whole run died at startup on an EACCES -- before a single test,
+  # with a stack trace instead of a reason.
+  class LogRouterFallbackTest < TestCase
+    def teardown
+      LogRouter.restore!
+      super
+    end
+
+    def test_an_unwritable_log_does_not_end_the_run
+      path = File.join(tmp_root, "log", "test.log")
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, "")
+      File.chmod(0o444, path)
+
+      routing = silence_warnings { LogRouter.route!(path: path) }
+
+      refute_nil routing, "route! must return rather than raise on an unwritable log"
+      assert_equal path, routing.path
+    ensure
+      File.chmod(0o644, path) if File.exist?(path)
+    end
+
+    def test_it_says_what_happened
+      path = File.join(tmp_root, "log", "test.log")
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, "")
+      File.chmod(0o444, path)
+
+      before = Constable.warnings.size
+      LogRouter.route!(path: path)
+
+      assert_operator Constable.warnings.size, :>, before
+      assert_match(/log output is being discarded/, Constable.warnings.last.to_s)
+    ensure
+      File.chmod(0o644, path) if File.exist?(path)
+      Constable.warnings.clear
+    end
+  end
 end

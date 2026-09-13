@@ -5,6 +5,19 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-09-13
+
+### An unwritable log killed the run before a single test
+
+CI prepares the workspace as root and runs the suite as another user, so `log/test.log` was
+unwritable and the whole run died at startup on `Errno::EACCES` -- with a stack trace
+instead of a reason, before anything had been attempted.
+
+Routing logs away from stdout is a convenience; the tests are the point. It now falls back
+to devnull, so log output is discarded rather than dumped into the results, and says once
+what happened.
+
+
 ## [3.0.0] - 2026-09-13
 
 A major because five things changed shape, not because the surface grew. Every one is
