@@ -379,7 +379,7 @@ module Constable
           end
         SPEC
         result = Importer::Modernizer.run([spec], config: Constable.config, root: tmp_root,
-                                          write: :port, report: false).results.first
+                                                  write: :port, report: false).results.first
 
         assert_includes result.source, "< #{expected}", "#{spec} should inherit #{expected}"
       end
@@ -398,8 +398,8 @@ module Constable
       SPEC
 
       result = Importer::Modernizer.run(["spec/oddballs/thing_spec.rb"], config: Constable.config,
-                                        root: tmp_root, write: :port, report: false,
-                                        base: "MyBaseCase").results.first
+                                                                         root: tmp_root, write: :port, report: false,
+                                                                         base: "MyBaseCase").results.first
 
       assert_includes result.source, "< MyBaseCase"
     end

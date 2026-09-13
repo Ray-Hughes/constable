@@ -80,7 +80,7 @@ module Constable
 
       attr_reader :path, :relative_path, :root, :config
 
-      def initialize(path, config: Constable.config, root: nil, source: nil, base: nil)
+      def initialize(path, config: Constable.config, root: nil, source: nil, base: nil, write: :none)
         @config = config
         # What a converted case inherits from.
         #
@@ -93,7 +93,9 @@ module Constable
         @root = (root || config&.root || Constable.root).to_s
         @path = File.absolute_path?(path.to_s) ? path.to_s : File.join(@root, path.to_s)
         @relative_path = @path.delete_prefix("#{@root}/")
-        # After the path: the base is inferred from where the file is going.
+        # After the path: the base is inferred from where the file is going, which only
+        # means anything for a port. In place or alongside, the file stays where it is.
+        @write = write
         @base = resolve_base(base)
         @given_source = source
         @dialect = nil
@@ -148,7 +150,7 @@ module Constable
           files = files.first(batch.to_i) if batch.to_i.positive?
 
           results = files.map do |file|
-            result = new(file, config: config, root: root, base: base).call
+            result = new(file, config: config, root: root, base: base, write: write).call
             result.write_mode = write
             persist(result, root, write)
             remove_original(result, root) if delete_original
@@ -1477,6 +1479,7 @@ module Constable
       end
 
       def base_from_tier
+        return nil unless %i[port port_cold].include?(@write)
         return nil unless @config.respond_to?(:tier_for)
 
         destination = self.class.port_path(@path.to_s, @root)
