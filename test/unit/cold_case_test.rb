@@ -760,4 +760,40 @@ module Constable
       assert_predicate results.first, :passed?, results.first.failure&.message
     end
   end
+
+  # `RSpec.shared_context "..."` registers into RSpec.world's registry, and a file is
+  # required once per process. A case_helper that loads spec/support at boot -- which is what
+  # makes converted cases find their helpers -- registers every shared context into the
+  # *outer* world, before any session world exists. The session world then has none of them,
+  # `require` will not run the files again, and a cold case dies on "Could not find shared
+  # context", naming one that is plainly defined.
+  class ColdCaseOuterSharedExamplesTest < TestCase
+    def teardown
+      ColdCase.reset_engines!
+      super
+    end
+
+    def test_a_shared_context_registered_before_the_session_is_still_found
+      require "rspec/core"
+      ::RSpec.shared_context("constable_outer_context") do
+        let(:carried) { :from_the_outer_world }
+      end
+
+      write_file("spec/uses_context_spec.rb", <<~SPEC)
+        describe "a cold case" do
+          include_context "constable_outer_context"
+
+          it "sees what the outer world registered" do
+            expect(carried).to eq(:from_the_outer_world)
+          end
+        end
+      SPEC
+
+      results = ColdCase.run_file(File.join(tmp_root, "spec/uses_context_spec.rb"),
+                                  config: Constable.config)
+
+      assert_equal 1, results.size
+      assert_predicate results.first, :passed?, results.first.failure&.message
+    end
+  end
 end

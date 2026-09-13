@@ -5,6 +5,34 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-09-13
+
+### Shared contexts registered before the session were lost
+
+`RSpec.shared_context "..."` registers into `RSpec.world`'s registry, and a file is required
+once per process. A `case_helper` that loads `spec/support` at boot -- which is what makes a
+converted case find its helpers -- registers every shared context into the **outer** world,
+before any session world exists. The session world then had none of them, `require` would not
+run the files again, and a cold case died on `Could not find shared context`, naming one that
+is plainly defined.
+
+Introduced by 3.0.x's `Constable.load_support`, and the same shape as the plugin-settings bug
+3.1.0 fixed: state installed once, against an object we later swap out.
+
+### `load_support` now sets the load path
+
+RSpec puts `spec` and `lib` on `$LOAD_PATH` before requiring anything, which is why a support
+file can `require "query_subscriber"` and find its sibling by bare name. Loading those same
+files without that left them raising `LoadError` on a require that had always worked.
+
+### `have_received` converts
+
+`expect(client).to have_received(:fetch)` asserts after the call, which is what
+`have_been_asked` does. 467 occurrences on one real suite. `expect(...).to receive(...)` is
+still refused: it verifies at the end of the example, so an assertion afterwards moves when
+the failure surfaces.
+
+
 ## [3.1.0] - 2026-09-13
 
 ### A plugin's settings vanished from the cold-case session

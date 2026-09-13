@@ -48,12 +48,31 @@ module Constable
       # chose.
       def load(*globs, root: Constable.root)
         reset!
-        expand(globs, root).each { |path| load_one(path, root) }
+        paths = expand(globs, root)
+        add_load_paths!(paths, root)
+        paths.each { |path| load_one(path, root) }
         warn_about_skips!
         skipped
       end
 
       private
+
+      # RSpec puts `spec` and `lib` on the load path before it requires anything, which is
+      # why a support file can `require "query_subscriber"` and find its sibling by bare
+      # name. Loading those same files without that leaves them raising LoadError on a
+      # require that has always worked.
+      #
+      # The roots of whatever was asked for, plus each file's own directory, so a bare
+      # require resolves the way it does under RSpec.
+      def add_load_paths!(paths, root)
+        dirs = paths.map { |path| File.dirname(path) }
+        dirs += %w[spec test lib].map { |dir| File.join(root.to_s, dir) }
+        dirs.uniq.each do |dir|
+          next unless File.directory?(dir)
+
+          $LOAD_PATH.unshift(dir) unless $LOAD_PATH.include?(dir)
+        end
+      end
 
       def expand(globs, root)
         globs.flatten.flat_map { |glob| Dir[File.join(root.to_s, glob)] }.uniq.sort

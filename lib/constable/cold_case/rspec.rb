@@ -175,6 +175,7 @@ module Constable
           @session_configuration = nil
           @session_prepared = false
           @plugins_carried = false
+          @adopted_outer_shared_examples = false
           @ran_before_suite_hooks = nil
           @shared_examples = nil
           nil
@@ -275,6 +276,10 @@ module Constable
         def with_engine
           outer_world  = ::RSpec.instance_variable_get(:@world)
           outer_config = ::RSpec.instance_variable_get(:@configuration)
+
+          # Before the swap: shared examples registered outside the session, which is where
+          # they land when something required their file before we existed.
+          adopt_outer_shared_examples!(outer_world)
 
           ::RSpec.instance_variable_set(:@world, @session_world)
           ::RSpec.instance_variable_set(:@configuration, @session_configuration)
@@ -510,6 +515,34 @@ module Constable
         # single file can lose what an earlier one registered, whatever it does to the
         # world. Nothing here needs to know which file misbehaves, which is the point --
         # that was two hours of not finding out.
+        # `RSpec.shared_context "..."` registers into RSpec.world's registry, and a file is
+        # required once per process. A case_helper that loads spec/support at boot -- which
+        # is what makes converted cases find their helpers -- therefore registers every
+        # shared context into the *outer* world, before any session world exists. The
+        # session world then has none of them, `require` will not run the files again, and
+        # a cold case dies on "Could not find shared context", naming one that is plainly
+        # defined.
+        #
+        # So whatever the outer world already holds is adopted on the way in. Once: after
+        # that the session's own registry is the live one.
+        def adopt_outer_shared_examples!(outer_world)
+          return if @adopted_outer_shared_examples
+
+          @adopted_outer_shared_examples = true
+          return unless outer_world.respond_to?(:shared_example_group_registry)
+
+          registry = outer_world.shared_example_group_registry
+          return if registry.nil? || registry_empty?(registry)
+
+          if @shared_examples.nil? || registry_empty?(@shared_examples)
+            @shared_examples = registry
+          else
+            merge_shared_examples!(@shared_examples, registry)
+          end
+        rescue StandardError
+          nil
+        end
+
         def remember_shared_examples!
           world = ::RSpec.instance_variable_get(:@world)
           return unless world.respond_to?(:shared_example_group_registry)
