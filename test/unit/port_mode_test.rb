@@ -290,7 +290,10 @@ module Constable
     # spec/services/x_spec.rb requiring "../../../app/..." resolved to <root>/app; the same
     # line one level deeper resolves to <root>/test/app, which does not exist. The file
     # converts, parses, and dies on load with a LoadError naming a path nobody wrote.
-    def test_a_require_relative_to_app_code_is_repointed
+    # Repointing the relative path gives "../../../../app/services/..." -- correct,
+    # unreadable, and wrong again the moment the file moves a directory. Anchored at the app
+    # root it survives both, and says what it is loading.
+    def test_a_require_to_app_code_is_anchored_at_the_root
       write_file("app/services/thing.rb", "class Thing; end\n")
       write_file("spec/services/thing_spec.rb", <<~SPEC)
         require_relative "../../app/services/thing"
@@ -304,11 +307,9 @@ module Constable
 
       port("spec/services/thing_spec.rb")
       written = File.read(File.join(tmp_root, "test/cases/services/thing_case.rb"))
-      ref = written[/require_relative\s+"([^"]+)"/, 1]
 
-      refute_nil ref
-      assert_path_exists File.expand_path("#{ref}.rb",
-                                          File.join(tmp_root, "test/cases/services"))
+      assert_includes written, %(require_app "services/thing")
+      refute_match(%r{\.\./\.\./\.\./}, written)
     end
 
     # App code is not a companion. Copying it duplicated production code into the test tree

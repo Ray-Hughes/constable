@@ -5,6 +5,30 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.0.3] - 2026-09-13
+
+### `require_app`, instead of counting `../`
+
+A ported spec carries `require_relative "../../app/services/thing"`, and a port moves the
+file -- so the path is wrong by however many directories it moved. 3.0.2 repointed them,
+which is correct and gives `"../../../../app/services/thing"`: unreadable, and wrong again on
+the next move.
+
+```ruby
+require_app "services/thing"      # app/services/thing.rb
+require_app "lib/tasks/thing"     # anything outside app/ is taken from the root
+```
+
+Named from the app root, so it survives the file moving, and the failure says where it
+looked rather than "cannot load such file" and a path nobody wrote.
+
+Worth knowing before reaching for it: in a Rails app most of these are unnecessary. Zeitwerk
+autoloads `app/`, so the constant resolves with no require at all -- verified on a real
+suite, where removing two of them changed nothing. `modernize` still emits them, because a
+rewrite cannot tell which ones Rails would autoload and deleting a require that turns out to
+matter is a worse failure than a redundant one.
+
+
 ## [3.0.2] - 2026-09-13
 
 Three bugs a real CI run found, all in the port rather than the runner.

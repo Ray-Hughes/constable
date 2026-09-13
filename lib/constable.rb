@@ -2,6 +2,9 @@
 
 require "constable/version"
 require "constable/worker_databases"
+# Not autoloaded: `require_app` is called at the top of a case file, before anything has
+# touched the Constable namespace, so an autoload would never fire.
+require "constable/require_app"
 
 # Constable -- an opinionated, strict Rails testing framework.
 #

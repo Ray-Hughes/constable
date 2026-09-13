@@ -472,16 +472,24 @@ module Constable
             if !File.file?(resolved) || test_tree?(resolved, result)
               "require_relative #{quote}#{ref}#{quote}"
             else
-              suffix = ref.end_with?(".rb") ? "" : ".rb"
-              relative = relative_path_from(to_dir, resolved).delete_suffix(suffix)
-              "require_relative #{quote}#{relative}#{quote}"
+              # Not another `require_relative`. Repointing one produces
+              # "../../../../app/services/..." -- correct, unreadable, and wrong again the
+              # moment the file moves a directory. `require_app` names the file from the app
+              # root, so it survives both.
+              #
+              # Worth knowing: under Zeitwerk most of these are unnecessary altogether. They
+              # are kept because a rewrite cannot tell which ones Rails would autoload, and
+              # deleting a require that turns out to matter is a worse failure than a
+              # redundant one.
+              from_root = resolved.delete_prefix("#{root_of(result)}/").delete_suffix(".rb")
+              "require_app #{quote}#{from_root.delete_prefix("app/")}#{quote}"
             end
           end
           File.write(target_path, rewritten) if rewritten != source
         end
 
-        def relative_path_from(from_dir, target)
-          Pathname.new(target).relative_path_from(Pathname.new(from_dir)).to_s
+        def root_of(result)
+          result.path.to_s.sub(/#{Regexp.escape(result.relative_path.to_s)}\z/, "").chomp("/")
         end
 
         # A companion is a *test* file the spec requires by relative path -- a shared helper,
