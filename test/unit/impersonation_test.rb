@@ -157,6 +157,29 @@ module Constable
       assert_equal :ok, api.anything
     end
 
+    # rspec-mocks calls this instance_double, and the checking is the point of both: a plain
+    # decoy answers anything, so it keeps passing after the real method is renamed.
+    def test_a_stand_in_answers_for_a_class
+      client = @context.stand_in(Client, fetch: :ok)
+
+      assert_equal :ok, client.fetch(1)
+      @context.attest(client).to @context.have_been_asked(:fetch)
+    end
+
+    def test_a_stand_in_refuses_a_method_the_class_does_not_have
+      error = assert_raises(Constable::Error) { @context.stand_in(Client, nope: 1) }
+
+      assert_match(/does not define :nope/, error.message)
+      assert_match(/passes forever and proves nothing/, error.message)
+      assert_match(/decoy/, error.message)
+    end
+
+    def test_a_plain_decoy_is_still_unchecked
+      api = @context.decoy(:api, anything_at_all: 1)
+
+      assert_equal 1, api.anything_at_all
+    end
+
     def test_any_instance_replaces_the_method_for_every_instance
       @context.impersonate_any(Client, :fetch, returns: :everyone)
 

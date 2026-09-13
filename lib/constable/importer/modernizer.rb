@@ -1127,6 +1127,17 @@ module Constable
 
         flag_unknown_matcher(node, args.first) if %i[to not_to to_not].include?(name)
 
+        # `instance_double(Client, fetch: :ok)` -> `stand_in(Client, fetch: :ok)`. Both
+        # check the class defines what the stand-in answers, which is the point of both.
+        if %i[instance_double class_double].include?(name) && receiver.nil?
+          args = node.children[2..] || []
+          if args.any? && args.first.type == :const
+            replace(node.loc.selector, "stand_in")
+            record_converted(:stand_in, node, "#{name}", "stand_in")
+            return
+          end
+        end
+
         if MOCK_ENTRY_POINTS.include?(name) && receiver.nil?
           flag(:rspec_mocks, node,
                "`#{first_line(node)}` uses rspec-mocks. Constable has no equivalent, so this file cannot " \

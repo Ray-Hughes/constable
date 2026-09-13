@@ -146,6 +146,26 @@ module Constable
     # every call.
     def decoy(name = :decoy, **methods) = Decoy.new(name, **methods)
 
+    # A stand-in for a specific class, checked against it.
+    #
+    #   stand_in(Client, fetch: :ok)
+    #
+    # rspec-mocks calls this `instance_double`, and the checking is the point of both: a
+    # plain decoy will answer anything, so it keeps passing after the real method is renamed
+    # or its arity changes. Here the class is asked first, and a method it does not define is
+    # refused -- which is the same refusal `impersonate` makes, for the same reason.
+    def stand_in(klass, **methods)
+      missing = methods.keys.reject { |name| klass.method_defined?(name) || klass.private_method_defined?(name) }
+      unless missing.empty?
+        raise Constable::Error,
+              "#{klass} does not define #{missing.map(&:inspect).join(", ")}, so standing in for " \
+              "it would be answering a method the real object does not have -- which passes " \
+              "forever and proves nothing. Use `decoy` for a stand-in with nothing behind it."
+      end
+
+      Decoy.new(klass.name || :stand_in, **methods)
+    end
+
     # What reached `target`, for the matchers to read.
     def constable_calls(target, name) = constable_ledger_for(target).calls(name)
 

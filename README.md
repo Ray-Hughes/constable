@@ -682,6 +682,7 @@ end
 | `impersonate(obj, :m, raises:)` | make it raise |
 | `impersonate_any(Klass, :m)` | every instance |
 | `decoy(:api, ping: :pong)` | a stand-in with nothing behind it |
+| `stand_in(Client, fetch: :ok)` | the same, checked against a real class |
 | `have_been_asked(:m)` | `.with(...)`, `.once`, `.twice`, `.never`, `.times(n)` |
 
 Everything is restored at teardown, including after a failure, because Constable owns the

@@ -426,6 +426,33 @@ module Constable
       assert_includes result.source, "impersonate_any(Client, :fetch, returns: :ok)"
     end
 
+    def test_instance_double_becomes_stand_in
+      result = convert(<<~SPEC)
+        describe User do
+          it "stands in" do
+            client = instance_double(String, upcase: "A")
+            expect(client.upcase).to eq("A")
+          end
+        end
+      SPEC
+
+      assert_includes result.source, %(stand_in(String, upcase: "A"))
+      assert_nil flag_named(result, :rspec_mocks)
+    end
+
+    # Without a class there is nothing to check against, so it stays a mock blocker.
+    def test_a_bare_double_is_still_refused
+      result = convert(<<~SPEC)
+        describe User do
+          it "doubles" do
+            client = double("client")
+          end
+        end
+      SPEC
+
+      refute_nil flag_named(result, :rspec_mocks)
+    end
+
     # `expect(client).to have_received(:fetch)` asserts after the call, which is exactly what
     # `have_been_asked` does -- so unlike a message expectation, it converts.
     def test_have_received_becomes_have_been_asked
