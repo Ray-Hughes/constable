@@ -5,6 +5,25 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-09-13
+
+A major because five things changed shape, not because the surface grew. Every one is
+listed under its own heading below with the reason.
+
+**What breaks, and what to do:**
+
+| Was | Now |
+| --- | --- |
+| `cold_cases:` in `config.yml` | `Constable.cold_cases` block in `test/case_helper.rb` |
+| `constable test` ran the git diff | runs everything; `--changed` is the old behaviour |
+| `constable test --unsafe` | `constable test --only=cold` |
+| `timeout: 0` turned it off | always on, default 300s, floor 10s |
+| settings assignable in Ruby | `.constable/config.yml` only, and assigning raises |
+
+Each raises with a sentence naming the replacement rather than failing quietly, so an
+upgrade tells you what to change instead of leaving you to find out.
+
+
 ### The cold-case link lives in case_helper.rb, not a file of its own
 
 It was `test/cold_cases.rb`. One fewer file, and the block ships in the generated helper
