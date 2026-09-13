@@ -742,7 +742,7 @@ module Constable
       SPEC
 
       results = ColdCase.run_file(File.join(tmp_root, "spec/plugin_spec.rb"),
-                                 config: Constable.config)
+                                  config: Constable.config)
 
       assert_equal 1, results.size
       assert_predicate results.first, :passed?, results.first.failure&.message
