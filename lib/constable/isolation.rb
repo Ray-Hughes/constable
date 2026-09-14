@@ -19,7 +19,8 @@ module Constable
     # Not booting the database is the tier's business, decided in case_helper.rb. If a
     # connection exists by the time a test runs, that test gets rolled back. Both things
     # can be true, and only one of them is a promise to the developer.
-    def transactional?(_tier = nil)
+    def transactional?(_tier = nil, case_class = nil)
+      return false if case_class.respond_to?(:transactional) && !case_class.transactional
       return false unless defined?(::ActiveRecord::Base)
 
       # `connection_pool.connected?` is false until something has actually checked a
@@ -34,8 +35,8 @@ module Constable
 
     # Runs the block inside a transaction that is always rolled back, so nothing a test
     # writes survives it. Falls through to a plain yield when there's no database.
-    def with_rollback(tier)
-      return yield unless transactional?(tier)
+    def with_rollback(tier, case_class = nil)
+      return yield unless transactional?(tier, case_class)
 
       result = nil
       ::ActiveRecord::Base.transaction(requires_new: true) do

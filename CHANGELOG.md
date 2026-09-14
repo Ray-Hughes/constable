@@ -5,6 +5,37 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.11.0] - 2026-09-14
+
+### `transactional false`
+
+Constable wraps every investigation in a transaction and rolls it back. That is the right
+default and it stays the default, but it is not interchangeable with the other way a suite
+cleans up after itself.
+
+Postgres sequences are not transactional. A rolled-back test leaves the next one's ids where
+it found them; a truncation resets them to 1. A suite written against truncation -- Capybara
+suites usually are, because a browser talks to a server that cannot see an open transaction
+-- ends up with tests that quietly depend on ids lining up, and those tests fail against a
+rollback for reasons that have nothing to do with the code under test.
+
+```ruby
+class SystemCase < Constable::Case
+  transactional false
+  briefing { DatabaseCleaner.start }
+  teardown { DatabaseCleaner.clean }
+end
+```
+
+Inherited the way `tier` is. Turning it off means the cleanup is now yours, and Constable
+says so once per run with the case names rather than letting it be discovered as cross-test
+contamination.
+
+The system tier's connection-pool lock from 3.10.0 now applies only when the case is
+transactional -- a case that commits as it goes needs no help being seen -- and only to the
+primary pool. Pinning a second database's pool to the test thread bought nothing and was
+observed hanging a run outright.
+
 ## [3.10.0] - 2026-09-14
 
 ### A system case's browser can see what the case created

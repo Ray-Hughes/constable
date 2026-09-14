@@ -67,5 +67,47 @@ module Constable
       refute Isolation.app_defined?(String), "a core class is not the app's to leak"
       refute Isolation.app_defined?(Constable::Case), "the framework is not the app"
     end
+
+    # ---- transactional false -------------------------------------------------------------
+    #
+    # A rollback and a truncation are not interchangeable. Postgres sequences are not
+    # transactional, so a rolled-back test leaves the next one's ids where it found them
+    # while a truncation resets them -- and a Capybara suite written against truncation has
+    # tests that quietly depend on that.
+
+    def test_a_case_that_declares_transactional_false_is_not_wrapped
+      klass = build_case("UntransactedCase") { transactional false }
+
+      refute Isolation.transactional?(:system, klass)
+    end
+
+    def test_the_declaration_is_inherited
+      parent = build_case("UntransactedCase") { transactional false }
+      child  = build_case("ChildCase", parent)
+
+      refute child.transactional
+      refute Isolation.transactional?(:system, child)
+    end
+
+    # `false` is a meaningful argument, so "no argument" cannot be `nil`.
+    def test_reading_it_back_does_not_clear_it
+      klass = build_case("UntransactedCase") { transactional false }
+
+      refute klass.transactional
+      refute klass.transactional, "reading it turned the setter into a getter call"
+    end
+
+    def test_a_case_that_says_nothing_is_transactional
+      assert build_case("PlainCase").transactional
+    end
+
+    def test_with_rollback_runs_the_block_either_way
+      klass = build_case("UntransactedCase") { transactional false }
+      ran = false
+
+      Isolation.with_rollback(:system, klass) { ran = true }
+
+      assert ran
+    end
   end
 end

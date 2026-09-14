@@ -27,6 +27,10 @@ module Constable
     # Deliberately a list rather than `method_defined?`: a blanket check would reject
     # ordinary names a tier happens to define (`response` on an integration case), and
     # shadowing those is a legitimate, if unusual, thing to want.
+    # `transactional` reads as a getter with no argument and a setter with one, and `false`
+    # is a meaningful argument -- so "no argument" needs a value `false` is not.
+    UNSET = Object.new.freeze
+
     RESERVED_WITNESS_NAMES = %i[
       class send __send__ __id__ object_id method methods freeze frozen? dup clone
       hash inspect to_s instance_variable_get instance_variable_set instance_variables
@@ -194,6 +198,37 @@ module Constable
 
       def tier=(value)
         @constable_tier = value&.to_sym
+      end
+
+      # Whether Constable wraps this case's investigations in a transaction it rolls back.
+      # True unless a case says otherwise, and inherited the way `tier` is.
+      #
+      # The one situation that needs otherwise is a suite whose own cleanup is truncation.
+      # A rollback and a truncation are not interchangeable: Postgres sequences are not
+      # transactional, so a rolled-back test leaves the next one's ids where it found them,
+      # while a truncation resets them. A suite written against truncation -- Capybara suites
+      # usually are, because a browser talks to a server that cannot see an open transaction
+      # -- has tests that quietly depend on that, and they fail against a rollback for
+      # reasons that have nothing to do with the code under test.
+      #
+      #   class SystemCase < Constable::Case
+      #     transactional false
+      #     briefing { DatabaseCleaner.start }
+      #     teardown { DatabaseCleaner.clean }
+      #   end
+      #
+      # Turning it off means the cleanup is now yours. Constable says so once per run rather
+      # than letting a suite discover it as cross-test contamination.
+      def transactional(value = UNSET)
+        return self.transactional = value unless value.equal?(UNSET)
+
+        return @constable_transactional if defined?(@constable_transactional) && !@constable_transactional.nil?
+
+        superclass.respond_to?(:transactional) ? superclass.transactional : true
+      end
+
+      def transactional=(value)
+        @constable_transactional = value
       end
 
       # Every investigation belonging to this class and to its dockets, flattened, in

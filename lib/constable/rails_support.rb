@@ -139,7 +139,10 @@ module Constable
         def before_setup
           driver = self.class.constable_driver || self.class.driven_by(:selenium)
           driver.use
-          constable_lock_connection_pools!(true)
+          # Only inside a transaction. A case that has turned the rollback off commits as it
+          # goes, so the server thread can see everything already -- and pinning the pool to
+          # this thread would only make the server queue behind it.
+          constable_lock_connection_pools!(true) if self.class.transactional
           super if defined?(super)
         end
 
@@ -166,11 +169,13 @@ module Constable
           nil
         end
 
+        # The primary pool only. Rails locks every pool it has enlisted as a fixture
+        # connection; here the transaction is opened on `ActiveRecord::Base`'s connection and
+        # that is the one the server thread has to be handed. Pinning a second database's
+        # pool -- a legacy Oracle one, say -- to this thread buys nothing and was observed
+        # hanging a run outright.
         def constable_connection_pools
-          handler = ::ActiveRecord::Base.connection_handler
-          return handler.all_connection_pools if handler.respond_to?(:all_connection_pools)
-
-          handler.connection_pool_list
+          [::ActiveRecord::Base.connection_pool]
         rescue StandardError
           []
         end

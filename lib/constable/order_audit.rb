@@ -105,7 +105,9 @@ module Constable
             # The same full lifecycle the Runner drives -- before_setup, briefings, body,
             # teardowns, after_teardown -- because an audit that skipped half of it would
             # be comparing two different tests and calling the difference an order bug.
-            Isolation.with_rollback(investigation.tier) { instance.run_investigation(investigation) }
+            Isolation.with_rollback(investigation.tier, investigation.case_class) do
+              instance.run_investigation(investigation)
+            end
             "P"
           rescue StandardError
             "F"

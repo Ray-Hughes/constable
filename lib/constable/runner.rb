@@ -333,6 +333,7 @@ module Constable
     def execute(items)
       return [] if items.empty?
 
+      warn_about_untransacted_cases!(items)
       items = group_by_case(items)
       count = worker_count(items)
       if count > 1 && forkable? && parallel_safe?(count)
@@ -340,6 +341,25 @@ module Constable
       else
         run_serial(items)
       end
+    end
+
+    # A case that has turned the rollback off is cleaning up after itself, or it is not
+    # cleaning up at all -- and the second reads as other tests failing, never as this one.
+    # Said once, with the count, so the trade is visible rather than deduced.
+    def warn_about_untransacted_cases!(items)
+      classes = items.filter_map { |item| item.investigation&.case_class }.uniq
+      opted_out = classes.select { |klass| klass.respond_to?(:transactional) && !klass.transactional }
+      return if opted_out.empty?
+
+      names = opted_out.map do |klass|
+        klass.respond_to?(:constable_display_name) ? klass.constable_display_name : klass
+      end
+      Constable.warn!(
+        "#{names.uniq.sort.join(", ")} #{opted_out.one? ? "has" : "have"} `transactional false`, " \
+        "so Constable does not roll their tests back. Whatever they write stays written unless " \
+        "the case cleans it up itself.",
+        kind: :isolation
+      )
     end
 
     # Here rather than only in #balance, because #balance is the parallel path and a serial
@@ -1100,7 +1120,7 @@ module Constable
         # Setup without a body, but with its teardown -- skipping the body is the point of
         # the jail; skipping the cleanup would just leave the request session, the browser
         # or whatever else a teardown releases open for whatever runs next.
-        Isolation.with_rollback(investigation.tier) do
+        Isolation.with_rollback(investigation.tier, investigation.case_class) do
           raised = nil
           begin
             instance.run_setup(investigation)
@@ -1144,7 +1164,9 @@ module Constable
         # run_investigation is the whole lifecycle: before_setup, briefings, body,
         # teardowns, after_teardown. The teardown half runs inside the rollback whether or
         # not the body raised, and a teardown that raises never masks the body's failure.
-        Isolation.with_rollback(investigation.tier) { instance.run_investigation(investigation) }
+        Isolation.with_rollback(investigation.tier, investigation.case_class) do
+          instance.run_investigation(investigation)
+        end
       rescue AssertionFailed => e
         status = :failed
         failure = Failure.from_exception(e, context: e.context)
