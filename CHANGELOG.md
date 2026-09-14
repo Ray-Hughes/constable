@@ -5,6 +5,15 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.13.1] - 2026-09-14
+
+### `controller` on a controller case
+
+Rails sets `@controller` and exposes no reader for it. RSpec's controller example group adds
+one, so a converted controller spec arrives calling `controller` -- to reach into the
+controller it just drove -- and got `NameError` from a case that was holding the object all
+along.
+
 ## [3.13.0] - 2026-09-14
 
 ### A system case puts the Capybara driver back

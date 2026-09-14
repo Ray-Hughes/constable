@@ -380,6 +380,16 @@ module Constable
       assert_equal Object.const_get(:GadgetsController), docket.controller_class
     end
 
+    # Rails sets @controller and exposes no reader; RSpec's controller example group adds
+    # one, so a converted file arrives calling `controller`.
+    def test_the_controller_under_test_is_readable
+      subject = Object.new
+      subject.extend(Constable::RailsSupport::Controller::ControllerReader)
+      subject.instance_variable_set(:@controller, :the_controller)
+
+      assert_equal :the_controller, subject.controller
+    end
+
     def test_a_case_that_names_no_controller_infers_nothing
       klass = Class.new(Constable::Case)
       klass.extend(Constable::RailsSupport::Controller::ClassMethods)

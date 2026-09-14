@@ -49,6 +49,7 @@ module Constable
         # set it in your test's setup method" -- true, and not something a case author
         # should have to know.
         base.include(Routes)
+        base.include(ControllerReader)
         # `controller` and `request`, which controller specs reach for constantly, come from
         # Behavior. Which controller to drive is inferred from the case name the way RSpec
         # infers it from the described class: FooControllerCase -> FooController.
@@ -60,6 +61,15 @@ module Constable
           super
           @routes ||= ::Rails.application.routes if defined?(::Rails) && ::Rails.application
         end
+      end
+
+      # `controller` reads the instance ActionController::TestCase built for this test --
+      # the thing a converted controller spec calls to reach into the controller it just
+      # drove: `attest(controller.instance_variable_get(:@thing))`. Rails sets `@controller`
+      # and exposes no reader; RSpec's controller example group adds one, so a converted file
+      # arrives expecting it.
+      module ControllerReader
+        def controller = @controller
       end
 
       module ClassMethods
