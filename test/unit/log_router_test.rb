@@ -81,6 +81,44 @@ module Constable
 
     # Something handed $stdout may ask it for a file descriptor, and a NoMethodError
     # raised from inside somebody else's gem is a bad way to find that out.
+    # ---- crash visibility --------------------------------------------------------------
+
+    # A fatal signal skips at_exit, so the descriptors are never put back and Ruby's crash
+    # report ends up in log/test.log with nothing on the terminal. The marker is what turns
+    # a silent exit 134 into a sentence on the next run.
+    def test_a_run_that_never_restored_the_console_is_reported_next_time
+      marker = LogRouter.console_mark_path(tmp_root)
+      FileUtils.mkdir_p(File.dirname(marker))
+      File.write(marker, "999999\n#{tmp_root}/log/test.log\n")
+
+      io = StringIO.new
+      message = LogRouter.report_previous_crash!(io: io, root: tmp_root)
+
+      assert_match(/ended without finishing/, message.to_s)
+      assert_match(%r{log/test\.log}, io.string)
+      refute_path_exists marker, "the marker has to be cleared once it has been reported"
+    end
+
+    # A second Constable running right now is not a crash.
+    def test_a_marker_from_a_live_process_is_left_alone
+      marker = LogRouter.console_mark_path(tmp_root)
+      FileUtils.mkdir_p(File.dirname(marker))
+      File.write(marker, "#{Process.ppid}\n#{tmp_root}/log/test.log\n")
+
+      io = StringIO.new
+
+      assert_nil LogRouter.report_previous_crash!(io: io, root: tmp_root)
+      assert_empty io.string
+      assert_path_exists marker
+    end
+
+    def test_no_marker_means_nothing_is_said
+      io = StringIO.new
+
+      assert_nil LogRouter.report_previous_crash!(io: io, root: tmp_root)
+      assert_empty io.string
+    end
+
     def test_the_tee_answers_fileno
       File.open(File.join(tmp_root, "out.log"), "w") do |file|
         tee = LogRouter::Tee.new(file, StringIO.new)

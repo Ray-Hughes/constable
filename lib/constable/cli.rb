@@ -78,6 +78,8 @@ module Constable
     option :concise,  type: :boolean, default: false, desc: "Shorthand for --output=concise"
     def test(*paths)
       config = load_config
+      # Before the console is taken, because it is about the last run that took it.
+      LogRouter.report_previous_crash!
       LogRouter.route!(verbose: options[:verbose])
 
       selection = Selection.new(

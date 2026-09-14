@@ -125,6 +125,68 @@ module Constable
       # run has pointed the real one at the log.
       def console_err = @console_err || $stderr
 
+      # ---- crash visibility ------------------------------------------------------------
+      #
+      # fd 1 and 2 point at log/test.log for the duration of a run, and `at_exit` puts them
+      # back. A fatal signal skips `at_exit`: Ruby writes its `[BUG]` report to fd 2, which
+      # is the log, and the process dies. The terminal shows nothing at all and the shell
+      # reports 134, which reads as "Constable produced no output" rather than "the process
+      # crashed". Seen for real on macOS, where Oracle's instant client segfaults inside
+      # OCIEnvCreate while it scans the environment and turns the SIGSEGV into an abort.
+      #
+      # Nothing can be printed from inside a process dying that way, so the note is left on
+      # disk instead and read by the next run -- which is exactly when someone is looking
+      # for it.
+      def mark_console_taken!(log_path)
+        path = console_mark_path
+        FileUtils.mkdir_p(File.dirname(path))
+        File.write(path, "#{Process.pid}\n#{log_path}\n")
+      rescue StandardError
+        nil
+      end
+
+      def clear_console_mark!
+        FileUtils.rm_f(console_mark_path)
+      rescue StandardError
+        nil
+      end
+
+      def console_mark_path(root = nil)
+        File.join((root || Constable.root).to_s, ".constable", "console.lock")
+      end
+
+      # Called at the start of a run, before the console is taken. Returns the message it
+      # printed, or nil. A live pid means a second Constable is running right now, which is
+      # not a crash and is left alone.
+      def report_previous_crash!(io: $stdout, root: nil)
+        path = console_mark_path(root)
+        return nil unless File.exist?(path)
+
+        pid, log_path = File.read(path).split("\n", 2)
+        return nil if process_alive?(pid.to_i)
+
+        File.delete(path)
+        message = "The previous run ended without finishing -- the process was killed or " \
+                  "crashed before it could report. Its output, including any Ruby crash " \
+                  "report, is at the end of #{log_path.to_s.strip}."
+        io.puts(message)
+        message
+      rescue StandardError
+        nil
+      end
+
+      def process_alive?(pid)
+        return false if pid <= 0 || pid == Process.pid
+
+        Process.kill(0, pid)
+        true
+      rescue Errno::ESRCH
+        false
+      rescue Errno::EPERM
+        # Someone else's process, which is still a process.
+        true
+      end
+
       # Rails loggers are not the only thing that writes to a terminal. A gem warning --
       # Faraday's "install the faraday-retry gem", say -- goes straight to $stderr, once
       # per file that triggers it, and lands in the middle of the live stream:
@@ -166,6 +228,7 @@ module Constable
         $stdout.sync = true
         $stderr.sync = true
         @reopened = true
+        mark_console_taken!(file.path)
 
         # Whatever happens next -- a clean exit, a raise, an interrupt -- the descriptors
         # go back. Without this an uncaught exception prints its backtrace into
@@ -198,6 +261,7 @@ module Constable
           $stderr = @swapped_err
         end
 
+        clear_console_mark! if @reopened
         [@console_out, @console_err].each { |io| io&.close unless io&.closed? } if @reopened
         @console_out = nil
         @console_err = nil

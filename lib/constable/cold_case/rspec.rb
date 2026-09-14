@@ -287,6 +287,9 @@ module Constable
           prepare_session_configuration(::RSpec.configuration)
           clear_examples
           restore_shared_examples!
+          # Inside the session, so `RSpec.configure` in a support file or rails_helper
+          # lands on the configuration cold cases actually run against.
+          ColdCase.run_bootstrap!
 
           yield
         ensure

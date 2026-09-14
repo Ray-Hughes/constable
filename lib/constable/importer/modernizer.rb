@@ -292,8 +292,22 @@ module Constable
         end
 
         # The original bytes, between a header line and a final `end`. Nothing inside is
-        # parsed, reindented or touched -- that is the whole promise of a cold case.
+        # parsed, reindented or touched -- that is the whole promise of a cold case, with
+        # one exception the promise itself demands: top-level classes and modules.
+        #
+        # A spec file that opens `class JobThatIsGood < ApplicationJob` is defining a
+        # top-level constant. Wrapped, that same line defines
+        # `LegacyApplicationJobSpec::JobThatIsGood` instead -- a different constant with a
+        # different `name`, which fails any example that asserts on the name, and which is
+        # far worse when the definition was a monkeypatch: `class Task` inside the wrapper
+        # silently creates a brand new class and patches nothing at all.
+        #
+        # So they move above the wrapper, in source order, which is where they were. Nothing
+        # else is touched.
         def cold_source(result, body = nil)
+          source = (body || result.original).to_s
+          hoisted, remainder = hoist_top_level_definitions(source)
+
           <<~RUBY
             # frozen_string_literal: true
 
@@ -303,15 +317,70 @@ module Constable
             # Nothing inside has been converted, so every RSpec feature still works --
             # `let!`, `before(:all)`, shared examples, rspec-mocks. Convert it with
             # `constable modernize` when it is worth doing; there is no deadline.
-            class #{cold_class_name(result)} < Constable::ColdCase::RSpec
-            #{indent((body || result.original).to_s.rstrip)}
+            #{hoisted}class #{cold_class_name(result)} < Constable::ColdCase::RSpec
+            #{indent(remainder.rstrip)}
             end
           RUBY
         end
 
+        # [text to emit above the wrapper, what is left for inside it].
+        #
+        # Line-based rather than node-based, so the definition arrives byte for byte with
+        # whatever comments sat above it. A file that does not parse keeps the old
+        # behaviour: a cold case has to be written even when nothing can be read.
+        def hoist_top_level_definitions(source)
+          spans = top_level_definition_spans(source)
+          return ["", source] if spans.empty?
+
+          lines  = source.lines
+          hoist  = spans.flat_map { |span| (span[:first]..span[:last]).map { |n| lines[n - 1] } }
+          ["\n#{hoist.join.rstrip}\n\n", tidy_blank_lines(drop_lines(source, spans))]
+        end
+
+        def top_level_definition_spans(source)
+          root = Parser::CurrentRuby.parse(source)
+          return [] unless root
+
+          nodes = root.type == :begin ? root.children : [root]
+          nodes.each_with_object([]) do |node, spans|
+            next unless node.is_a?(Parser::AST::Node) && %i[class module].include?(node.type)
+
+            first = node.loc.expression.line
+            spans << { first: leading_comment_line(source, first), last: node.loc.expression.last_line }
+          end
+        rescue StandardError
+          []
+        end
+
+        # A definition's own comment block belongs to the definition. Walks up while the
+        # lines are comments, and stops before a magic comment -- `# frozen_string_literal`
+        # heads the file, not the class under it.
+        def leading_comment_line(source, line)
+          lines = source.lines
+          first = line
+          while first > 1
+            candidate = lines[first - 2].to_s
+            break unless candidate.strip.start_with?("#")
+            break if candidate.match?(/^#\s*(?:frozen_string_literal|encoding|warn_indent):/)
+
+            first -= 1
+          end
+          first
+        end
+
+        def tidy_blank_lines(source)
+          source.gsub(/\n{3,}/, "\n\n").sub(/\A\n+/, "")
+        end
+
+        # Any separator a filename can carry, not just underscores. `line-of-business_spec.rb`
+        # was producing `LegacyLine-of-businessSpec`, which is not a constant name -- the file
+        # was written, and then failed to parse every run.
         def cold_class_name(result)
-          base = File.basename(result.path, ".rb").sub(/_(?:spec|test)\z/, "")
-          "Legacy#{base.split(%r{[_/]}).map(&:capitalize).join}Spec"
+          base  = File.basename(result.path, ".rb").sub(/_(?:spec|test)\z/, "")
+          words = base.split(/[^A-Za-z0-9]+/).reject(&:empty?)
+          words = ["file"] if words.empty?
+          words.unshift("n") if words.first.match?(/\A\d/)
+          "Legacy#{words.map(&:capitalize).join}Spec"
         end
 
         def indent(source)

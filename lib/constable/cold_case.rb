@@ -235,6 +235,57 @@ module Constable
         File.absolute_path?(path) ? path : File.expand_path(path, config.root.to_s)
       end
 
+      # ---- session bootstrap -----------------------------------------------------------
+      #
+      # A cold case runs through the real engine, against a session RSpec::Configuration
+      # that Constable builds and swaps in. Anything installed on the configuration that
+      # existed at boot -- `config.include`, shoulda-matchers' integration, Capybara's
+      # driver registration, DatabaseCleaner's suite hooks -- is installed on an object
+      # the session never uses, and the cold case runs without it. The symptom is a legacy
+      # spec that passed yesterday now raising NoMethodError on `belong_to` or `visit`.
+      #
+      # The fix is to run that configuration where it belongs: inside the session, once,
+      # before the first cold case. `Constable.load_support` registers every support file
+      # it declined to load for exactly this reason, and a host can add its own:
+      #
+      #   Constable::ColdCase.bootstrap { require "rails_helper" }
+      #
+      # Blocks and paths both work. Paths go through `require`, so a file the cold case
+      # itself also requires loads once, not twice.
+      def bootstrap_entries = (@bootstrap_entries ||= [])
+
+      def bootstrap(path = nil, &block)
+        entry = block || path
+        bootstrap_entries << entry if entry && !bootstrap_entries.include?(entry)
+        self
+      end
+
+      def reset_bootstrap!
+        bootstrap_entries.clear
+        @bootstrap_cursor = 0
+      end
+
+      # Runs whatever has not run yet. The cursor rather than a boolean, so a support file
+      # registered after the first cold case still gets its turn.
+      def run_bootstrap!
+        @bootstrap_cursor ||= 0
+        while @bootstrap_cursor < bootstrap_entries.size
+          entry = bootstrap_entries[@bootstrap_cursor]
+          @bootstrap_cursor += 1
+          run_bootstrap_entry(entry)
+        end
+      end
+
+      def run_bootstrap_entry(entry)
+        entry.respond_to?(:call) ? entry.call : require(entry.to_s)
+      rescue StandardError, ScriptError => e
+        label = entry.respond_to?(:call) ? "a Constable::ColdCase.bootstrap block" : entry.to_s
+        raise Constable::Error,
+              "#{label} could not be loaded into the cold-case session -- #{e.class}: " \
+              "#{e.message}. It runs inside the session RSpec configuration, so anything it " \
+              "needs from the app must already be loaded by the time the first cold case runs."
+      end
+
       # Cold-case classes announce themselves while their file loads, so a Result can be
       # labelled `LegacyUsersSpec` rather than an anonymous example-group description.
       def note_cold_class(klass)

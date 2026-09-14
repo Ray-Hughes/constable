@@ -23,6 +23,8 @@ module Constable
   # this exists to prevent, so `skipped` says what was left out and why.
   module SupportFiles
     CONFIGURES_RSPEC = /RSpec\.configure\b/
+    RSPEC_REASON = "configures RSpec -- Constable owns the transaction, isolation and " \
+                   "system-tier setup itself; deferred to the cold-case session"
     CONFIGURES_MINITEST = /Minitest\.after_run\b|Minitest::Test\.(?:extend|include)\b/
 
     class << self
@@ -87,7 +89,10 @@ module Constable
       def load_one(path, root)
         relative = path.delete_prefix("#{root}/")
         reason = framework_config_reason(path)
-        return skipped << [relative, reason] if reason
+        if reason
+          defer_to_cold_cases(path) if reason == RSPEC_REASON
+          return skipped << [relative, reason]
+        end
 
         before = module_names
         require path
@@ -115,12 +120,23 @@ module Constable
       def framework_config_reason(path)
         source = File.read(path)
         if source.match?(CONFIGURES_RSPEC)
-          "configures RSpec -- Constable owns the transaction, isolation and system-tier setup itself"
+          RSPEC_REASON
         elsif source.match?(CONFIGURES_MINITEST)
           "configures Minitest directly"
         end
       rescue StandardError
         nil
+      end
+
+      # Not loaded here, but not thrown away either. Cold cases run through real RSpec
+      # against a session configuration Constable swaps in, and these files are the only
+      # thing that configures it -- Capybara's drivers, DatabaseCleaner's suite hooks,
+      # shoulda-matchers' integration, `config.include SomeHelper`. Registering them as a
+      # cold-case bootstrap runs them once, inside that session, where they work.
+      def defer_to_cold_cases(path)
+        return unless defined?(Constable::ColdCase)
+
+        Constable::ColdCase.bootstrap(path)
       end
 
       # Once, with a count, not one line per file. The detail is in `skipped` for anyone who
@@ -129,9 +145,10 @@ module Constable
         return if skipped.empty?
 
         Constable.warn!(
-          "#{skipped.size} support file(s) were not loaded because they configure another " \
-          "framework: #{skipped.map(&:first).join(", ")}. Constable provides those concerns " \
-          "itself. Anything a case actually calls should live in a plain module."
+          "#{skipped.size} support file(s) were not loaded into native cases because they " \
+          "configure another framework: #{skipped.map(&:first).join(", ")}. Constable provides " \
+          "those concerns itself. The RSpec ones still run inside the cold-case session, so " \
+          "legacy files keep them; anything a native case calls should live in a plain module."
         )
       end
     end

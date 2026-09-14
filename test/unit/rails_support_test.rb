@@ -255,6 +255,23 @@ module Constable
   # separate there too -- and without controller support a converted controller spec raises
   # NoMethodError on `get` while an integration case a directory away works fine.
   class RailsSupportControllerTest < TestCase
+    # Inference works off the case's own constant name, so these tests have to put real
+    # constants on Object. Removed again afterwards: a leftover `WidgetsControllerCase` is
+    # invisible here and fails the scaffold generator's collision check several hundred
+    # tests later, which is a long way to walk from the cause.
+    NAMED_CONSTANTS = %i[
+      WidgetsController WidgetsControllerCase
+      GadgetsController GadgetsControllerCase
+      PlainThingCase
+    ].freeze
+
+    def teardown
+      NAMED_CONSTANTS.each do |name|
+        Object.send(:remove_const, name) if Object.const_defined?(name)
+      end
+      super
+    end
+
     def test_the_controller_is_inferred_from_the_case_name
       Object.const_set(:WidgetsController, Class.new) unless Object.const_defined?(:WidgetsController)
       klass = Class.new(Constable::Case)

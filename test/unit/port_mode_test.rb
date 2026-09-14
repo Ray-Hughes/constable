@@ -94,6 +94,65 @@ module Constable
                    File.read(File.join(tmp_root, result.written_to)))
     end
 
+    # A spec file's top-level `class` is a top-level constant. Wrapped in the cold-case
+    # class it becomes `LegacyWidgetSpec::Helper` instead -- a different constant, with a
+    # different `name`, and (when the definition was reopening an app class) a brand new
+    # class that patches nothing. Verbatim has to mean verbatim about where constants land.
+    def test_port_cold_hoists_a_top_level_class_out_of_the_wrapper
+      write_file("spec/models/widget_spec.rb", <<~SPEC)
+        # A stand-in the examples build.
+        class WidgetDouble
+          def call = :ok
+        end
+
+        describe "Widget" do
+          it("names it") { expect(WidgetDouble.name).to eq("WidgetDouble") }
+        end
+      SPEC
+
+      result = port("spec/models/widget_spec.rb", write: :port_cold)
+      source = File.read(File.join(tmp_root, result.written_to))
+      wrapper_line = source.lines.index { |line| line.start_with?("class LegacyWidgetSpec") }
+      class_line   = source.lines.index { |line| line.start_with?("class WidgetDouble") }
+
+      assert class_line, "the top-level class was left indented inside the wrapper"
+      assert_operator class_line, :<, wrapper_line
+      assert_match(/# A stand-in the examples build\./, source.lines[class_line - 1],
+                   "the class lost the comment that was written above it")
+      refute_match(/^  class WidgetDouble/, source)
+      assert_match(/^  describe "Widget" do/, source, "the examples still belong to the wrapper")
+    end
+
+    def test_port_cold_leaves_a_file_with_no_top_level_class_alone
+      write_file("spec/models/widget_spec.rb", <<~SPEC)
+        describe "Widget" do
+          it("adds up") { expect(1 + 1).to eq(2) }
+        end
+      SPEC
+
+      result = port("spec/models/widget_spec.rb", write: :port_cold)
+      source = File.read(File.join(tmp_root, result.written_to))
+
+      assert_equal 1, source.scan(/^class /).length
+      assert_match(/^  describe "Widget" do/, source)
+    end
+
+    # A filename is not a constant name. `line-of-business_spec.rb` was producing
+    # `LegacyLine-of-businessSpec`, and the file it went into never parsed again.
+    def test_port_cold_builds_a_valid_constant_from_any_filename
+      write_file("spec/sql/line-of-business_spec.rb", <<~SPEC)
+        describe "line of business" do
+          it("adds up") { expect(1 + 1).to eq(2) }
+        end
+      SPEC
+
+      result = port("spec/sql/line-of-business_spec.rb", write: :port_cold)
+      source = File.read(File.join(tmp_root, result.written_to))
+
+      assert_match(/^class LegacyLineOfBusinessSpec < Constable::ColdCase::RSpec$/, source)
+      assert Parser::CurrentRuby.parse(source), "the cold case has to parse"
+    end
+
     # --- --delete: finish the move ------------------------------------------------------
     #
     # A port that leaves the original behind has not moved anything. Both files are then

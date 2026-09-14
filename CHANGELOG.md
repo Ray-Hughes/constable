@@ -5,6 +5,64 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-09-13
+
+### Cold cases now run with the host's RSpec configuration
+
+A cold case runs through the real engine, against a session `RSpec::Configuration` that
+Constable builds and swaps in. Anything installed on the configuration that existed at boot
+is installed on an object the session never uses. shoulda-matchers integrates by calling
+`RSpec.configure { |c| c.include ... }`; so does Capybara, so does DatabaseCleaner, so does
+every `config.include SomeHelper` in a `rails_helper`. All of it was landing on the wrong
+object, and the cold case then died on `belong_to` or `visit` -- a method that is plainly
+set up, in a file that passed the day before adoption.
+
+This is the same class of bug as `verbose_retry` in 3.1.0 and shared contexts in 3.1.1:
+state installed once, against an object we later swap out.
+
+The configuration now runs where it belongs:
+
+```ruby
+Constable::ColdCase.bootstrap { require Rails.root.join("spec/rails_helper.rb").to_s }
+```
+
+Blocks and paths both work, and it runs once, inside the session, before the first cold
+case. `Constable.load_support` registers this automatically for every support file it
+declined to load: those files were skipped because they configure RSpec, which is exactly
+what makes them the cold-case session's business. They are still kept out of native cases,
+where Constable owns the transaction and the isolation itself.
+
+### A cold case's top-level classes stay top-level
+
+`constable import` wraps a spec file's body in a cold-case class. A spec that opened
+`class JobThatIsGood < ApplicationJob` was then defining
+`LegacyApplicationJobSpec::JobThatIsGood` -- a different constant with a different `name`,
+which fails any example asserting on the name. Worse when the definition reopened an app
+class: `class Task` inside the wrapper silently created a brand new class and patched
+nothing at all.
+
+Top-level `class` and `module` definitions now move above the wrapper, in source order,
+with the comments that were written above them. Verbatim has to mean verbatim about where
+constants land.
+
+### Cold-case class names are valid constants
+
+`line-of-business_spec.rb` produced `LegacyLine-of-businessSpec`. The file was written and
+then failed to parse on every run afterwards. Every non-alphanumeric separator is handled
+now, and a leading digit is prefixed rather than emitted.
+
+### A crash is no longer silent
+
+`fd` 1 and 2 point at `log/test.log` for the duration of a run, and `at_exit` puts them
+back. A fatal signal skips `at_exit`: Ruby writes its `[BUG]` report to fd 2, which is the
+log, and the process dies. The terminal shows nothing and the shell reports 134, which
+reads as "Constable produced no output" rather than "the process crashed". Seen for real on
+macOS, where Oracle's instant client segfaults inside `OCIEnvCreate` while scanning the
+environment and turns the `SIGSEGV` into an abort.
+
+Nothing can be printed from inside a process dying that way, so the run leaves a marker on
+disk and the next run reports it -- which is when someone is looking for it.
+
 ## [3.7.0] - 2026-09-13
 
 ### Controller tests
