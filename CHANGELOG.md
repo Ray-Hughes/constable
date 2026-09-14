@@ -5,6 +5,16 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.13.2] - 2026-09-14
+
+### The driver restore hands the choice back, rather than pinning it
+
+3.13.0 put `Capybara.current_driver` back after a system case, but captured the resolved
+answer -- and `Capybara.current_driver` answers `default_driver` when nothing has been
+chosen. Restoring that pinned the driver to whatever the default happened to be at that
+moment, which on a suite of cold cases is before the app's own Capybara file has set it. The
+raw value is captured now, so nil stays nil and the default answers again.
+
 ## [3.13.1] - 2026-09-14
 
 ### `controller` on a controller case

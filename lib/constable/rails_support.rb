@@ -153,7 +153,7 @@ module Constable
           # and a driver registered without the flags a container needs dies on the spot:
           # "session not created: Chrome instance exited", in files that never asked for this
           # driver. So it goes back afterwards.
-          @constable_previous_driver = ::Capybara.current_driver
+          @constable_previous_driver = constable_raw_capybara_driver
           driver = self.class.constable_driver || self.class.driven_by(:selenium)
           driver.use
           # Only inside a transaction. A case that has turned the rollback off commits as it
@@ -176,6 +176,21 @@ module Constable
           return unless defined?(@constable_previous_driver)
 
           ::Capybara.current_driver = @constable_previous_driver
+        rescue StandardError
+          nil
+        end
+
+        # The raw value, which is usually nil -- not `Capybara.current_driver`, which answers
+        # `default_driver` when nothing has been chosen. Restoring the resolved answer would
+        # pin the driver to whatever the default happened to be at this moment, and the
+        # default is set by an app's own Capybara support file, which on a suite of cold
+        # cases has not necessarily been loaded yet.
+        def constable_raw_capybara_driver
+          if ::Capybara.respond_to?(:threadsafe) && ::Capybara.threadsafe
+            Thread.current["capybara_current_driver"]
+          else
+            ::Capybara.instance_variable_get(:@current_driver)
+          end
         rescue StandardError
           nil
         end

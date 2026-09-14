@@ -299,6 +299,8 @@ module Constable
     module FakeCapybara
       class << self
         attr_accessor :current_driver
+
+        def threadsafe = false
       end
     end
 
@@ -312,6 +314,20 @@ module Constable
       stub_const_capybara(FakeCapybara) { subject.send(:constable_restore_driver!) }
 
       assert_equal :app_registered_driver, FakeCapybara.current_driver
+    end
+
+    # nil is the usual raw value, and restoring nil is what lets `default_driver` answer
+    # again -- which matters because an app's Capybara support file sets that default, and on
+    # a suite of cold cases it may not have been loaded when this case ran.
+    def test_restoring_nil_hands_the_choice_back_to_the_default
+      subject = Object.new
+      subject.extend(Constable::RailsSupport::System::InstanceMethods)
+      subject.instance_variable_set(:@constable_previous_driver, nil)
+      FakeCapybara.current_driver = :selenium
+
+      stub_const_capybara(FakeCapybara) { subject.send(:constable_restore_driver!) }
+
+      assert_nil FakeCapybara.current_driver
     end
 
     def test_a_case_that_never_recorded_one_changes_nothing
