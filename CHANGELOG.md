@@ -5,6 +5,14 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.16.1] - 2026-09-14
+
+### `be_falsy`
+
+RSpec has answered to `be_falsy` and `be_falsey` for years and a converted file may use
+either. Only the second was registered, so the first fell through to the predicate fallback
+and asked `false` whether it responds to `falsy?`.
+
 ## [3.16.0] - 2026-09-14
 
 ### `run_separately`

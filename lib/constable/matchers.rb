@@ -1230,10 +1230,15 @@ module Constable
       [false, "expected a truthy value, but got #{actual.inspect}", nil]
     end
 
-    define_builtin(:be_falsey) do |actual|
-      next true unless actual
+    # Both spellings. RSpec has answered to `be_falsy` and `be_falsey` for years and a
+    # converted file may use either; without the second, `be_falsy` fell through to the
+    # predicate fallback and asked `false` whether it responds to `falsy?`.
+    %i[be_falsey be_falsy].each do |name|
+      define_builtin(name) do |actual|
+        next true unless actual
 
-      [false, "expected a falsey value, but got #{Matchers.describe(actual)}", nil]
+        [false, "expected a falsey value, but got #{Matchers.describe(actual)}", nil]
+      end
     end
   end
 end

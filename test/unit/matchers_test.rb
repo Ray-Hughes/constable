@@ -954,6 +954,16 @@ module Constable
     # `include(a_hash_including(id: 1))` -- a matcher nested inside another. Converted files
     # use these freely; without it the inner matcher was compared with `==` and never matched.
 
+    # RSpec has answered to both spellings for years and a converted file may use either.
+    def test_be_falsy_is_be_falsey
+      # Not `assert attest(...)`: `to` hands back the value it was given, and here that is
+      # `false` -- which is the point of the matcher.
+      attest(false).to(be_falsy)
+      attest(nil).to(be_falsy)
+
+      assert_raises(Constable::AssertionFailed) { attest(1).to(be_falsy) }
+    end
+
     def test_a_hash_including_is_a_subset_match
       assert attest({ id: 1, name: "x" }).to(a_hash_including(id: 1))
     end
