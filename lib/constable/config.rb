@@ -14,6 +14,7 @@ module Constable
       "heartbeat" => 0,
       "slowest" => 5,
       "storage" => { "adapter" => "sqlite", "path" => ".constable/constable.sqlite3", "url" => nil },
+      "order_audit" => true,
       "warrants" => false,
       "warrant_retries" => 5,
       "auto_relink" => false,
@@ -179,6 +180,16 @@ module Constable
     #
     # `constable test --jail` still jails failures, because that is a thing you asked for.
     def jail_flakes?       = truthy(@raw["jail_flakes"])
+
+    # Should a new or changed investigation be run alone as well as in the suite, and the
+    # two answers compared? On, because a test that only passes because something else ran
+    # first is a real defect and this is the cheapest moment to find it.
+    #
+    # Off is for one situation: a suite mid-adoption. A thousand legacy files arrive with
+    # whatever order dependence they have always had, the audit finds all of it at once, and
+    # a build that cannot go green tells nobody anything. Turn it off, convert, turn it back
+    # on. Defaults to true, so silence means audited.
+    def order_audit?       = truthy(@raw.fetch("order_audit", true))
     # Negative retries are a typo for "off", not an instruction to count backwards.
     def warrant_retries    = [@raw["warrant_retries"].to_i, 0].max
     def auto_relink?       = truthy(@raw["auto_relink"])

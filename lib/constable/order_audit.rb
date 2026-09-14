@@ -20,7 +20,13 @@ module Constable
     def initialize(config: Constable.config, storage: Constable.storage, enabled: nil)
       @config  = config
       @storage = storage
-      @enabled = enabled.nil? ? ci? : enabled
+      @enabled = if !enabled.nil?
+                   enabled
+                 elsif @config.respond_to?(:order_audit?) && !@config.order_audit?
+                   false
+                 else
+                   ci?
+                 end
       @isolated = {}
     end
 

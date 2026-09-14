@@ -5,6 +5,29 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.15.0] - 2026-09-14
+
+### `order_audit` is a setting
+
+A new or changed investigation is run alone as well as in the suite, and the two answers
+compared. A test that only passes because something else ran first is a real defect and this
+is the cheapest moment to find it, so it stays on by default.
+
+There is one situation that needs it off, and it is the situation this gem exists for. A
+suite mid-adoption brings a thousand legacy files in at once, carrying whatever order
+dependence they have always had. The audit is right about every one of them, and a build
+that cannot go green tells nobody anything. Measured on the suite this was written against:
+333 of 420 reported failures were tests that **passed in the suite** and failed alone.
+
+```yaml
+order_audit: false   # off while converting; on again afterwards
+```
+
+Worth knowing: the audit only looks at investigations the blotter has not seen, so it costs
+nothing on a settled suite. A CI job that starts from an empty blotter every run audits
+everything, every time -- if that is your situation, cache the blotter rather than turning
+the audit off.
+
 ## [3.14.0] - 2026-09-14
 
 ### Composable matchers

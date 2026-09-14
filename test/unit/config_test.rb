@@ -122,5 +122,27 @@ module Constable
         assert_equal 3, load(yaml).parallel_workers
       end
     end
+
+    # ---- order_audit ---------------------------------------------------------------------
+    #
+    # On by default: a test that only passes because something else ran first is a real
+    # defect. Off is for a suite mid-adoption, where a thousand legacy files arrive with
+    # whatever order dependence they have always had and a build that cannot go green tells
+    # nobody anything.
+
+    def test_the_order_audit_is_on_when_nothing_says_otherwise
+      assert Constable::Config.new({}).order_audit?
+    end
+
+    def test_the_order_audit_can_be_turned_off
+      refute Constable::Config.new({ "order_audit" => false }).order_audit?
+    end
+
+    def test_a_config_that_turns_it_off_disables_the_audit
+      audit = Constable::OrderAudit.new(config: Constable::Config.new({ "order_audit" => false }),
+                                        storage: Constable.storage)
+
+      refute audit.enabled?
+    end
   end
 end
