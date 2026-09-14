@@ -178,5 +178,28 @@ module Constable
 
       assert(paths.any? { |path| path.end_with?("oddly_named.rb") })
     end
+
+    # A ported cold case carries whatever the original spec defined at its top level above
+    # the wrapper class, so the superclass line is not always near the top. Reading only the
+    # first few dozen lines called such a file native; it then loaded at discovery, outside
+    # the cold-case session, and its RSpec body ran against an engine nothing had configured.
+    def test_a_cold_case_is_recognised_however_far_down_its_superclass_sits
+      preamble = (1..60).map { |n| "def helper_#{n} = :ok" }.join("\n")
+      path = write_file("test/cases/models/widget_case.rb", <<~RUBY)
+        # frozen_string_literal: true
+
+        #{preamble}
+
+        class LegacyWidgetSpec < Constable::ColdCase::RSpec
+          describe("Widget") { it("works") { expect(1).to eq(1) } }
+        end
+      RUBY
+
+      selection = Selection.new([], config: Constable.config, root: tmp_root, full: true)
+
+      assert_empty selection.native_targets.map(&:path).select { |p| p == path },
+                   "the file was going to be loaded as a native case"
+      assert_includes selection.targets.select(&:cold?).map(&:path), path
+    end
   end
 end

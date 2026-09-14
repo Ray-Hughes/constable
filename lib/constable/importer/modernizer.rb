@@ -317,8 +317,9 @@ module Constable
           <<~RUBY
             # frozen_string_literal: true
 
-            # Moved verbatim from #{result.relative_path}. Runs through real RSpec, with its
-            # results folded into Constable's reporting, flake history and CI gate.
+            # Moved verbatim from #{result.relative_path}. A Constable::ColdCase: it runs
+            # through real RSpec, with its results folded into Constable's reporting, flake
+            # history and CI gate.
             #
             # Nothing inside has been converted, so every RSpec feature still works --
             # `let!`, `before(:all)`, shared examples, rspec-mocks. Convert it with

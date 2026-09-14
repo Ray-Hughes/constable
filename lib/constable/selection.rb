@@ -211,9 +211,18 @@ module Constable
     end
 
     # A file that declares itself a ColdCase is one, whatever the globs say.
+    # Scanned to the end, not to line forty. The superclass line is normally within the
+    # first ten, so the early exit means almost every file still stops there -- but a ported
+    # cold case carries whatever the original spec defined at its top level above the
+    # wrapper, and a file with forty lines of helpers above `class ... < ColdCase::RSpec`
+    # was being read as a native case. It then loaded at discovery, outside the session, and
+    # its RSpec body ran against an engine nothing had configured: `undefined method
+    # 'feature'`, on a file that says `feature` forty-one lines down.
     def cold_by_content?(file)
-      head = File.foreach(file).first(40).join
-      head.include?("Constable::ColdCase")
+      File.foreach(file) do |line|
+        return true if line.include?("Constable::ColdCase")
+      end
+      false
     rescue StandardError
       false
     end
@@ -240,7 +249,7 @@ module Constable
     # Two ways a file is a cold case: the config says so, or the file says so by declaring a
     # `Constable::ColdCase` superclass.
     #
-    # The second check opens a file and reads its first forty lines, so it is skipped for
+    # The second check opens a file and reads it, so it is skipped for
     # anything the config already matched -- there is no answer it could give that would
     # change the outcome. On a suite whose config is `spec/**/*_spec.rb`, that is every
     # spec file it has: 1,258 files opened and read to confirm something already known.

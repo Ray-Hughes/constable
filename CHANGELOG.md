@@ -5,6 +5,21 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.12.1] - 2026-09-14
+
+### A cold case is recognised however far down its superclass sits
+
+The check that tells a cold case from a native one read a file's first forty lines. A ported
+cold case carries whatever the original spec defined at its top level above the wrapper
+class, so a file with forty lines of helpers above `class ... < Constable::ColdCase::RSpec`
+was read as native. It then loaded at discovery, outside the cold-case session, and its
+RSpec body ran against an engine nothing had configured -- `undefined method 'feature'`, on
+a file that says `feature` forty-one lines down.
+
+Scanned to the end now, stopping at the marker, which for almost every file is still within
+the first ten lines. The generated header names `Constable::ColdCase` too, so a new file
+stops there whatever is hoisted above the class.
+
 ## [3.12.0] - 2026-09-14
 
 ### Matchers take keyword arguments
