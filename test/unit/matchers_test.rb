@@ -983,6 +983,30 @@ module Constable
       assert_match(/to eq 2/, error.message)
     end
 
+    # `be_a` asks is_a?, so a subclass counts. `be_an_instance_of` asks instance_of?, which a
+    # subclass does not satisfy -- the distinction is why both exist. RSpec spells each of
+    # them more than one way and a converted file may use any of them.
+    def test_the_be_a_family_asks_is_a
+      assert attest("x").to(be_an(String))
+      assert attest(1).to(be_kind_of(Numeric))
+      assert attest(1).to(be_a_kind_of(Numeric))
+    end
+
+    def test_be_an_instance_of_rejects_a_subclass
+      subclass = Class.new(String)
+
+      assert attest(subclass.new("x")).to(be_a(String))
+
+      error = assert_raises(Constable::AssertionFailed) do
+        attest(subclass.new("x")).to(be_an_instance_of(String))
+      end
+      assert_match(/to be an instance of String/, error.message)
+    end
+
+    def test_be_instance_of_is_the_same_matcher
+      assert attest("x").to(be_instance_of(String))
+    end
+
     def test_be_falsy_is_be_falsey
       # Not `assert attest(...)`: `to` hands back the value it was given, and here that is
       # `false` -- which is the point of the matcher.

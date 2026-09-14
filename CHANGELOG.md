@@ -5,6 +5,19 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.19.0] - 2026-09-14
+
+### The `be_a` family
+
+`be_a` was registered; `be_an`, `be_kind_of` and `be_a_kind_of` were not, and neither was
+`be_an_instance_of` or `be_instance_of`. RSpec spells each idea more than one way and a
+converted file may use any of them -- the missing names fell through to the predicate
+fallback and asked a `User` whether it responds to `an_instance_of?`.
+
+The two ideas stay distinct, because the distinction is why both exist: `be_a` asks `is_a?`,
+so a subclass counts, and `be_an_instance_of` asks `instance_of?`, which a subclass does
+not satisfy.
+
 ## [3.18.0] - 2026-09-14
 
 ### A plugin's `config.include`/`extend` reaches the cold-case session

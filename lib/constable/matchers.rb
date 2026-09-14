@@ -1126,10 +1126,26 @@ module Constable
       raise Constable::Error, "be is handled by BeDeferred and should never invoke its block"
     end
 
-    define_builtin(:be_a) do |actual, klass|
-      next true if actual.is_a?(klass)
+    # `is_a?`, so a subclass counts. RSpec spells this four ways and a converted file may use
+    # any of them; `be_a` and `be_an` read better in different sentences, and `be_kind_of`
+    # and `be_a_kind_of` are the older names.
+    %i[be_a be_an be_kind_of be_a_kind_of].each do |name|
+      define_builtin(name) do |actual, klass|
+        next true if actual.is_a?(klass)
 
-      [false, "expected #{Matchers.describe(actual)} to be a #{klass}, but it is a #{actual.class}", nil]
+        [false, "expected #{Matchers.describe(actual)} to be a #{klass}, but it is a #{actual.class}", nil]
+      end
+    end
+
+    # `instance_of?`, which a subclass does NOT satisfy -- a different question from `be_a`,
+    # and the distinction is the whole reason both exist.
+    %i[be_an_instance_of be_instance_of].each do |name|
+      define_builtin(name) do |actual, klass|
+        next true if actual.instance_of?(klass)
+
+        [false, "expected #{Matchers.describe(actual)} to be an instance of #{klass}, " \
+                "but it is a #{actual.class}", nil]
+      end
     end
     # Call assertions for Impersonation. `attest(client).to have_been_asked(:fetch)`, with
     # `.with(...)` and `.times(n)` refining it.
