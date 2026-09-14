@@ -15,6 +15,7 @@ module Constable
       "slowest" => 5,
       "storage" => { "adapter" => "sqlite", "path" => ".constable/constable.sqlite3", "url" => nil },
       "order_audit" => true,
+      "run_separately" => [],
       "warrants" => false,
       "warrant_retries" => 5,
       "auto_relink" => false,
@@ -350,6 +351,31 @@ module Constable
     end
 
     def cold_case_except = Array(@raw["cold_case_except"])
+
+    # Files kept out of the default run, and out of `--shard`, until something names them.
+    #
+    # Not "skip": they still run, just not here. Some tests cannot share a machine with the
+    # rest of the suite -- a server-sent-event test holding open connections, a load test, a
+    # browser test that needs the whole box -- and interleaving them produces failures that
+    # belong to the interleaving rather than to the code. The answer their suites already
+    # use is a separate CI job, and this is how that job gets a suite to run.
+    #
+    #   run_separately:
+    #     - test/cases/feature/hearings/event_stream/**/*
+    #
+    # `constable test test/cases/feature/hearings/event_stream` runs them, because naming a
+    # path is an instruction and this setting is only about the default.
+    def run_separately = Array(@raw["run_separately"])
+
+    def run_separately?(path)
+      return false if run_separately.empty?
+
+      relative = path.to_s.delete_prefix("#{@root}/")
+      run_separately.any? do |glob|
+        File.fnmatch?(glob.to_s, relative, File::FNM_PATHNAME | File::FNM_EXTGLOB) ||
+          File.fnmatch?(glob.to_s, path.to_s, File::FNM_PATHNAME | File::FNM_EXTGLOB)
+      end
+    end
 
     def cold_case_excluded?(path)
       return false if cold_case_except.empty?

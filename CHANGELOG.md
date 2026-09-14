@@ -5,6 +5,28 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.16.0] - 2026-09-14
+
+### `run_separately`
+
+Files kept out of the default run, and out of `--shard`, until something names them.
+
+Not "skip" -- they still run, just not there. Some tests cannot share a machine with the
+rest of the suite: a server-sent-event test holding connections open, a load test, a browser
+test that wants the whole box. Interleaving them produces failures that belong to the
+interleaving rather than to the code, which is why the suite this was written against
+already excludes them from its sharded RSpec job and gives them a CI job of their own.
+Constable had no way to express that, so those files were being interleaved and 76 of 120
+remaining failures were theirs.
+
+```yaml
+run_separately:
+  - test/cases/feature/hearings/event_stream/**/*
+```
+
+`constable test test/cases/feature/hearings/event_stream` still runs them: naming a path is
+an instruction, and the setting is only about the default.
+
 ## [3.15.0] - 2026-09-14
 
 ### `order_audit` is a setting

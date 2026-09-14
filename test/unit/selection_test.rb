@@ -201,5 +201,38 @@ module Constable
                    "the file was going to be loaded as a native case"
       assert_includes selection.targets.select(&:cold?).map(&:path), path
     end
+
+    # ---- run_separately ------------------------------------------------------------------
+    #
+    # Not "skip": these still run, just not in the default sweep. Some tests cannot share a
+    # machine with the rest of the suite, and the answer their suites already use is a CI job
+    # of their own.
+
+    def separated_config
+      write_file(".constable/config.yml", <<~YAML)
+        run_separately:
+          - test/cases/streams/**/*
+      YAML
+      Constable::Config.load(root: tmp_root)
+    end
+
+    def test_a_separated_file_is_left_out_of_the_default_run
+      apart = write_file("test/cases/streams/live_case.rb", "class LiveCase < Constable::Case; end")
+      ordinary = write_file("test/cases/models/widget_case.rb", "class WidgetCase < Constable::Case; end")
+
+      paths = Selection.new([], config: separated_config, root: tmp_root, full: true).targets.map(&:path)
+
+      assert_includes paths, ordinary
+      refute_includes paths, apart
+    end
+
+    # Naming a path is an instruction; the setting is only about the default.
+    def test_naming_a_separated_path_runs_it
+      apart = write_file("test/cases/streams/live_case.rb", "class LiveCase < Constable::Case; end")
+
+      paths = Selection.new(["test/cases/streams"], config: separated_config, root: tmp_root).targets.map(&:path)
+
+      assert_includes paths, apart
+    end
   end
 end

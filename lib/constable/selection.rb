@@ -92,6 +92,8 @@ module Constable
             all_targets
           end
 
+        # Only when nothing was named. Naming a path is an instruction.
+        list = list.reject { |t| @config.run_separately?(t.path) } if @args.empty?
         list = list.select(&:cold?) if cold_only?
         list = list.reject(&:cold?) if native_only?
         list = list.select { |t| ColdCase.engine_for(t.path) == @only } if engine_filter?

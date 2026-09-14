@@ -77,6 +77,20 @@ jail_flakes: false
 # build that cannot go green tells nobody anything. Off, convert, back on.
 order_audit: true
 
+# Files kept out of the default run, and out of `--shard`, until something names them.
+#
+# Not "skip" -- they still run, just not here. Some tests cannot share a machine with the
+# rest of the suite: a server-sent-event test holding connections open, a load test, a
+# browser test that wants the whole box. Interleaving them produces failures that belong to
+# the interleaving rather than to the code, and the answer is a CI job of their own.
+#
+# run_separately:
+#   - test/cases/feature/hearings/event_stream/**/*
+#
+# `constable test test/cases/feature/hearings/event_stream` still runs them: naming a path
+# is an instruction, and this setting is only about the default.
+run_separately: []
+
 warrants: false          # opt-in flaky detector -- rerun a failure in isolation before believing it
 warrant_retries: 5       # reruns before declaring a warrant (flaky) or a genuine failure
 auto_relink: false       # auto-confirm high-confidence rename detection instead of suggesting it
