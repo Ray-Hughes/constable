@@ -5,6 +5,29 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.10.0] - 2026-09-14
+
+### A system case's browser can see what the case created
+
+A system case runs inside the same rolled-back transaction every other case does, and its
+browser talks to a Puma server on another thread. That thread checks out a different
+connection, which cannot see a single uncommitted row -- so the page renders empty and the
+test fails on content the case plainly created.
+
+Rails solves this in `ActiveRecord::TestFixtures` by locking the connection pool to the
+test's thread, so every thread is handed the one connection holding the transaction. Same
+objects, same method, now done here too -- and released in `after_teardown` whatever
+happened, because a pool left locked to a finished thread is a connection nothing can ever
+check out again.
+
+### `raise_error(...).with_message(...)`
+
+RSpec spells the expected message two ways -- `raise_error(Klass, "boom")` and
+`raise_error(Klass).with_message("boom")` -- and they mean the same thing. Only the first
+worked. The chain is named rather than swallowed by `method_missing`: `.with_message` after
+`eq` is a mistake, and a mistake that quietly appends an argument to a matcher that ignores
+it is a test that passes for the wrong reason.
+
 ## [3.9.0] - 2026-09-13
 
 ### A ported cold case keeps the spec type its directory implied

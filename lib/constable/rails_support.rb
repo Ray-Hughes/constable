@@ -139,7 +139,40 @@ module Constable
         def before_setup
           driver = self.class.constable_driver || self.class.driven_by(:selenium)
           driver.use
+          constable_lock_connection_pools!(true)
           super if defined?(super)
+        end
+
+        # Puts the pools back, whatever happened. A pool left locked to a thread that has
+        # finished is a connection nothing else can ever check out.
+        def after_teardown
+          super if defined?(super)
+        ensure
+          constable_lock_connection_pools!(false)
+        end
+
+        # A system case runs inside the same rolled-back transaction every other case does,
+        # and its browser talks to a Puma server on another thread. That thread checks out a
+        # different connection, which cannot see a single uncommitted row -- so the page
+        # renders empty and the test fails on content the case plainly created.
+        #
+        # Rails solves this in `ActiveRecord::TestFixtures` by locking the pool to the test's
+        # thread, so every thread is handed the one connection holding the transaction. Same
+        # objects, same method; this is not a reimplementation.
+        def constable_lock_connection_pools!(locked)
+          constable_connection_pools.each { |pool| pool.lock_thread = locked }
+          nil
+        rescue StandardError
+          nil
+        end
+
+        def constable_connection_pools
+          handler = ::ActiveRecord::Base.connection_handler
+          return handler.all_connection_pools if handler.respond_to?(:all_connection_pools)
+
+          handler.connection_pool_list
+        rescue StandardError
+          []
         end
 
         # Rails' screenshot helper asks the test whether it failed. Constable knows the

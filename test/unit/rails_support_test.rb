@@ -254,6 +254,44 @@ module Constable
   # suite almost always has both, because `type: :controller` and `type: :request` are
   # separate there too -- and without controller support a converted controller spec raises
   # NoMethodError on `get` while an integration case a directory away works fine.
+  # A system case runs inside the same rolled-back transaction as everything else, and its
+  # browser talks to a Puma server on another thread -- which checks out a different
+  # connection and cannot see one uncommitted row. Rails locks the pool to the test thread;
+  # so does this. Capybara is not a dependency of this gem, so the helper is exercised
+  # directly against a stand-in for the connection handler.
+  class RailsSupportPoolLockTest < TestCase
+    FakePool = Struct.new(:locked) do
+      def lock_thread=(value)
+        self.locked = value
+      end
+    end
+
+    def test_the_pool_is_locked_for_the_case_and_released_afterwards
+      pools = [FakePool.new(nil), FakePool.new(nil)]
+      subject = Object.new
+      subject.extend(Constable::RailsSupport::System::InstanceMethods)
+      subject.define_singleton_method(:constable_connection_pools) { pools }
+
+      subject.send(:constable_lock_connection_pools!, true)
+
+      assert_equal [true, true], pools.map(&:locked)
+
+      subject.send(:constable_lock_connection_pools!, false)
+
+      assert_equal [false, false], pools.map(&:locked)
+    end
+
+    # A pool left locked to a finished thread is a connection nothing can check out again,
+    # so a handler that raises must not take the release with it.
+    def test_a_handler_that_raises_does_not_take_the_case_down
+      subject = Object.new
+      subject.extend(Constable::RailsSupport::System::InstanceMethods)
+      subject.define_singleton_method(:constable_connection_pools) { raise "no handler" }
+
+      assert_nil subject.send(:constable_lock_connection_pools!, true)
+    end
+  end
+
   class RailsSupportControllerTest < TestCase
     # Inference works off the case's own constant name, so these tests have to put real
     # constants on Object. Removed again afterwards: a leftover `WidgetsControllerCase` is

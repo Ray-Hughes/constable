@@ -361,6 +361,26 @@ module Constable
         @matcher.block.call(actual, *@args, &@block)
       end
 
+      # RSpec spells the expected message two ways -- `raise_error(Klass, "boom")` and
+      # `raise_error(Klass).with_message("boom")` -- and they mean the same thing, so the
+      # chain is the argument by another route. Converted files use both.
+      #
+      # Named rather than caught by method_missing: `.with_message` after `eq` is a mistake,
+      # and a mistake that silently appends an argument to a matcher that ignores it is a
+      # test that passes for the wrong reason.
+      WITH_MESSAGE_MATCHERS = %i[raise_error].freeze
+
+      def with_message(message)
+        unless WITH_MESSAGE_MATCHERS.include?(@name)
+          raise Constable::Error,
+                "`with_message` says what a raised error should say, so it only follows " \
+                "`raise_error` -- not `#{@name}`."
+        end
+
+        @args += [message]
+        self
+      end
+
       # "eq 1", "be a String", "exist email: \"a@b.com\"" -- the phrase both the positive
       # and the negated message are built around, so negation never needs its own matcher.
       def description

@@ -876,5 +876,32 @@ module Constable
       error = assert_raises(Constable::AssertionFailed) { attest(1).to eq(2) }
       assert_match(/to eq 2/, error.message)
     end
+
+    # ---- raise_error(...).with_message ---------------------------------------------------
+    #
+    # RSpec spells the expected message two ways and they mean the same thing. Converted
+    # files use both.
+
+    def test_with_message_matches_the_same_way_a_second_argument_does
+      assert attest { raise ArgumentError, "boom" }.to(raise_error(ArgumentError).with_message("boom"))
+    end
+
+    def test_with_message_fails_when_the_message_is_not_the_one_asked_for
+      assert_raises(Constable::AssertionFailed) do
+        attest { raise ArgumentError, "boom" }.to(raise_error(ArgumentError).with_message("bang"))
+      end
+    end
+
+    def test_with_message_takes_a_regexp
+      assert attest { raise ArgumentError, "boom 42" }.to(raise_error(ArgumentError).with_message(/boom \d+/))
+    end
+
+    # Silently appending an argument to a matcher that ignores it is a test that passes for
+    # the wrong reason.
+    def test_with_message_after_a_matcher_that_has_no_message_says_so
+      error = assert_raises(Constable::Error) { eq(1).with_message("boom") }
+
+      assert_match(/only follows `raise_error`/, error.message)
+    end
   end
 end
