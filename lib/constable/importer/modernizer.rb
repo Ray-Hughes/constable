@@ -1133,7 +1133,7 @@ module Constable
           args = node.children[2..] || []
           if args.any? && args.first.type == :const
             replace(node.loc.selector, "stand_in")
-            record_converted(:stand_in, node, "#{name}", "stand_in")
+            record_converted(:stand_in, node, name.to_s, "stand_in")
             return
           end
         end
