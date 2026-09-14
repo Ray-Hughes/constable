@@ -182,6 +182,48 @@ module Constable
       refute_match(/^  def enable_features/, source)
     end
 
+    # A cold case's body goes inside a class, so it gets indented -- and indenting a line
+    # that continues a string literal puts those two spaces in the string. Seen for real: a
+    # log message asserted on with two extra spaces in the middle of it.
+    def test_port_cold_does_not_indent_the_inside_of_a_string
+      write_file("spec/models/widget_spec.rb", <<~'SPEC')
+        describe "Widget" do
+          it "logs" do
+            expect(logger).to receive(:info).with(
+              "uploaded to: \
+        bucket/path"
+            )
+          end
+        end
+      SPEC
+
+      result = port("spec/models/widget_spec.rb", write: :port_cold)
+      source = File.read(File.join(tmp_root, result.written_to))
+
+      assert_includes source, "\nbucket/path\"",
+                      "the continuation line moved, which changes what the string says"
+      assert_match(/^  describe "Widget" do/, source, "ordinary lines are still indented")
+    end
+
+    # A heredoc without a squiggly is the same problem.
+    def test_port_cold_does_not_indent_the_inside_of_a_heredoc
+      write_file("spec/models/widget_spec.rb", <<~SPEC)
+        describe "Widget" do
+          it "reports" do
+            expect(report).to eq(<<-TEXT)
+        line one
+        line two
+            TEXT
+          end
+        end
+      SPEC
+
+      result = port("spec/models/widget_spec.rb", write: :port_cold)
+      source = File.read(File.join(tmp_root, result.written_to))
+
+      assert_includes source, "\nline one\nline two\n"
+    end
+
     # --- --delete: finish the move ------------------------------------------------------
     #
     # A port that leaves the original behind has not moved anything. Both files are then

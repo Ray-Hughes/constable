@@ -5,6 +5,25 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.19.1] - 2026-09-14
+
+### Indenting a cold case no longer edits its strings
+
+A cold case's body goes inside a class, so it is indented two spaces -- and indenting a line
+that continues a string literal puts those two spaces *in the string*.
+
+```ruby
+"File #{name} uploaded to: \\
+bucket/path"
+```
+
+The continuation sat at column 0 in the spec and at column 2 in the cold case, and the test
+failed on a log message with two extra spaces in the middle of it. A heredoc without a
+squiggly has the same problem, and so does any multi-line literal.
+
+Those lines are left alone now. Everything else is still indented, and a file that will not
+parse is indented the old way -- something has to be written.
+
 ## [3.19.0] - 2026-09-14
 
 ### The `be_a` family

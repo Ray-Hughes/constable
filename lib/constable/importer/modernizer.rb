@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "pathname"
+require "set"
 require "stringio"
 
 module Constable
@@ -417,8 +418,70 @@ module Constable
           "Legacy#{words.map(&:capitalize).join}Spec"
         end
 
+        # Two spaces on every line, except the lines that are inside a string.
+        #
+        # A cold case's body goes inside a class, so it gets indented -- and indenting a line
+        # that continues a string literal puts those two spaces *in the string*. Seen for
+        # real:
+        #
+        #     "File #{name} uploaded to: \\
+        #     bucket/path"
+        #
+        # The continuation sat at column 0 in the spec and at column 2 in the cold case, and
+        # the test failed on a message with two extra spaces in the middle of it. Heredocs
+        # without a squiggly have the same problem, and so does any multi-line literal.
+        #
+        # A file that will not parse is indented the old way: something has to be written,
+        # and the wrapper is still the best guess available.
         def indent(source)
-          source.lines.map { |line| line.strip.empty? ? line : "  #{line}" }.join
+          protected_lines = string_interior_lines(source)
+          source.lines.each_with_index.map do |line, index|
+            next line if line.strip.empty?
+            next line if protected_lines.include?(index + 1)
+
+            "  #{line}"
+          end.join
+        end
+
+        # Every line that is *inside* a multi-line literal rather than starting one. The
+        # first line carries the opening quote and is indented normally; the rest are the
+        # string's own content and must not move.
+        def string_interior_lines(source)
+          root = Parser::CurrentRuby.parse(source)
+          return Set.new unless root
+
+          lines = Set.new
+          walk_nodes(root) do |node|
+            range, heredoc = literal_range(node)
+            next unless range
+
+            # A heredoc's body is content from its first line. A quoted string's first line
+            # carries the opening quote and is indented like any other code.
+            first = heredoc ? range.line : range.line + 1
+            next if range.last_line < first
+
+            (first..range.last_line).each { |n| lines << n }
+          end
+          lines
+        rescue StandardError
+          Set.new
+        end
+
+        # [range, is_heredoc]
+        def literal_range(node)
+          return nil unless %i[str dstr xstr sym dsym regexp].include?(node.type)
+
+          heredoc = node.loc.respond_to?(:heredoc_body) ? node.loc.heredoc_body : nil
+          return [heredoc, true] if heredoc
+
+          [node.loc.expression, false]
+        end
+
+        def walk_nodes(node, &block)
+          return unless node.is_a?(Parser::AST::Node)
+
+          yield node
+          node.children.each { |child| walk_nodes(child, &block) }
         end
 
         private
