@@ -137,6 +137,13 @@ module Constable
         # actually runs, so merely loading a suite that contains system cases never starts
         # a browser.
         def before_setup
+          # Rails' Driver#use ends in `Capybara.current_driver = name`, which is global and
+          # sticky. A suite that also has cold feature specs -- ones still driven by the
+          # app's own registered driver -- then runs them against this case's driver instead,
+          # and a driver registered without the flags a container needs dies on the spot:
+          # "session not created: Chrome instance exited", in files that never asked for this
+          # driver. So it goes back afterwards.
+          @constable_previous_driver = ::Capybara.current_driver
           driver = self.class.constable_driver || self.class.driven_by(:selenium)
           driver.use
           # Only inside a transaction. A case that has turned the rollback off commits as it
@@ -152,6 +159,15 @@ module Constable
           super if defined?(super)
         ensure
           constable_lock_connection_pools!(false)
+          constable_restore_driver!
+        end
+
+        def constable_restore_driver!
+          return unless defined?(@constable_previous_driver)
+
+          ::Capybara.current_driver = @constable_previous_driver
+        rescue StandardError
+          nil
         end
 
         # A system case runs inside the same rolled-back transaction every other case does,

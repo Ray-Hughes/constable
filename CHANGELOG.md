@@ -5,6 +5,19 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.13.0] - 2026-09-14
+
+### A system case puts the Capybara driver back
+
+Rails' `Driver#use` ends in `Capybara.current_driver = name`, which is global and sticky. A
+suite that also has cold feature specs -- ones still driven by the app's own registered
+driver -- then ran them against the native case's driver instead. A driver registered
+without the flags a container needs dies on the spot, so the symptom was
+`Selenium::WebDriver::Error::SessionNotCreatedError: Chrome instance exited`, in files that
+never asked for that driver and had passed in the same container for years.
+
+The driver a case found is the driver it leaves.
+
 ## [3.12.1] - 2026-09-14
 
 ### A cold case is recognised however far down its superclass sits

@@ -292,6 +292,53 @@ module Constable
     end
   end
 
+  # Rails' Driver#use ends in `Capybara.current_driver = name`, which is global and sticky.
+  # A suite that also has cold feature specs -- still driven by the app's own registered
+  # driver -- would run them against this case's driver instead.
+  class RailsSupportDriverRestoreTest < TestCase
+    module FakeCapybara
+      class << self
+        attr_accessor :current_driver
+      end
+    end
+
+    def test_the_driver_the_case_found_is_the_driver_it_leaves
+      subject = Object.new
+      subject.extend(Constable::RailsSupport::System::InstanceMethods)
+      FakeCapybara.current_driver = :app_registered_driver
+      subject.instance_variable_set(:@constable_previous_driver, FakeCapybara.current_driver)
+      FakeCapybara.current_driver = :selenium
+
+      stub_const_capybara(FakeCapybara) { subject.send(:constable_restore_driver!) }
+
+      assert_equal :app_registered_driver, FakeCapybara.current_driver
+    end
+
+    def test_a_case_that_never_recorded_one_changes_nothing
+      subject = Object.new
+      subject.extend(Constable::RailsSupport::System::InstanceMethods)
+      FakeCapybara.current_driver = :untouched
+
+      stub_const_capybara(FakeCapybara) { subject.send(:constable_restore_driver!) }
+
+      assert_equal :untouched, FakeCapybara.current_driver
+    end
+
+    private
+
+    # Capybara is not a dependency of this gem, so ::Capybara is stood up for the call.
+    def stub_const_capybara(replacement)
+      had = Object.const_defined?(:Capybara, false)
+      previous = had ? Object.const_get(:Capybara) : nil
+      Object.send(:remove_const, :Capybara) if had
+      Object.const_set(:Capybara, replacement)
+      yield
+    ensure
+      Object.send(:remove_const, :Capybara)
+      Object.const_set(:Capybara, previous) if had
+    end
+  end
+
   class RailsSupportControllerTest < TestCase
     # Inference works off the case's own constant name, so these tests have to put real
     # constants on Object. Removed again afterwards: a leftover `WidgetsControllerCase` is
