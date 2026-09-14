@@ -166,8 +166,16 @@ module Constable
       #
       # `===` is what makes classes, Regexps and Ranges behave as expected here; `==` is
       # tried as well because a few objects define equality without case equality.
+      # A matcher counts as a value here, so one can be nested inside another:
+      # `include(a_hash_including(id: 1))`, `contain_exactly(eq(1), be_a(String))`. RSpec
+      # calls these composable matchers; converted files use them freely, and without this
+      # the inner matcher was compared with `==` and never matched anything.
       def values_match?(expected, actual)
+        return truthy?(expected.matches?(actual).first) if expected.is_a?(Deferred)
+
         expected === actual || expected == actual # rubocop:disable Style/CaseEquality
+      rescue StandardError
+        false
       end
 
       def describe(actual)
@@ -813,6 +821,23 @@ module Constable
 
       [false, "expected #{Matchers.describe(actual)} to eql #{expected.inspect} " \
               "(eql? compares value and type; #{actual.class} vs #{expected.class})", nil]
+    end
+
+    # RSpec's `a_hash_including`, for the shape it is nearly always written in:
+    # `attest(rows).to include(a_hash_including(id: 1))`. A hash is a subset match on the
+    # keys named and says nothing about the rest.
+    #
+    # `hash_including` is the same matcher under the name rspec-mocks uses for it, because a
+    # converted file may have been written against either.
+    %i[a_hash_including hash_including].each do |name|
+      define_builtin(name) do |actual, expected = {}|
+        next [false, "#{name} needs a Hash to look at, got #{Matchers.describe(actual)}", nil] unless actual.is_a?(Hash)
+
+        missing = expected.reject { |key, value| actual.key?(key) && Matchers.values_match?(value, actual[key]) }
+        next true if missing.empty?
+
+        [false, "expected #{Matchers.describe(actual)} to include #{missing.inspect}", nil]
+      end
     end
 
     define_builtin(:include) do |actual, *expected|

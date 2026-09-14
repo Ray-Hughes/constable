@@ -5,6 +5,23 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.14.0] - 2026-09-14
+
+### Composable matchers
+
+`include(a_hash_including(id: 1))` -- a matcher nested inside another. RSpec calls these
+composable matchers and converted files use them freely; Constable compared the inner
+matcher with `==`, so it never matched anything. Any matcher now counts as a value wherever
+one is compared, so `contain_exactly(eq(1), be_a(String))` works too.
+
+`a_hash_including` comes with it, and `hash_including` as the name rspec-mocks uses for the
+same idea, because a converted file may have been written against either. A hash is a subset
+match: it says what those keys must be and nothing about the rest.
+
+### `assert_not`
+
+Rails' name for `refute`, and the one a converted `ActiveSupport::TestCase` arrives using.
+
 ## [3.13.2] - 2026-09-14
 
 ### The driver restore hands the choice back, rather than pinning it

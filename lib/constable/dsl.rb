@@ -227,6 +227,10 @@ module Constable
       _constable_fail(message || "Expected a falsey value, got #{_constable_show(value)}.")
     end
 
+    # Rails' name for the same thing, and the one a converted `ActiveSupport::TestCase`
+    # arrives using. Minitest has both; so does this.
+    alias assert_not refute
+
     def assert_equal(expected, actual, message = nil)
       _constable_assertion!
       return true if expected == actual

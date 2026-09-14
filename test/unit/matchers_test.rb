@@ -948,5 +948,41 @@ module Constable
     ensure
       Constable::Matchers.clear!
     end
+
+    # ---- composable matchers -------------------------------------------------------------
+    #
+    # `include(a_hash_including(id: 1))` -- a matcher nested inside another. Converted files
+    # use these freely; without it the inner matcher was compared with `==` and never matched.
+
+    def test_a_hash_including_is_a_subset_match
+      assert attest({ id: 1, name: "x" }).to(a_hash_including(id: 1))
+    end
+
+    def test_a_hash_including_fails_on_a_key_that_differs
+      assert_raises(Constable::AssertionFailed) do
+        attest({ id: 2 }).to(a_hash_including(id: 1))
+      end
+    end
+
+    def test_a_hash_including_nests_inside_include
+      rows = [{ id: 1, name: "x" }, { id: 2, name: "y" }]
+
+      assert attest(rows).to(include(a_hash_including(id: 2)))
+    end
+
+    def test_a_matcher_nests_inside_include
+      assert attest([1, 2, 3]).to(include(eq(2)))
+    end
+
+    # hash_including is the same matcher under the name rspec-mocks uses.
+    def test_hash_including_is_the_same_matcher
+      assert attest({ id: 1 }).to(hash_including(id: 1))
+    end
+
+    def test_a_hash_including_says_so_when_it_is_not_looking_at_a_hash
+      error = assert_raises(Constable::AssertionFailed) { attest([1, 2]).to(a_hash_including(id: 1)) }
+
+      assert_match(/needs a Hash/, error.message)
+    end
   end
 end

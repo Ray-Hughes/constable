@@ -723,5 +723,13 @@ module Constable
     def library_available?(name)
       system(RbConfig.ruby, "-e", "require #{name.inspect}", out: File::NULL, err: File::NULL)
     end
+
+    # Rails' name for refute, and the one a converted ActiveSupport::TestCase arrives using.
+    def test_assert_not_is_refute
+      assert_not false
+      assert_not nil
+
+      assert_raises(Constable::AssertionFailed) { assert_not true }
+    end
   end
 end

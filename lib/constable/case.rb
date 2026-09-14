@@ -35,7 +35,7 @@ module Constable
       class send __send__ __id__ object_id method methods freeze frozen? dup clone
       hash inspect to_s instance_variable_get instance_variable_set instance_variables
       attest unsafe witness briefing investigate docket tier setup teardown
-      assert refute flunk skip pass freeze_time travel_to travel_back
+      assert refute assert_not flunk skip pass freeze_time travel_to travel_back
     ].freeze
 
     # The runtime DSL (freeze_time, stub_network!, unsafe, assertion primitives) and the
