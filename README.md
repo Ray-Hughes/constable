@@ -323,6 +323,35 @@ Rails' testing modules expect minitest's lifecycle, so `Constable::Case` also an
 `setup` and `teardown` class macros. `setup` is an exact synonym for `briefing` and exists so
 those modules compose — **`briefing` is still the way to write setup.**
 
+### When your cleanup is truncation, not a rollback
+
+Constable wraps every investigation in a transaction and rolls it back. That is the default
+and it is almost always what you want.
+
+The exception is a suite whose own cleanup is truncation — Capybara suites usually are,
+because a browser talks to a server over HTTP that cannot see an open transaction. The two
+are not interchangeable, and the difference is not only speed: Postgres sequences are not
+transactional, so a rolled-back test leaves the next one's ids where it found them, while a
+truncation resets them to 1. Specs written against truncation end up depending on that
+without saying so — a task built with `assigned_by_id: some_organization.id` passes only
+because organization 1 and user 1 both exist — and they fail against a rollback for reasons
+that have nothing to do with the code under test.
+
+```ruby
+class SystemCase < Constable::Case
+  transactional false
+
+  briefing { DatabaseCleaner[:active_record].start }
+  teardown { DatabaseCleaner[:active_record].clean }
+
+  tier :system
+end
+```
+
+Inherited the way `tier` is. Turning it off means the cleanup is yours; Constable says so
+once per run, with the case names, rather than letting it be discovered as cross-test
+contamination.
+
 ### Matchers
 
 ```ruby
