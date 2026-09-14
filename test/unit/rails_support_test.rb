@@ -249,4 +249,41 @@ module Constable
       assert_equal "clean", out
     end
   end
+
+  # `get :show` and `get "/path"` are different helpers that share a name. An adopted RSpec
+  # suite almost always has both, because `type: :controller` and `type: :request` are
+  # separate there too -- and without controller support a converted controller spec raises
+  # NoMethodError on `get` while an integration case a directory away works fine.
+  class RailsSupportControllerTest < TestCase
+    def test_the_controller_is_inferred_from_the_case_name
+      Object.const_set(:WidgetsController, Class.new) unless Object.const_defined?(:WidgetsController)
+      klass = Class.new(Constable::Case)
+      klass.extend(Constable::RailsSupport::Controller::ClassMethods)
+      Object.const_set(:WidgetsControllerCase, klass) unless Object.const_defined?(:WidgetsControllerCase)
+
+      assert_equal Object.const_get(:WidgetsController), klass.controller_class
+    end
+
+    # A docket is an anonymous subclass, so its `name` is nil and ActiveSupport's constant
+    # lookup dies on "undefined method 'split' for nil". The display name is defined for a
+    # docket precisely because anonymity is an implementation detail.
+    def test_a_docket_still_finds_the_controller
+      Object.const_set(:GadgetsController, Class.new) unless Object.const_defined?(:GadgetsController)
+      parent = Class.new(Constable::Case)
+      parent.extend(Constable::RailsSupport::Controller::ClassMethods)
+      Object.const_set(:GadgetsControllerCase, parent) unless Object.const_defined?(:GadgetsControllerCase)
+      docket = parent.docket("a group") { nil }
+
+      assert_nil docket.name, "a docket is anonymous, which is the whole problem"
+      assert_equal Object.const_get(:GadgetsController), docket.controller_class
+    end
+
+    def test_a_case_that_names_no_controller_infers_nothing
+      klass = Class.new(Constable::Case)
+      klass.extend(Constable::RailsSupport::Controller::ClassMethods)
+      Object.const_set(:PlainThingCase, klass) unless Object.const_defined?(:PlainThingCase)
+
+      assert_nil klass.controller_class
+    end
+  end
 end

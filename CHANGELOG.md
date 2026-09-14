@@ -5,6 +5,33 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-09-13
+
+### Controller tests
+
+`get :show` and `get "/path"` are different helpers that happen to share a name. The first
+names an action on a controller; the second drives the full middleware stack. An adopted
+RSpec suite almost always has both, because `type: :controller` and `type: :request` are
+separate things there too.
+
+Constable only had the second, so a converted controller spec raised `NoMethodError` on
+`get` while an integration case a directory away worked fine -- which reads as Constable
+being broken rather than as two helpers sharing a name.
+
+```ruby
+class ControllerCase < Constable::Case
+  include Constable::RailsSupport::Controller
+  tier :controller
+end
+```
+
+The controller is inferred from the case name, `WidgetsControllerCase` to `WidgetsController`,
+the way RSpec infers it from the described class. Two things that needed handling: a `docket`
+is an anonymous subclass, so ActiveSupport's name-based constant lookup died on
+`undefined method 'split' for nil`; and `@routes` has to come from the application, or every
+request raises "make sure you set it in your test's setup method".
+
+
 ## [3.5.0] - 2026-09-13
 
 ### Matchers from other gems work

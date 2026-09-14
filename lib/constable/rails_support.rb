@@ -31,6 +31,60 @@ module Constable
       end
     end
 
+    # Controller tests: `get :show`, `post :create, params: {...}`, `assigns`, `response`.
+    #
+    # Not the same `get` as an integration test, which takes a path and drives the full
+    # middleware stack. This one names an action on a controller and calls it directly, and
+    # a suite that has both needs both -- an adopted RSpec suite almost always does, because
+    # `type: :controller` and `type: :request` are separate things there too.
+    #
+    # Without it, a converted controller spec raises NoMethodError on `get` while an
+    # integration case a directory away works fine, which reads as Constable being broken
+    # rather than as two different helpers sharing a name.
+    module Controller
+      def self.included(base)
+        base.include(RailsSupport.controller_behavior)
+        # Behavior expects @routes, which Rails' own ActionController::TestCase sets from
+        # the application. Without it every request raises "@routes is nil: make sure you
+        # set it in your test's setup method" -- true, and not something a case author
+        # should have to know.
+        base.include(Routes)
+        # `controller` and `request`, which controller specs reach for constantly, come from
+        # Behavior. Which controller to drive is inferred from the case name the way RSpec
+        # infers it from the described class: FooControllerCase -> FooController.
+        base.extend(ClassMethods)
+      end
+
+      module Routes
+        def before_setup
+          super
+          @routes ||= ::Rails.application.routes if defined?(::Rails) && ::Rails.application
+        end
+      end
+
+      module ClassMethods
+        # ActionController::TestCase works out which controller to drive from the test
+        # class's *name*, and a `docket` is an anonymous subclass -- so its name is nil and
+        # ActiveSupport's constant lookup dies on `undefined method 'split' for nil`.
+        #
+        # Overridden rather than worked around: the display name is the one the reporter
+        # shows and the one a human would read the controller out of, and it is defined for
+        # a docket precisely because anonymity is an implementation detail.
+        def controller_class
+          @controller_class ||= constable_inferred_controller_class
+        end
+
+        def constable_inferred_controller_class
+          name = constable_display_name.to_s.sub(/(?:Case|Spec|Test)\z/, "")
+          return nil unless name.end_with?("Controller")
+
+          Object.const_get(name)
+        rescue NameError
+          nil
+        end
+      end
+    end
+
     # The browser stack: Capybara's DSL (`visit`, `click_on`, `fill_in`, `page`), Capybara's
     # Minitest assertions, Rails' `driven_by`/`served_by` configuration and its failure
     # screenshots.
@@ -153,6 +207,20 @@ module Constable
       # ActionDispatch::IntegrationTest::Behavior is an ActiveSupport::Concern, so it has
       # to be included into the *class* rather than into a module in front of it --
       # otherwise its `included` block configures the wrapper module instead of the case.
+      def controller_behavior
+        require "action_controller"
+        require "action_controller/test_case"
+        ::ActionController::TestCase::Behavior
+      rescue LoadError, NameError => e
+        raise Constable::ConfigurationError, <<~MESSAGE
+          Constable::RailsSupport::Controller needs Action Pack's controller test helpers,
+          and they could not be loaded (#{e.class}: #{e.message}).
+
+          Rails has to be booted before the tier base class is defined -- in
+          test/case_helper.rb that means requiring config/environment first.
+        MESSAGE
+      end
+
       def integration_behavior
         require "action_dispatch"
         # Behavior mixes in ActionController::TemplateAssertions without requiring it --
