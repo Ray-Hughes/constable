@@ -689,21 +689,27 @@ module Constable
       # need to run it, not look at its result.
       def target = block_form? ? @block : @actual
 
-      def to(matcher)
+      # The second argument is a message to use instead of the matcher's own, which is what
+      # RSpec's ExpectationTarget takes and what a converted file may be passing. It is
+      # worth having rather than ignoring: it is used where the matcher cannot know what
+      # distinguishes this call from the identical one on the line above -- a loop over
+      # files, say, where "expected schema.yaml to load without error" is the whole point
+      # and "expected no exception" is not.
+      def to(matcher, message = nil)
         matcher = coerce(matcher)
-        passed, message, context = matcher.matches?(target)
+        passed, failure, context = matcher.matches?(target)
         return satisfied if passed
 
-        Matchers.fail!(message || matcher.failure_message(target),
+        Matchers.fail!(message || failure || matcher.failure_message(target),
                        Matchers.merge_context(matcher.context_for(target), context))
       end
 
-      def not_to(matcher)
+      def not_to(matcher, message = nil)
         matcher = coerce(matcher)
-        passed, _message, context = matcher.matches?(target)
+        passed, _failure, context = matcher.matches?(target)
         return satisfied unless passed
 
-        Matchers.fail!(matcher.negated_failure_message(target),
+        Matchers.fail!(message || matcher.negated_failure_message(target),
                        Matchers.merge_context(matcher.context_for(target), context))
       end
       alias to_not not_to

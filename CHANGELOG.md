@@ -5,6 +5,20 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.17.0] - 2026-09-14
+
+### A message of your own on `to` and `not_to`
+
+```ruby
+attest { middleware.load_yaml(file) }.not_to(raise_error, "expected #{file} to load")
+```
+
+What RSpec's `ExpectationTarget` takes, and what a converted file may be passing -- it was
+an `ArgumentError: wrong number of arguments` until now. It earns its place where the
+matcher cannot know what distinguishes this call from the identical one on the line above:
+in a loop over files, "expected schema.yaml to load without error" is the whole point and
+"expected no exception" is not.
+
 ## [3.16.1] - 2026-09-14
 
 ### `be_falsy`

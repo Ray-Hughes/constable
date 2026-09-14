@@ -955,6 +955,34 @@ module Constable
     # use these freely; without it the inner matcher was compared with `==` and never matched.
 
     # RSpec has answered to both spellings for years and a converted file may use either.
+    # ---- a message of your own -----------------------------------------------------------
+    #
+    # What RSpec's ExpectationTarget takes, and what a converted file may be passing. It
+    # earns its place where the matcher cannot know what distinguishes this call from the
+    # identical one on the line above -- a loop over files, say.
+
+    def test_to_takes_a_message_of_its_own
+      error = assert_raises(Constable::AssertionFailed) do
+        attest(1).to(eq(2), "expected schema.yaml to parse")
+      end
+
+      assert_match(/expected schema\.yaml to parse/, error.message)
+    end
+
+    def test_not_to_takes_a_message_of_its_own
+      error = assert_raises(Constable::AssertionFailed) do
+        attest(1).not_to(eq(1), "expected schema.yaml to differ")
+      end
+
+      assert_match(/expected schema\.yaml to differ/, error.message)
+    end
+
+    def test_the_matcher_still_speaks_when_no_message_is_given
+      error = assert_raises(Constable::AssertionFailed) { attest(1).to(eq(2)) }
+
+      assert_match(/to eq 2/, error.message)
+    end
+
     def test_be_falsy_is_be_falsey
       # Not `assert attest(...)`: `to` hands back the value it was given, and here that is
       # `false` -- which is the point of the matcher.
