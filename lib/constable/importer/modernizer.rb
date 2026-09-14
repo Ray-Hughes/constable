@@ -293,7 +293,7 @@ module Constable
 
         # The original bytes, between a header line and a final `end`. Nothing inside is
         # parsed, reindented or touched -- that is the whole promise of a cold case, with
-        # one exception the promise itself demands: top-level classes and modules.
+        # one exception the promise itself demands: what the file defined at the top level.
         #
         # A spec file that opens `class JobThatIsGood < ApplicationJob` is defining a
         # top-level constant. Wrapped, that same line defines
@@ -302,8 +302,14 @@ module Constable
         # far worse when the definition was a monkeypatch: `class Task` inside the wrapper
         # silently creates a brand new class and patches nothing at all.
         #
-        # So they move above the wrapper, in source order, which is where they were. Nothing
-        # else is touched.
+        # A top-level `def` has the same shape of problem and a louder symptom. At the top
+        # level it is a private method on Object, which every example can call; inside the
+        # wrapper it is an instance method of a class no example group inherits from, and the
+        # first example to call it dies on NoMethodError.
+        #
+        # So definitions move above the wrapper, in source order, which is where they were.
+        # Nothing else moves -- but a `require` that sat above them is copied up with them,
+        # because a superclass has to be loaded before the line that names it.
         def cold_source(result, body = nil)
           source = (body || result.original).to_s
           hoisted, remainder = hoist_top_level_definitions(source)
@@ -332,10 +338,37 @@ module Constable
           spans = top_level_definition_spans(source)
           return ["", source] if spans.empty?
 
-          lines  = source.lines
-          hoist  = spans.flat_map { |span| (span[:first]..span[:last]).map { |n| lines[n - 1] } }
-          ["\n#{hoist.join.rstrip}\n\n", tidy_blank_lines(drop_lines(source, spans))]
+          lines   = source.lines
+          prelude = leading_require_spans(source, spans.first[:first])
+          text    = (prelude + spans).flat_map { |span| (span[:first]..span[:last]).map { |n| lines[n - 1] } }
+          # Only the definitions are removed. The requires are copied, not moved: `require`
+          # runs once whatever happens, and the body stays as it was written.
+          ["\n#{text.join.rstrip}\n\n", tidy_blank_lines(drop_lines(source, spans))]
         end
+
+        # Top-level `require` and `require_relative` above the first definition. A class that
+        # subclasses something a require brought in would otherwise be hoisted past it.
+        def leading_require_spans(source, before)
+          root = Parser::CurrentRuby.parse(source)
+          return [] unless root
+
+          nodes = root.type == :begin ? root.children : [root]
+          nodes.each_with_object([]) do |node, spans|
+            next unless node.is_a?(Parser::AST::Node) && node.type == :send
+            next unless node.children[0].nil? && %i[require require_relative].include?(node.children[1])
+
+            line = node.loc.expression.line
+            next unless line < before
+
+            spans << { first: line, last: node.loc.expression.last_line }
+          end
+        rescue StandardError
+          []
+        end
+
+        # `casgn` too: a constant assigned at the top level and referenced from a
+        # shared-examples file in another file resolves to Object, not to the wrapper.
+        HOISTED_NODE_TYPES = %i[class module def casgn].freeze
 
         def top_level_definition_spans(source)
           root = Parser::CurrentRuby.parse(source)
@@ -343,7 +376,7 @@ module Constable
 
           nodes = root.type == :begin ? root.children : [root]
           nodes.each_with_object([]) do |node, spans|
-            next unless node.is_a?(Parser::AST::Node) && %i[class module].include?(node.type)
+            next unless node.is_a?(Parser::AST::Node) && HOISTED_NODE_TYPES.include?(node.type)
 
             first = node.loc.expression.line
             spans << { first: leading_comment_line(source, first), last: node.loc.expression.last_line }
@@ -1229,21 +1262,22 @@ module Constable
           replace(node.loc.selector, "attest") if receiver.nil?
           record_converted(:attest, node, "expect", "attest") if receiver.nil?
         when :is_expected
-          # `subject` already becomes `witness(:subject)`, so the subject this needs has a
-          # home. Flagging it meant the file kept its RSpec body over a rename.
+          # `subject` already becomes `witness(:subject)`, so a declared subject has a home.
+          # An undeclared one has a home too: Constable::Case supplies the same implicit
+          # `described_class.new` RSpec does, inferred from the case name. So this converts
+          # whenever there is something for `subject` to mean.
           #
-          # Without a declared subject there is nothing to point at: RSpec would fall back
-          # to its implicit `described_class.new`, and synthesising that would be inventing
-          # a subject the file never wrote down.
+          # `describe "some string"` with no subject is the one case where there is not --
+          # nothing names a class, so nothing can be built, and the file keeps its flag.
           if receiver.nil?
-            if @has_subject
+            if @has_subject || @described_class
               replace(node.loc.expression, "attest(subject)")
               record_converted(:is_expected, node, "is_expected", "attest(subject)")
             else
               flag(:is_expected, node,
-                   "`is_expected` needs a subject, and this file declares none -- RSpec falls back to " \
-                   "an implicit `described_class.new`. Add `subject { ... }`, or write " \
-                   "`attest(...)` directly.")
+                   "`is_expected` needs a subject. This file declares none, and `describe` names " \
+                   "no class for the implicit one to be built from. Add `subject { ... }`, or " \
+                   "write `attest(...)` directly.")
             end
           end
         when :should, :should_not

@@ -38,7 +38,26 @@ module Constable
     def teardown
       ColdCase.reset_bootstrap!
       ColdCase.reset_engines!
+      remove_stub_rspec_rails!
       super
+    end
+
+    # rspec-rails is not a dependency of this gem -- a suite with no Rails still runs cold
+    # cases -- so the mappings the inference reads are stood up for the duration of a test.
+    def stub_rspec_rails!
+      ColdCase.require_engine!(:rspec)
+      return if defined?(::RSpec::Rails::DIRECTORY_MAPPINGS)
+
+      @stubbed_rspec_rails = true
+      ::RSpec.const_set(:Rails, Module.new) unless ::RSpec.const_defined?(:Rails, false)
+      ::RSpec::Rails.const_set(:DIRECTORY_MAPPINGS, { model: %w[spec models], request: %w[spec requests] })
+    end
+
+    def remove_stub_rspec_rails!
+      return unless @stubbed_rspec_rails
+
+      @stubbed_rspec_rails = false
+      ::RSpec.send(:remove_const, :Rails) if defined?(::RSpec) && ::RSpec.const_defined?(:Rails, false)
     end
 
     def test_bootstrap_block_configures_the_session_the_cold_case_runs_in
@@ -85,6 +104,48 @@ module Constable
 
       assert_equal [:passed], results.map(&:status),
                    "a skipped support file's RSpec.configure never reached the cold-case session"
+    end
+
+    # rspec-rails infers `type: :model` from a spec in spec/models, and shoulda-matchers
+    # installs its matchers with `config.include ..., type: :model`. A ported cold case is
+    # in test/cases/models, so nothing was inferred and nothing was included -- `belong_to`
+    # raised NoMethodError in a file whose only change was its path.
+    def test_a_ported_cold_case_keeps_the_spec_type_its_directory_used_to_imply
+      stub_rspec_rails!
+      ColdCase.bootstrap do
+        ::RSpec.configure do |config|
+          config.include(Module.new { def typed_helper = :model_only }, type: :model)
+        end
+      end
+
+      path = write_file("test/cases/models/widget_case.rb", <<~SPEC)
+        describe "Widget" do
+          it("gets what type: :model gets") { expect(typed_helper).to eq(:model_only) }
+        end
+      SPEC
+
+      results = ColdCase.run_file(path, config: Constable.config)
+
+      assert_equal [:passed], results.map(&:status),
+                   "test/cases/models never got type: :model, so the include was filtered out"
+    end
+
+    # `||=`, like rspec-rails: a file that states its own type keeps it.
+    def test_a_stated_type_is_not_overwritten
+      stub_rspec_rails!
+      seen = []
+      ColdCase.bootstrap do
+        ::RSpec.configure { |config| config.before { |example| seen << example.metadata[:type] } }
+      end
+
+      path = write_file("test/cases/models/widget_case.rb", <<~SPEC)
+        describe "Widget", type: :request do
+          it("keeps its own") { expect(1).to eq(1) }
+        end
+      SPEC
+      ColdCase.run_file(path, config: Constable.config)
+
+      assert_equal [:request], seen
     end
 
     def test_bootstrap_failure_names_the_file

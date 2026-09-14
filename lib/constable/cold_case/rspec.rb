@@ -112,6 +112,12 @@ module Constable
         def engine = :rspec
         def base_class_name = "Constable::ColdCase::RSpec"
 
+        # The spec-type mappings are registered once against a session configuration that
+        # outlives a file. Only a new session -- or a test standing one up -- starts over.
+        def reset_inferred_types!
+          @spec_types_inferred = false
+        end
+
         def run_file(path, config: Constable.config, seed: nil)
           ColdCase.require_engine!(:rspec, path: path)
 
@@ -290,6 +296,7 @@ module Constable
           # Inside the session, so `RSpec.configure` in a support file or rails_helper
           # lands on the configuration cold cases actually run against.
           ColdCase.run_bootstrap!
+          infer_spec_types!(::RSpec.configuration)
 
           yield
         ensure
@@ -302,6 +309,40 @@ module Constable
           ::RSpec::ExampleGroups.remove_all_constants if outer_world.nil?
           ::RSpec.instance_variable_set(:@world, outer_world)
           ::RSpec.instance_variable_set(:@configuration, outer_config)
+        end
+
+        # rspec-rails infers `type: :model` from a spec living in `spec/models`, and a great
+        # deal hangs off that metadata: shoulda-matchers installs its matchers with
+        # `config.include ..., type: :model`, rspec-rails installs its own example groups the
+        # same way, and a rails_helper's `config.include FeatureHelper, type: :feature` is the
+        # same thing again.
+        #
+        # A ported cold case lives in `test/cases/models`. The directory no longer matches, so
+        # no type is inferred, so none of that is included -- and the file fails on `belong_to`
+        # with the matchers plainly installed. Nothing about the file changed; only its path
+        # did, which is not a reason for it to behave differently.
+        #
+        # So the same mappings are registered for the ported tree, taken from rspec-rails
+        # itself rather than copied, and `||=` like the original: a file that states its own
+        # `type:` keeps it.
+        def infer_spec_types!(configuration)
+          roots = "(?:test[\\/]cases|spec)"
+          return if @spec_types_inferred
+          return unless defined?(::RSpec::Rails::DIRECTORY_MAPPINGS)
+          return unless configuration.respond_to?(:define_derived_metadata)
+
+          @spec_types_inferred = true
+          ::RSpec::Rails::DIRECTORY_MAPPINGS.each do |type, dir_parts|
+            tail = dir_parts.drop(1).join("[\\/]")
+            next if tail.empty?
+
+            pattern = Regexp.compile("#{roots}[\\/]#{tail}[\\/]")
+            configuration.define_derived_metadata(file_path: pattern) do |metadata|
+              metadata[:type] ||= type
+            end
+          end
+        rescue StandardError
+          nil
         end
 
         # Settings an RSpec plugin added to the configuration that existed before us.

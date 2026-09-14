@@ -274,6 +274,22 @@ module Constable
         "AnonymousCase"
       end
 
+      # The class this case is about, inferred from its name the way RSpec infers it from
+      # `describe SomeClass`. `CacheManagerCase` is about `CacheManager`. nil when the name
+      # does not resolve, which is the ordinary case for a case about behaviour rather than
+      # about one class.
+      def constable_described_class
+        return @constable_described_class if defined?(@constable_described_class)
+
+        name = constable_display_name.to_s.sub(/(?:Case|Spec|Test)\z/, "")
+        @constable_described_class =
+          begin
+            name.empty? ? nil : Object.const_get(name)
+          rescue NameError
+            nil
+          end
+      end
+
       # Runner entry point. Builds the fresh instance, runs every inherited briefing in
       # order, and executes the investigation body in that same instance.
       #
@@ -405,7 +421,34 @@ module Constable
 
     def constable_display_name = self.class.constable_display_name
 
+    # RSpec's implicit subject, for the same reason RSpec has one: a spec that says
+    # `subject.call` never declared a subject, because `describe CacheManager` already said
+    # what it was. A converted file would otherwise die on `undefined local variable or
+    # method 'subject'` -- and `attest(subject)`, which is what `is_expected` converts to,
+    # needs it to exist at all.
+    #
+    # Memoized per example, like RSpec's: two mentions in one investigation are one object.
+    # A case that declares `witness(:subject) { ... }` defines its own method on the
+    # subclass, which wins over this one, so an explicit subject is untouched.
+    def subject
+      return @constable_subject if defined?(@constable_subject)
+
+      @constable_subject = constable_implicit_subject
+    end
+
     private
+
+    def constable_implicit_subject
+      described = self.class.constable_described_class
+      unless described.is_a?(Class)
+        raise Constable::Error,
+              "#{constable_display_name} used `subject` without declaring one, and its name " \
+              "does not resolve to a class, so there is nothing to build. Declare it with " \
+              "`witness(:subject) { ... }`, or name the thing you are asserting on directly."
+      end
+
+      described.new
+    end
 
     def constable_swallow(errors)
       yield

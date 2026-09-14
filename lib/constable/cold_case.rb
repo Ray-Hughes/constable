@@ -263,6 +263,7 @@ module Constable
       def reset_bootstrap!
         bootstrap_entries.clear
         @bootstrap_cursor = 0
+        RSpecAdapter.reset_inferred_types! if const_defined?(:RSpecAdapter, false)
       end
 
       # Runs whatever has not run yet. The cursor rather than a boolean, so a support file

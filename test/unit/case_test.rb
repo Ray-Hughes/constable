@@ -2,6 +2,12 @@
 
 require_relative "../helper"
 
+# Top level on purpose: a case infers its subject from its own name, and a real case and the
+# class it is about both live at the top level (or share a namespace).
+class SubjectUnderTest
+  def call = :called
+end
+
 module Constable
   class CaseTest < TestCase
     # --- registration ---------------------------------------------------------
@@ -852,6 +858,55 @@ module Constable
       end
 
       assert_equal %i[user response name], klass.witness_names
+    end
+
+    # ---- the implicit subject ------------------------------------------------------------
+    #
+    # A converted file that says `subject.call` never declared a subject, because
+    # `describe CacheManager` already said what it was. Constable infers it the same way.
+
+    def test_subject_is_built_from_the_case_name
+      seen = nil
+      klass = build_case("SubjectUnderTestCase") do
+        investigate("uses it") { seen = subject }
+      end
+      Constable::Case.run(klass.investigations.first)
+
+      assert_instance_of ::SubjectUnderTest, seen
+    end
+
+    # Memoized per example, like RSpec's: two mentions are one object.
+    def test_the_implicit_subject_is_the_same_object_within_one_investigation
+      pair = []
+      klass = build_case("SubjectUnderTestCase") do
+        investigate("mentions it twice") { pair = [subject, subject] }
+      end
+      Constable::Case.run(klass.investigations.first)
+
+      assert_same pair[0], pair[1]
+    end
+
+    # A witness of that name is an explicit subject, and wins.
+    def test_a_declared_subject_wins
+      seen = nil
+      klass = build_case("SubjectUnderTestCase") do
+        witness(:subject) { :declared }
+        investigate("uses the declared one") { seen = subject }
+      end
+      Constable::Case.run(klass.investigations.first)
+
+      assert_equal :declared, seen
+    end
+
+    # `describe "some string"` has no class behind it, and the error has to say so rather
+    # than raising NameError from somewhere inside the case.
+    def test_a_case_whose_name_resolves_to_nothing_says_so
+      klass = build_case("NothingNamedLikeThisCase") do
+        investigate("asks for a subject") { subject }
+      end
+      error = assert_raises(Constable::Error) { Constable::Case.run(klass.investigations.first) }
+
+      assert_match(/without declaring one/, error.message)
     end
   end
 end

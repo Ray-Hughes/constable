@@ -5,6 +5,43 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.9.0] - 2026-09-13
+
+### A ported cold case keeps the spec type its directory implied
+
+rspec-rails infers `type: :model` from a spec living in `spec/models`, and a great deal
+hangs off that metadata. shoulda-matchers installs its matchers with
+`config.include ..., type: :model`. rspec-rails installs its own example groups the same
+way. So does every `config.include FeatureHelper, type: :feature` in a `rails_helper`.
+
+A ported cold case lives in `test/cases/models`. The directory no longer matched, so no type
+was inferred, so none of that was included -- and the file failed on `belong_to` with the
+matchers plainly installed. Nothing about the file had changed; only its path had, which is
+not a reason for it to behave differently. The same mappings are now registered for the
+ported tree, read from rspec-rails rather than copied, and `||=` like the original: a file
+that states its own `type:` keeps it.
+
+### The implicit subject
+
+`describe CacheManager do ... subject.all_cache_keys` never declares a subject, because
+`describe` already said what it was. Constable had no `subject` at all, so a converted file
+died on `undefined local variable or method 'subject'` -- and `attest(subject)`, which is
+what `is_expected` converts to, had nothing to point at.
+
+`Constable::Case` now supplies the same implicit subject RSpec does, inferred from the case
+name: `CacheManagerCase` is about `CacheManager`. Memoized per example, and a
+`witness(:subject) { ... }` still wins. `is_expected` converts whenever there is something
+for `subject` to mean, and keeps its flag only when `describe "some string"` names no class.
+
+### Top-level defs and constants stay top-level
+
+3.8.0 hoisted a cold case's top-level classes and modules out of the wrapper. `def` and
+constant assignments have the same problem and a louder symptom: at the top level a `def` is
+a private method on Object, which every example can call; inside the wrapper it is an
+instance method of a class no example group inherits from, and the first example to call it
+dies on `NoMethodError`. They are hoisted too, and a `require` above them is copied up with
+them, because a superclass has to be loaded before the line that names it.
+
 ## [3.8.0] - 2026-09-13
 
 ### Cold cases now run with the host's RSpec configuration

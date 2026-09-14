@@ -153,6 +153,35 @@ module Constable
       assert Parser::CurrentRuby.parse(source), "the cold case has to parse"
     end
 
+    # A top-level `def` is a private method on Object, which every example can call. Inside
+    # the wrapper it is an instance method of a class no example group inherits from, and
+    # the first example to call it dies on NoMethodError.
+    def test_port_cold_hoists_a_top_level_def_and_constant
+      write_file("spec/feature/widget_spec.rb", <<~SPEC)
+        require "rails_helper"
+
+        WIDGET_LIMIT = 3
+
+        def enable_features
+          FeatureToggle.enable!(:widgets)
+        end
+
+        describe "Widget" do
+          it("uses the helper") { enable_features }
+        end
+      SPEC
+
+      result = port("spec/feature/widget_spec.rb", write: :port_cold)
+      source = File.read(File.join(tmp_root, result.written_to))
+
+      assert_match(/^def enable_features$/, source)
+      assert_match(/^WIDGET_LIMIT = 3$/, source)
+      # The require is copied above them, because a definition may depend on it.
+      assert_operator source.index('require "rails_helper"'), :<, source.index("def enable_features")
+      assert_match(/^  describe "Widget" do/, source)
+      refute_match(/^  def enable_features/, source)
+    end
+
     # --- --delete: finish the move ------------------------------------------------------
     #
     # A port that leaves the original behind has not moved anything. Both files are then
