@@ -107,9 +107,9 @@ module Constable
         name.to_s.match?(/\A(?:be|have)_[a-z_][a-z0-9_]*\z/)
       end
 
-      def deferred_for(name, args = [], block = nil)
+      def deferred_for(name, args = [], block = nil, kwargs = {})
         matcher = matcher_for(name)
-        return matcher.deferred_class.new(name, args, block, matcher: matcher) if matcher
+        return matcher.deferred_class.new(name, args, block, matcher: matcher, kwargs: kwargs) if matcher
 
         predicate = predicate_for(name)
         unless predicate
@@ -118,7 +118,7 @@ module Constable
                 "Constable::Matchers.define(:#{name}) { |actual, *args| ... }"
         end
 
-        PredicateDeferred.new(name, args, block, predicate: predicate)
+        PredicateDeferred.new(name, args, block, predicate: predicate, kwargs: kwargs)
       end
 
       # be_created -> #created?, have_timed_out -> #has_timed_out?
@@ -343,13 +343,22 @@ module Constable
 
     # A matcher that knows its name and arguments but not yet its subject.
     class Deferred
-      attr_reader :name, :args, :block, :matcher
+      attr_reader :name, :args, :block, :matcher, :kwargs
 
-      def initialize(name, args = [], block = nil, matcher: nil)
+      def initialize(name, args = [], block = nil, matcher: nil, kwargs: {})
         @name    = name.to_sym
         @args    = Array(args)
         @block   = block
         @matcher = matcher
+        @kwargs  = kwargs || {}
+      end
+
+      # A matcher written as `define(:thing) { |actual, options| ... }` has always received
+      # its keywords as a trailing Hash, because that is what Ruby 2 handed it. Keeping that
+      # shape here is deliberate: only the callers that need real keywords -- a predicate on
+      # somebody else's object, a matcher built by another library -- ask for them apart.
+      def positional_args
+        @kwargs.empty? ? @args : @args + [@kwargs]
       end
 
       # => [passed, message, context]
@@ -358,7 +367,7 @@ module Constable
       end
 
       def invoke(actual)
-        @matcher.block.call(actual, *@args, &@block)
+        @matcher.block.call(actual, *positional_args, &@block)
       end
 
       # RSpec spells the expected message two ways -- `raise_error(Klass, "boom")` and
@@ -385,7 +394,7 @@ module Constable
       # and the negated message are built around, so negation never needs its own matcher.
       def description
         phrase = @name.to_s.sub(/\Abe_/, "be ").sub(/\Ahave_/, "have ").tr("_", " ")
-        "#{phrase}#{Matchers.format_args(@args)}"
+        "#{phrase}#{Matchers.format_args(positional_args)}"
       end
 
       def failure_message(actual)
@@ -504,8 +513,8 @@ module Constable
     class PredicateDeferred < Deferred
       attr_reader :predicate
 
-      def initialize(name, args = [], block = nil, predicate:)
-        super(name, args, block)
+      def initialize(name, args = [], block = nil, predicate:, kwargs: {})
+        super(name, args, block, kwargs: kwargs)
         @predicate = predicate
       end
 
@@ -516,7 +525,11 @@ module Constable
                   Matchers.context_for(actual)]
         end
 
-        passed = Matchers.truthy?(actual.public_send(@predicate, *@args, &@block))
+        # Real keywords, not a trailing Hash. `has_button?(locator, **options)` is Capybara's
+        # signature and most of its matchers look like it, so `have_button("Save", disabled:
+        # true)` arrived as two positional arguments and died on arity -- in a file whose only
+        # crime was being written the way Capybara documents.
+        passed = Matchers.truthy?(actual.public_send(@predicate, *@args, **@kwargs, &@block))
         [passed, passed ? nil : failure_message(actual), Matchers.context_for(actual)]
       end
 
@@ -539,7 +552,7 @@ module Constable
     # a before/after sampling around the action, and .by/.from/.to chaining to say what
     # kind of change it wanted.
     class ChangeMatcher < Deferred
-      def initialize(name, args = [], block = nil, matcher: nil)
+      def initialize(name, args = [], block = nil, matcher: nil, kwargs: {})
         super
         @by_set = @from_set = @to_set = false
       end
@@ -760,16 +773,16 @@ module Constable
       end
 
       # Explicit escape hatch for a matcher whose name collides with a real method.
-      def matcher(name, *args, &block)
-        Matchers.deferred_for(name, args, block)
+      def matcher(name, *args, **kwargs, &block)
+        Matchers.deferred_for(name, args, block, kwargs)
       end
 
       private
 
-      def method_missing(name, *args, &block)
+      def method_missing(name, *args, **kwargs, &block)
         return super unless Matchers.matcher_name?(name)
 
-        Matchers.deferred_for(name, args, block)
+        Matchers.deferred_for(name, args, block, kwargs)
       end
 
       def respond_to_missing?(name, include_private = false)

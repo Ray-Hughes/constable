@@ -903,5 +903,50 @@ module Constable
 
       assert_match(/only follows `raise_error`/, error.message)
     end
+
+    # ---- keyword arguments ---------------------------------------------------------------
+    #
+    # `has_button?(locator, **options)` is Capybara's signature and most of its matchers look
+    # like it. Collapsed into a trailing Hash they die on arity, in a file whose only crime
+    # was being written the way Capybara documents.
+
+    class KeywordPredicate
+      def has_button?(label, disabled: false)
+        label == "Save" && disabled
+      end
+    end
+
+    def test_a_predicate_matcher_receives_real_keywords
+      assert attest(KeywordPredicate.new).to(have_button("Save", disabled: true))
+    end
+
+    def test_a_predicate_matcher_still_works_with_no_keywords
+      assert attest(KeywordPredicate.new).to_not(have_button("Save"))
+    end
+
+    # The failure message has to name what was asked for, keywords included.
+    def test_keywords_appear_in_the_failure_message
+      error = assert_raises(Constable::AssertionFailed) do
+        attest(KeywordPredicate.new).to(have_button("Cancel", disabled: true))
+      end
+
+      assert_match(/disabled/, error.message)
+    end
+
+    # A matcher defined the old way keeps receiving a trailing Hash, because that is the
+    # shape every existing definition was written against.
+    def test_a_defined_matcher_still_receives_a_trailing_hash
+      seen = nil
+      Constable::Matchers.define(:carry) do |_actual, options|
+        seen = options
+        true
+      end
+
+      attest(Object.new).to(carry(colour: "red"))
+
+      assert_equal({ colour: "red" }, seen)
+    ensure
+      Constable::Matchers.clear!
+    end
   end
 end

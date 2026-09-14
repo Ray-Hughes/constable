@@ -5,6 +5,26 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.12.0] - 2026-09-14
+
+### Matchers take keyword arguments
+
+`has_button?(locator, **options)` is Capybara's signature and most of its matchers look like
+it. Constable collapsed the keywords into a trailing Hash on the way through, so
+
+```ruby
+attest(page).to have_button("Apply filter", disabled: true)
+```
+
+raised `ArgumentError: wrong number of arguments (given 2, expected 0..1)` -- in a file whose
+only crime was being written the way Capybara documents. The same went for
+`have_link(text, href: ..., exact: true)` and every other matcher with options.
+
+Keywords are now carried separately and handed to a predicate as keywords. A matcher defined
+with `Matchers.define` still receives a trailing Hash, because that is the shape every
+existing definition was written against, and the failure message still names what was asked
+for.
+
 ## [3.11.0] - 2026-09-14
 
 ### `transactional false`
