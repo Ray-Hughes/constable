@@ -5,6 +5,24 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.18.0] - 2026-09-14
+
+### A plugin's `config.include`/`extend` reaches the cold-case session
+
+The other half of the problem `carry_plugin_settings!` solved in 3.1.0.
+
+A gem in the Gemfile without `require: false` is loaded during Rails boot, and if it
+registers itself with `RSpec.configure { |c| c.extend Something, type: :request }` -- which
+rswag, shoulda-matchers and most RSpec plugins do -- that registration lands on whatever
+configuration existed then. The session configuration is built afterwards, has never heard
+of it, and the plugin will not run again to say so.
+
+The symptom is a spec calling a DSL method its own `require` plainly provides: `undefined
+method 'path'` in a file whose second line is `require "swagger_helper"`.
+
+`include`, `extend` and `prepend` registrations are now carried across once, with their
+metadata filters, the same way settings are.
+
 ## [3.17.0] - 2026-09-14
 
 ### A message of your own on `to` and `not_to`

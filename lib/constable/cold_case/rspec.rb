@@ -112,10 +112,13 @@ module Constable
         def engine = :rspec
         def base_class_name = "Constable::ColdCase::RSpec"
 
-        # The spec-type mappings are registered once against a session configuration that
-        # outlives a file. Only a new session -- or a test standing one up -- starts over.
+        # The spec-type mappings, the plugin settings and the module registrations are all
+        # carried once against a session configuration that outlives a file. Only a new
+        # session -- or a test standing one up -- starts over.
         def reset_inferred_types!
           @spec_types_inferred = false
+          @plugins_carried = false
+          @inclusions_carried = false
         end
 
         def run_file(path, config: Constable.config, seed: nil)
@@ -290,6 +293,7 @@ module Constable
           ::RSpec.instance_variable_set(:@world, @session_world)
           ::RSpec.instance_variable_set(:@configuration, @session_configuration)
           carry_plugin_settings!(outer_config)
+          carry_module_inclusions!(outer_config)
           prepare_session_configuration(::RSpec.configuration)
           clear_examples
           restore_shared_examples!
@@ -377,6 +381,44 @@ module Constable
           rescue StandardError
             next
           end
+        end
+
+        # The other half of the same problem `carry_plugin_settings!` solves.
+        #
+        # A gem in the Gemfile without `require: false` is loaded during Rails boot, and if
+        # it registers itself with `RSpec.configure { |c| c.extend Something, type: :request }`
+        # -- which rswag, shoulda-matchers and most RSpec plugins do -- that registration
+        # lands on whatever configuration existed then. The session configuration is built
+        # afterwards and has never heard of it, and the plugin will not run again to say so.
+        #
+        # The symptom is a spec calling a DSL method its own `require` plainly provides:
+        # `undefined method 'path'` in a file whose second line is `require "swagger_helper"`.
+        #
+        # Carried once, and only the registrations: nothing else of the outer configuration
+        # comes with them.
+        def carry_module_inclusions!(outer_config)
+          return unless outer_config
+          return if @inclusions_carried
+
+          @inclusions_carried = true
+          session = ::RSpec.configuration
+          return if session.equal?(outer_config)
+
+          { include: :@include_modules, extend: :@extend_modules, prepend: :@prepend_modules }
+            .each { |method, ivar| carry_one_repository!(outer_config, session, method, ivar) }
+        end
+
+        def carry_one_repository!(outer_config, session, method, ivar)
+          repository = outer_config.instance_variable_get(ivar)
+          return unless repository.respond_to?(:items_and_filters)
+
+          repository.items_and_filters.each do |mod, metadata|
+            session.public_send(method, mod, metadata || {})
+          rescue StandardError
+            next
+          end
+        rescue StandardError
+          nil
         end
 
         def plugin_setting_names(config)

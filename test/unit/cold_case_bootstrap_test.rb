@@ -148,6 +148,27 @@ module Constable
       assert_equal [:request], seen
     end
 
+    # A gem loaded during boot registers itself against whatever configuration exists then,
+    # and the session configuration is built afterwards. rswag does exactly this with
+    # `c.extend ExampleGroupHelpers, type: :request`, and the symptom is `undefined method
+    # 'path'` in a file whose own require plainly provides it.
+    def test_a_registration_made_before_the_session_is_carried_into_it
+      ColdCase.require_engine!(:rspec)
+      helpers = Module.new { def dsl_from_a_plugin = :ok }
+      ::RSpec.configuration.extend(helpers)
+
+      path = write_file("spec/plugin_dsl_spec.rb", <<~SPEC)
+        describe "a legacy spec" do
+          it("reaches the plugin DSL") { expect(self.class.dsl_from_a_plugin).to eq(:ok) }
+        end
+      SPEC
+
+      results = ColdCase.run_file(path, config: Constable.config)
+
+      assert_equal [:passed], results.map(&:status),
+                   "the boot-time `extend` never reached the session configuration"
+    end
+
     def test_bootstrap_failure_names_the_file
       ColdCase.bootstrap { raise ArgumentError, "no such thing" }
       path = write_file("spec/needs_helper_spec.rb", NEEDS_HELPER)
