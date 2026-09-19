@@ -7,7 +7,7 @@
 
 **A strict Rails testing framework where fast and non-flaky are structural, not disciplinary.**
 
-[![Gem Version](https://badge.fury.io/rb/constable-rails.svg)](https://badge.fury.io/rb/constable-rails)
+[![Version](https://img.shields.io/github/v/tag/Ray-Hughes/constable?label=version&color=blue)](https://github.com/Ray-Hughes/constable/releases)
 [![CI](https://github.com/Ray-Hughes/constable/actions/workflows/ci.yml/badge.svg)](https://github.com/Ray-Hughes/constable/actions/workflows/ci.yml)
 [![Ruby](https://img.shields.io/badge/ruby-%3E%3D%203.1-CC342D)](https://www.ruby-lang.org)
 [![Rails](https://img.shields.io/badge/rails-%3E%3D%207.0-D30001)](https://rubyonrails.org)
@@ -69,6 +69,9 @@ linter instead of by CI, and an adoption path that never asks you to rewrite any
   - [Publishing coverage](#publishing-coverage)
   - [Identity survives renames](#identity-survives-renames)
   - [Command reference](#command-reference)
+  - [CI: several machines](#ci-one-suite-across-several-machines)
+  - [Reading a run](#reading-a-run)
+  - [Knowing what your suite is doing](#knowing-what-your-suite-is-doing)
   - [Output](#output)
   - [The blotter](#the-blotter)
   - [Configuration](#configuration)
@@ -128,10 +131,15 @@ Three ways in, depending on what you have today. All three start the same way.
 ```ruby
 # Gemfile
 group :development, :test do
-  gem "constable-rails"
+  gem "constable-rails", git: "https://github.com/Ray-Hughes/constable.git", tag: "v3.24.0"
   gem "rubocop-constable", require: false
 end
 ```
+
+> **Installed from git while the RubyGems release catches up.** `rubygems.org` still serves
+> 2.1.1; everything since — cold-case fixes, warrants on cold cases, coverage publishing,
+> timings-balanced shards, `--watch` — is released as a git tag. Pin the tag rather than the
+> branch, so a run is reproducible.
 
 ```console
 $ bundle install
@@ -986,8 +994,10 @@ worse than one that resets.
 
 | Command | Runs |
 |---|---|
-| `constable test` | Everything, git-diff-scoped locally |
-| `constable test --full` | The whole suite. CI always uses this |
+| `constable test` | The whole suite, the way `rspec` with no arguments does |
+| `constable test --changed` | Only the cases your current git diff touches |
+| `constable test --watch` | Keep running: each save runs the tests that cover that file |
+| `constable test --full` | The same as no flag. Kept because it is in CI configs |
 | `constable test PATH[:LINE]` | One file, or one investigation at that line |
 | `constable test --only=MODE` | Narrow by what runs it: `native`, `cold`, `rspec`, `minitest` |
 | `constable test --timeout N` | Hang limit for one item. Always on, default 300s, floor 10s |
@@ -1011,7 +1021,13 @@ worse than one that resets.
 | `constable import --from=rspec` | Adopt an existing suite as cold cases |
 | `constable modernize PATH [--port --base C --delete]` | Opt-in AST rewrite into the native DSL. `--port` writes into `test/cases/`, `--base` sets the superclass, `--delete` removes the original, `--cold` moves it verbatim |
 
-Flags: `--full --only MODE --jail --warrants --coverage --seed N --workers N --verbose --tier T\n--expanded --concise --output MODE --no-color`.
+**What to run:** `PATH[:LINE] --changed --watch --full --only MODE --tier T --shard i/n
+--shard-by-time --timings FILE`.
+
+**How it runs:** `--seed N --workers N --timeout N --jail --warrants --coverage`.
+
+**What it prints:** `--expanded --concise --output MODE --show warnings --verbose --no-color
+--failures-to FILE --timings-out FILE`.
 
 Order is randomized every run for native cases, with the seed printed and replayable via
 `--seed`. Cold cases keep their own engine's order. Workers run in parallel by default,
