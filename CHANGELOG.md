@@ -5,6 +5,20 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.19.2] - 2026-09-18
+
+### Warrants rerun cold cases
+
+A warrant reruns a failure in isolation before believing it. For a cold case it never did.
+The rerun looked the test up among native investigations, a cold case is never one, and the
+lookup's `nil` was read as a failed retry -- so every cold-case failure was called genuine
+without being run again, and a flaky legacy test failed the build like a broken one. On a
+suite that is mostly cold, `warrants: true` did nothing at all, and said nothing about it.
+
+A cold-case failure now goes back through the engine that ran it, narrowed to that one
+example: RSpec by its full description, Minitest by its method name. It passes a retry, it is
+warranted; it fails every one, it stays a failure. `ColdCase.run_file` takes `only:` for this.
+
 ## [3.19.1] - 2026-09-14
 
 ### Indenting a cold case no longer edits its strings

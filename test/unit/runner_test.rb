@@ -369,6 +369,59 @@ module Constable
       assert_equal 4, runner.results.size
     end
 
+    # --- warrants on cold cases -------------------------------------------------------
+
+    # The rerun used to look the failure up among native investigations only. A cold case
+    # is never there, so the lookup came back nil, the warrant counted that as a failed
+    # retry, and every cold-case failure was called genuine without being rerun. On a
+    # suite that is mostly cold, warrants did nothing at all.
+    def test_a_flaky_cold_case_is_rerun_and_warranted
+      counter = File.join(tmp_root, "attempts")
+      write_file("spec/flaky_spec.rb", <<~SPEC)
+        class LegacyFlakySpec < Constable::ColdCase::RSpec
+          describe "Flaky" do
+            it "passes the second time" do
+              attempt = File.exist?(#{counter.inspect}) ? File.read(#{counter.inspect}).to_i + 1 : 1
+              File.write(#{counter.inspect}, attempt.to_s)
+              expect(attempt).to be > 1
+            end
+
+            it "is left alone" do; end
+          end
+        end
+      SPEC
+
+      _status, runner = run_suite(warrants: true)
+      flaky = runner.results.find { |r| r.description == "Flaky passes the second time" }
+
+      assert_equal :warranted, flaky.status
+      assert_equal 6, File.read(counter).to_i, "the run, then the default five isolated retries"
+      assert_equal 1, runner.results.count { |r| r.description == "Flaky is left alone" },
+                   "the retry reran the failure alone, and its passes are not reported twice"
+    end
+
+    def test_a_cold_case_that_fails_every_retry_stays_a_failure
+      counter = File.join(tmp_root, "attempts")
+      write_config("storage:\n  adapter: sqlite\n  path: .constable/constable.sqlite3\nwarrant_retries: 2\n")
+      write_file("spec/broken_spec.rb", <<~SPEC)
+        class LegacyBrokenSpec < Constable::ColdCase::RSpec
+          describe "Broken" do
+            it "always fails" do
+              attempt = File.exist?(#{counter.inspect}) ? File.read(#{counter.inspect}).to_i + 1 : 1
+              File.write(#{counter.inspect}, attempt.to_s)
+              expect(attempt).to eq(0)
+            end
+          end
+        end
+      SPEC
+
+      _status, runner = run_suite(warrants: true)
+      broken = runner.results.find { |r| r.description == "Broken always fails" }
+
+      assert_equal :failed, broken.status
+      assert_equal 3, File.read(counter).to_i, "the run, then both retries"
+    end
+
     # --- balancing ----------------------------------------------------------------------
     #
     # Longest-processing-time-first only works if the runner knows what things cost. A cold

@@ -121,12 +121,13 @@ module Constable
           @inclusions_carried = false
         end
 
-        def run_file(path, config: Constable.config, seed: nil)
+        def run_file(path, config: Constable.config, seed: nil, only: nil)
           ColdCase.require_engine!(:rspec, path: path)
 
           results = []
           ColdCase.while_loading(path) do
             with_engine do
+              only_example!(only) if only
               collector  = Collector.new
               load_error = capture_load(path)
               # Immediately, while it still exists.
@@ -711,6 +712,17 @@ module Constable
           ::RSpec.world.wants_to_quit = false
           Constable::Error.new(
             "RSpec stopped while loading #{path}. #{swallowed_output(::RSpec.configuration)}".strip
+          )
+        end
+
+        # Narrows the file to the one example a warrant is rerunning, by the same full
+        # description its Result was keyed on. Set before the load, as RSpec's own `-e`
+        # is: filtered examples are computed once, on first ask. include_only replaces a
+        # rails_helper's `filter_run_when_matching :focus` for this run, which is the
+        # point, and clear_examples resets the filters when the file is done.
+        def only_example!(description)
+          ::RSpec.configuration.filter_manager.include_only(
+            full_description: /\A#{Regexp.escape(description)}\z/
           )
         end
 

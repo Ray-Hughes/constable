@@ -1281,10 +1281,28 @@ module Constable
     # One test, run again from scratch, so a warrant's retries measure the test rather than
     # whatever the rest of the suite left lying around.
     def rerun_in_isolation(subject)
+      return rerun_cold_in_isolation(subject) if subject.respond_to?(:cold?) && subject.cold?
+
       investigation = subject.is_a?(Investigation) ? subject : investigation_for(subject.to_s)
       return nil unless investigation
 
       execute_investigation(investigation)
+    end
+
+    # A cold case has no Investigation to hand back -- its examples belong to RSpec or
+    # Minitest, not the registry -- so it goes back through its own engine, narrowed to
+    # the one example. Looking only in the registry used to return nil here, which the
+    # warrant read as a failed retry: every cold-case failure was judged genuine without
+    # being rerun, and a flaky legacy test failed the build like a broken one.
+    def rerun_cold_in_isolation(result)
+      path = ColdCase.absolute_path(result.file, config: @config)
+      return nil unless File.file?(path)
+
+      reruns = ColdCase.run_file(path, config: @config, seed: @seed, only: result.description)
+      reruns.find { |rerun| rerun.identity == result.identity }
+    rescue StandardError => e
+      Constable.warn!("could not rerun #{result.file}:#{result.line} for its warrant: #{e.message}")
+      nil
     end
 
     def jail

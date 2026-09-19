@@ -54,7 +54,7 @@ module Constable
         def engine = :minitest
         def base_class_name = "Constable::ColdCase::Minitest"
 
-        def run_file(path, config: Constable.config, seed: nil)
+        def run_file(path, config: Constable.config, seed: nil, only: nil)
           ColdCase.require_engine!(:minitest, path: path)
           disable_autorun!
 
@@ -71,7 +71,9 @@ module Constable
           ColdCase.while_loading(path) do
             without_rspecs_global_dsl do
               load_error = capture_load(path)
-              run_runnables(discover_runnables(registry, snapshot, path), collector, seed: seed) unless load_error
+              unless load_error
+                run_runnables(discover_runnables(registry, snapshot, path), collector, seed: seed, only: only)
+              end
             end
 
             ColdCase.warn_for_file(path, base_class_name, collector.results.size, config: config)
@@ -196,7 +198,7 @@ module Constable
           false
         end
 
-        def run_runnables(runnables, collector, seed: nil)
+        def run_runnables(runnables, collector, seed: nil, only: nil)
           reporter = ::Minitest::CompositeReporter.new
           reporter << collector
           reporter.start
@@ -208,7 +210,7 @@ module Constable
             runnables.each do |klass|
               next unless klass.respond_to?(:runnable_methods)
 
-              run_suite(klass, reporter)
+              run_suite(klass, reporter, suite_options(only))
             end
           end
 
@@ -233,13 +235,24 @@ module Constable
           srand(previous_rand) if previous_rand
         end
 
+        # One method, for a warrant's isolated rerun. `only` is the description a Result
+        # carries, which #description_for took from the method name by dropping a spec's
+        # `test_0001_` prefix -- so the prefix is allowed back. minitest 5 reads the
+        # filter from :filter and minitest 6 from :include; each ignores the other key.
+        def suite_options(only)
+          return {} unless only
+
+          pattern = /\A(?:test_\d{4}_)?#{Regexp.escape(only)}\z/
+          { filter: pattern, include: pattern }
+        end
+
         # minitest 6 renamed the "run every method of this class" entry point from
         # Runnable.run to Runnable.run_suite (Runnable.run now runs a single method).
-        def run_suite(klass, reporter)
+        def run_suite(klass, reporter, options = {})
           if klass.respond_to?(:run_suite)
-            klass.run_suite(reporter, {})
+            klass.run_suite(reporter, options)
           else
-            klass.run(reporter, {})
+            klass.run(reporter, options)
           end
         end
 

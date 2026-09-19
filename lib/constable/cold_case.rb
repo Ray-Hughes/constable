@@ -72,7 +72,10 @@ module Constable
       # Runs one cold-case file through its own engine and returns [Constable::Result].
       # Every result has kind: :cold, so downstream code can tell at a glance that this
       # test is not under native rules.
-      def run_file(path, config: Constable.config, seed: nil)
+      #
+      # `only:` names one example by the description its Result carries, and runs that
+      # example alone -- what a warrant needs to rerun a failure in isolation.
+      def run_file(path, config: Constable.config, seed: nil, only: nil)
         absolute = absolute_path(path, config: config)
         engine   = engine_for(absolute)
 
@@ -84,7 +87,7 @@ module Constable
                 "Constable::ColdCase::Minitest superclass."
         end
 
-        adapter_for(engine).run_file(absolute, config: config, seed: seed)
+        adapter_for(engine).run_file(absolute, config: config, seed: seed, only: only)
       end
 
       # Convenience for a whole batch. Files run one at a time and in the given order --

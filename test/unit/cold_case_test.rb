@@ -254,6 +254,63 @@ module Constable
       assert_equal "constable test spec/arithmetic_spec.rb:2 --only=cold --seed 8841", adds.rerun_command
     end
 
+    # What a warrant reruns: one example, alone, found by the description its Result
+    # carries. Brackets and dots in the description must be matched literally.
+    def test_rspec_only_runs_the_one_named_example
+      path = write_file("spec/arithmetic_spec.rb", RSPEC_PLAIN + <<~SPEC)
+        describe "Lookalikes" do
+          it "adds (twice) [really]" do; end
+          it "adds (twice) [really] and more" do; end
+        end
+      SPEC
+
+      results = ColdCase.run_file(path, config: Constable.config, only: "Arithmetic subtracts wrongly")
+
+      assert_equal ["Arithmetic subtracts wrongly"], results.map(&:description)
+      assert_equal :failed, results.first.status
+
+      results = ColdCase.run_file(path, config: Constable.config, only: "Lookalikes adds (twice) [really]")
+
+      assert_equal ["Lookalikes adds (twice) [really]"], results.map(&:description)
+    end
+
+    def test_rspec_only_does_not_outlive_its_run
+      path = write_file("spec/arithmetic_spec.rb", RSPEC_PLAIN)
+
+      ColdCase.run_file(path, config: Constable.config, only: "Arithmetic adds")
+
+      assert_equal 4, ColdCase.run_file(path, config: Constable.config).size
+    end
+
+    def test_minitest_only_runs_the_one_named_method
+      path = write_file("test/arithmetic_test.rb", MINITEST_PLAIN)
+
+      results = ColdCase.run_file(path, config: Constable.config, only: "test_explodes")
+
+      assert_equal ["test_explodes"], results.map(&:description)
+      assert_equal :errored, results.first.status
+    end
+
+    def test_minitest_only_finds_a_spec_style_example_by_its_description
+      path = write_file("test/spec_style_test.rb", <<~TEST)
+        require "minitest/spec"
+
+        describe "Coffee" do
+          it "is hot" do
+            assert true
+          end
+
+          it "is hot enough" do
+            assert true
+          end
+        end
+      TEST
+
+      results = ColdCase.run_file(path, config: Constable.config, only: "is hot")
+
+      assert_equal ["is hot"], results.map(&:description)
+    end
+
     def test_rspec_keeps_its_own_declaration_order
       path = write_file("spec/ordered_spec.rb", <<~SPEC)
         describe "Ordering" do
