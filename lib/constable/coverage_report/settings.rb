@@ -26,6 +26,9 @@ module Constable
       def token_env  = (@raw["token_env"] || "GITHUB_TOKEN").to_s
       def email      = @raw["email"].is_a?(Hash) ? @raw["email"] : {}
       def custom     = @raw["custom"].is_a?(Hash) ? @raw["custom"] : {}
+      # Heading and closing note for the rendered report; both optional.
+      def title      = @raw["title"]
+      def note       = @raw["note"]
 
       def pr_delivery? = deliveries.intersect?(%w[pr_comment pr_description])
 

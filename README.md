@@ -949,7 +949,10 @@ the matrix merges them and publishes once:
   env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
 ```
 
-`constable coverage publish --dry-run` prints the report instead of delivering it.
+`constable coverage publish --dry-run` prints the report instead of delivering it. `--html PATH`
+also writes the full, browsable report; upload it as an artifact and pass its URL back with
+`--report-url` and the comment links to it. `title:` and `note:` under `coverage_report` set
+the report's heading and a closing note.
 
 ### Identity survives renames
 

@@ -115,6 +115,8 @@ coverage_report:
                            #   email           see `email` below
                            #   custom          POSTs the report as JSON (paid tier; see `custom`)
   token_env: GITHUB_TOKEN  # needs pull-requests: write for the two pr_ deliveries
+  # title: "📊 Code Coverage Report"   # the report heading
+  # note: "Frontend coverage is reported separately."   # a closing note, quoted under the report
   # email:
   #   to: [lead@example.com]
   #   from: constable@example.com

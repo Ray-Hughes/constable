@@ -45,15 +45,22 @@ module Constable
     # Sends `report` everywhere the settings say. Never raises for a delivery that fails:
     # each outcome comes back as a Delivery, so one broken SMTP server does not stop the
     # pull request comment.
-    def publish(report, settings:, context:, env: ENV, http: Http.new, smtp: nil)
+    # `report_url` is where the full HTML report can be downloaded, when there is one -- in CI,
+    # the artifact the publish job uploaded just before calling this.
+    def publish(report, settings:, context:, env: ENV, http: Http.new, smtp: nil, report_url: nil)
       settings.validate!
-      markdown = Markdown.new(report, context: context)
+      markdown = markdown_for(report, settings: settings, context: context, report_url: report_url)
       body = markdown.render
 
       settings.deliveries.map do |name|
         deliver(name, report: report, markdown: markdown, body: body, settings: settings,
                       context: context, env: env, http: http, smtp: smtp)
       end
+    end
+
+    # The same renderer `publish` uses, so `--dry-run` shows exactly what would be posted.
+    def markdown_for(report, settings:, context:, report_url: nil)
+      Markdown.new(report, context: context, title: settings.title, note: settings.note, report_url: report_url)
     end
 
     def deliver(name, report:, markdown:, body:, settings:, context:, env:, http:, smtp:)

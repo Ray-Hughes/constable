@@ -651,26 +651,32 @@ module Constable
       DESC
       option :"dry-run", type: :boolean, default: false, desc: "Print the report instead of delivering it"
       option :base, type: :string, desc: "Measure changed lines from here (default: the pull request's base)"
+      option :html, type: :string, desc: "Also write the full HTML report to this file"
+      option :"report-url", type: :string, desc: "Link the report to the full HTML report here"
       def publish(*files)
         config = Constable.config
         files = Dir[File.join(Constable.root, CoverageReport::SHARD_DIR, "shard-*.json")] if files.empty?
         raw, gate = CoverageReport.load_shards(files)
         context = CoverageReport::Context.detect
         report = CoverageReport.build(raw, config: config, gate: gate, context: context, base: options[:base])
+        settings = CoverageReport::Settings.from(config)
+        # Before any delivery, so a CI step can upload it and pass its URL to the next one.
+        say "HTML report: #{Coverage.write_html(report, path: options[:html])}" if options[:html]
 
         if options[:"dry-run"]
-          say CoverageReport::Markdown.new(report, context: context).render
+          say CoverageReport.markdown_for(report, settings: settings, context: context,
+                                                  report_url: options[:"report-url"]).render
           return
         end
 
-        settings = CoverageReport::Settings.from(config)
         unless settings.enabled?
           raise Constable::ConfigurationError,
                 "coverage_report.deliver in #{Config::CONFIG_PATH} is empty, so there is nowhere to " \
                 "publish. Add pr_comment, pr_description, email or custom -- or pass --dry-run."
         end
 
-        deliveries = CoverageReport.publish(report, settings: settings, context: context)
+        deliveries = CoverageReport.publish(report, settings: settings, context: context,
+                                                    report_url: options[:"report-url"])
         deliveries.each { |delivery| say delivery.to_s }
         exit(EXIT_FAILED) if deliveries.any?(&:failed?)
       end

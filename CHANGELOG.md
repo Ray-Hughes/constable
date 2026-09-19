@@ -5,6 +5,25 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.21.0] - 2026-09-19
+
+### A coverage report laid out like a coverage comment
+
+The published report now reads the way teams already read coverage comments on a pull
+request, with more in it:
+
+- a heading and a "Run completed on ..." line with the commit and the workflow run
+- a **Coverage Summary** table: total coverage with line counts, changed-line coverage
+  against the threshold (or "report only" at 0), files measured, files with no line run
+- a **Changed Files Coverage** table: each changed file's coverage, how many of its changed
+  lines ran, and a warning below 50%
+- the changed lines that never ran, each linked to the code
+- a **Coverage Report** section linking the full HTML report
+
+`constable coverage publish --html PATH` writes that HTML report and `--report-url URL` links
+to it, so CI can upload it as an artifact in between. `coverage_report.title` and
+`coverage_report.note` set the heading and a closing note.
+
 ## [3.20.2] - 2026-09-19
 
 ### Coverage alongside SimpleCov no longer fails a green run

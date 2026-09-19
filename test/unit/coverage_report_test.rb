@@ -127,15 +127,39 @@ module Constable
 
     # --- markdown ------------------------------------------------------------------
 
-    def test_the_report_leads_with_the_changed_lines_that_never_ran
-      body = CoverageReport::Markdown.new(report, context: context).render
+    def test_the_summary_table_reads_like_a_coverage_comment
+      body = CoverageReport::Markdown.new(report, context: context, now: Time.utc(2026, 9, 19, 7, 38, 53)).render
 
       assert body.start_with?(CoverageReport::Markdown::MARKER)
-      assert_includes body, "**2 changed lines never ran**"
+      assert_includes body, "# 📊 Code Coverage Report"
+      assert_includes body, "Run completed on Sat Sep 19 07:38:53 UTC 2026 · commit `abc1234` · " \
+                            "[workflow run](https://ghe.example.com/acme/app/actions/runs/9)"
+      assert_includes body, "| Metric | Value |"
+      assert_includes body, "| **Total Coverage** | 42.9% (3 of 7 lines) |"
+      assert_includes body, "| **Changed Lines** | ⚠️ 33.3% (1 of 3) · below the 90% threshold |"
+      assert_includes body, "| **Files Measured** | 2 |"
+      assert_includes body, "| **Files With No Line Run** | 1 |"
+    end
+
+    def test_changed_files_get_a_row_each_with_the_low_coverage_warning
+      body = CoverageReport::Markdown.new(report, context: context).render
+
+      assert_includes body, "| File | File Coverage | Changed Lines Covered | Warning (<50%) |"
+      link = "[`app/models/user.rb`](https://ghe.example.com/acme/app/blob/abc1234def/app/models/user.rb)"
+      assert_includes body, "| #{link} | 60.0% | 1 of 3 | No |"
+
+      sparse = Coverage.build_report({ File.realpath(@model) => [1, 1, 0, 0, 0, nil] },
+                                     config: Constable.config, root: tmp_root,
+                                     changed_lines: { "app/models/user.rb" => [2] })
+      assert_includes CoverageReport::Markdown.new(sparse).render, "| 40.0% | 1 of 1 | ⚠️ Yes |"
+    end
+
+    def test_the_changed_lines_that_never_ran_are_linked_to_the_code
+      body = CoverageReport::Markdown.new(report, context: context).render
+
+      assert_includes body, "## Changed Lines Not Run"
+      assert_includes body, "2 changed lines never ran in any test:"
       assert_includes body, "[4–5](https://ghe.example.com/acme/app/blob/abc1234def/app/models/user.rb#L4-L5)"
-      assert_includes body, "| Changed lines | 1 | 3 | 33.3% |"
-      assert_includes body, "below 90%"
-      assert_includes body, "commit abc1234"
     end
 
     def test_a_file_with_no_line_run_is_listed_but_folded_away
@@ -145,18 +169,39 @@ module Constable
       assert_includes body, "`app/models/idle.rb`"
     end
 
-    def test_no_diff_means_no_changed_lines_section
+    def test_title_note_and_report_link_come_from_settings_and_the_publish_step
+      configured = settings("title" => "📊 Backend Coverage Report", "note" => "Frontend is in its own comment.")
+      body = CoverageReport.markdown_for(report, settings: configured, context: context,
+                                                 report_url: "https://ghe.example.com/art/1").render
+
+      assert_includes body, "# 📊 Backend Coverage Report"
+      assert_includes body, "## Coverage Report"
+      assert_includes body, "📥 [Download Full HTML Report](https://ghe.example.com/art/1)"
+      assert_includes body, "> Frontend is in its own comment."
+    end
+
+    def test_a_threshold_of_zero_reports_without_a_verdict
+      write_config("coverage_threshold: 0\n")
+      zero = Coverage.build_report({ File.realpath(@model) => [1, 1, 1, 0, 0, nil] },
+                                   config: Constable.config, root: tmp_root,
+                                   changed_lines: { "app/models/user.rb" => [2, 4, 5] })
+
+      assert_includes CoverageReport::Markdown.new(zero).render,
+                      "| **Changed Lines** | 33.3% (1 of 3) · report only |"
+    end
+
+    def test_no_diff_says_so_instead_of_a_changed_lines_section
       body = CoverageReport::Markdown.new(report(changed: nil), context: nil).render
 
-      refute_includes body, "Changed lines"
-      refute_includes body, "never ran**"
-      assert_includes body, "### Coverage: "
+      assert_includes body, "| **Changed Lines** | n/a (the base branch is not in this clone) |"
+      assert_includes body, "No changed application files in this diff."
+      refute_includes body, "## Changed Lines Not Run"
     end
 
     def test_every_changed_line_covered_says_so
       body = CoverageReport::Markdown.new(report(changed: { "app/models/user.rb" => [2, 3] })).render
 
-      assert_includes body, "Every changed line ran."
+      assert_includes body, "✅ Every changed line ran."
     end
 
     # --- GitHub --------------------------------------------------------------------
@@ -398,7 +443,21 @@ module Constable
       end
 
       assert_includes output, CoverageReport::Markdown::MARKER
-      assert_includes output, "### Coverage: "
+      assert_includes output, "# 📊 Code Coverage Report"
+    end
+
+    # The CI publish job writes the full report first, uploads it, then links to it.
+    def test_publish_writes_the_html_report_and_links_to_it
+      CoverageReport.save_shard({ File.realpath(@model) => [1, 1, 1, 0, 0, nil] },
+                                shard: Shard.new(index: 1, total: 1), gate: true, root: File.realpath(tmp_root))
+      html = File.join(tmp_root, "coverage-html/index.html")
+      options = { "dry-run" => true, "html" => html, "report-url" => "https://x/art/5" }
+
+      output = capture_stdout { Dir.chdir(tmp_root) { CLI::CoverageCommand.new([], options).publish } }
+
+      assert_path_exists html
+      assert_includes File.read(html), "<!doctype html>"
+      assert_includes output, "📥 [Download Full HTML Report](https://x/art/5)"
     end
   end
 end
