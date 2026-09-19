@@ -67,6 +67,7 @@ module Constable
   autoload :Tier,          "constable/tier"
   autoload :Timings,       "constable/timings"
   autoload :Warrants,      "constable/warrants"
+  autoload :Watcher,       "constable/watcher"
 
   class << self
     attr_writer :root, :config, :storage

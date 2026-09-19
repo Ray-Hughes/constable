@@ -130,6 +130,13 @@ module Constable
       targets.select { |t| t.path == path && t.line }.map(&:line)
     end
 
+    # The case files covering any of `files`, by the same rules `--changed` applies to a git
+    # diff: a case file covers itself, and app/models/user.rb is covered by user_case.rb,
+    # users_*_case.rb and user_spec.rb. `constable test --watch` asks this on every save.
+    def covering(files)
+      files.flat_map { |file| cases_covering(file) }.uniq.sort
+    end
+
     private
 
     # "spec/cases/sessions_case.rb:12" -- a file, or one investigation inside it.

@@ -248,6 +248,7 @@ tier base classes and the two things Constable deliberately does not have.
 ```console
 $ constable test              # the whole suite, the way `rspec` with no args does
 $ constable test --changed    # only what your current git diff touches
+$ constable test --watch      # keep going: each save runs the tests that cover that file
 $ constable test --timeout 60  # raise or lower the hang limit for this run
 $ constable test --only=native   # skip the legacy suite
 $ constable test --only=cold     # run only the legacy suite
@@ -256,6 +257,13 @@ $ constable metrics           # lifetime KPIs for the suite
 $ constable insights          # what to fix first, and why
 $ constable tree              # every command, if you forget one of these
 ```
+
+`--changed` and `--watch` are for your own machine; CI should run everything. `--watch`
+maps a saved file to the tests covering it by the same rules as `--changed` -- a case covers
+itself, and `app/models/user.rb` is covered by `user_case.rb`, `users_*_case.rb` and
+`user_spec.rb` -- and runs them in a fresh process each time, because a test environment
+does not reload code and a watcher running stale code is worse than a slower one.
+`constable test --watch --changed` runs your current diff first, then watches.
 
 ## Documentation
 

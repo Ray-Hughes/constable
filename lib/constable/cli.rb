@@ -11,6 +11,10 @@ module Constable
     EXIT_FAILED = 1
     EXIT_USAGE = 2
 
+    # Options a watched run passes on to each run it starts. Not the ones that choose what
+    # to run -- the saved file does that -- and not --watch itself.
+    WATCH_FORWARDED = %i[only tier output expanded concise warrants verbose timeout].freeze
+
     def self.exit_on_failure? = true
 
     # Thor's own exit status handling doesn't distinguish "tests failed" from "command was
@@ -80,8 +84,12 @@ module Constable
     option :output,   type: :string,  desc: "Live stream detail: concise (default) or expanded"
     option :expanded, type: :boolean, default: false, desc: "Shorthand for --output=expanded"
     option :concise,  type: :boolean, default: false, desc: "Shorthand for --output=concise"
+    option :watch,    type: :boolean, default: false,
+                      desc: "Keep running: when a file is saved, run the tests that cover it"
     def test(*paths)
       config = load_config
+      return watch(config, paths) if options[:watch]
+
       # Before the console is taken, because it is about the last run that took it.
       LogRouter.report_previous_crash!
       LogRouter.route!(verbose: options[:verbose])
@@ -823,6 +831,23 @@ module Constable
     subcommand "history", HistoryCommand
 
     no_commands do
+      # PATHs, or --changed, run once first; after that every save runs what covers it.
+      def watch(config, paths)
+        selection = Selection.new(paths, config: config, root: Constable.root, changed: options[:changed])
+        initial = paths.any? || options[:changed] ? selection.targets.map(&:path) : []
+        watcher = Watcher.new(selection: selection)
+        watcher.forwarded = WATCH_FORWARDED.flat_map { |name| forwarded_option(name) }
+        watcher.run(initial: initial)
+        exit(EXIT_CLEAN)
+      end
+
+      def forwarded_option(name)
+        value = options[name]
+        return [] if value.nil? || value == false
+
+        value == true ? ["--#{name}"] : ["--#{name}", value.to_s]
+      end
+
       # Every shard of a matrix must divide the suite identically, and nothing else can see
       # whether they did. The fingerprint is equal on every shard that did, so comparing the
       # line across a matrix's logs -- or `constable timings merge`, which checks it -- is the

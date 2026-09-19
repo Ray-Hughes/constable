@@ -5,6 +5,16 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.23.0] - 2026-09-19
+
+### `constable test --watch`
+
+Keeps running: each save runs the tests that cover the saved file, mapped by the same rules as
+`--changed`, in a fresh `constable test` process -- a test environment does not reload code,
+so a long-lived one would test whatever the files said when it started. Polling, so no extra
+gem and the same behaviour in a container. PATHs or `--changed` run once first; `--only`,
+`--tier`, output and warrant options are passed through to every run.
+
 ## [3.22.0] - 2026-09-19
 
 ### A timings file for balancing a CI matrix by time
