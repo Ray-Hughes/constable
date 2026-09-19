@@ -1475,14 +1475,18 @@ module Constable
       # Kept raw as well: a shard saves this for `constable coverage publish` to merge,
       # because a Report is per-file percentages and cannot be added to another one.
       @coverage_raw = merged
+      # Cold cases contribute their numbers but are never held to the diff gate, so a run
+      # carrying nothing else must not be gated at all. This is what a shard saves: whether
+      # the *merged* report should be gated.
       @coverage_gate = !@selection.cold_only?
       report = Constable::Coverage.build_report(
         merged,
         config: @config,
         root: Constable.root,
-        # Cold cases contribute their numbers but are never held to the diff gate, so a
-        # run carrying nothing else must not be gated at all.
-        gate: @coverage_gate
+        # A shard ran a slice of the suite, so it measured a slice of the code, and the
+        # changed lines another shard covers read as missed here. Gating on that failed
+        # every shard of a well-covered change. The merged report is the one to judge.
+        gate: @coverage_gate && (@shard.nil? || @shard.whole?)
       )
       Constable::Coverage.abort!
       report

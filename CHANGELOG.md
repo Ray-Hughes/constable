@@ -5,6 +5,16 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.20.1] - 2026-09-19
+
+### A shard is not held to the coverage gate
+
+`constable test --coverage --shard 3/12` measured a twelfth of the code and then judged the
+changed lines against `coverage_threshold` -- so the lines another shard covered read as
+missed, and every shard of a well-covered change failed. A shard's own report is no longer
+gated. It still records whether the merged report should be, and `constable coverage
+publish` reports the gate on the merged numbers.
+
 ## [3.20.0] - 2026-09-19
 
 ### Publishing coverage

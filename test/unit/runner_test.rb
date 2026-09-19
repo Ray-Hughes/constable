@@ -422,6 +422,29 @@ module Constable
       assert_equal 3, File.read(counter).to_i, "the run, then both retries"
     end
 
+    # --- coverage on a shard ------------------------------------------------------------
+
+    # A shard measured a slice of the code. Holding it to the diff gate failed every shard
+    # of a well-covered change, because the lines other shards covered read as missed.
+    def test_a_shard_is_not_held_to_the_diff_gate_but_saves_that_the_merge_should_be
+      model = File.realpath(write_file("app/models/thing.rb", "class Thing\n  def a = 1\nend\n"))
+      write_config("storage:\n  adapter: sqlite\n  path: .constable/constable.sqlite3\ncoverage_threshold: 90\n")
+
+      gates = [nil, Shard.new(index: 2, total: 3)].map do |shard|
+        runner = Runner.new(selection: Selection.new([], config: Constable.config, root: tmp_root, full: true),
+                            config: Constable.config, storage: Constable.storage, shard: shard,
+                            reporter: Reporter.new(io: StringIO.new, config: Constable.config, color: false))
+        Constable::Coverage.stub(:peek_raw, { model => [nil, 0, nil] }) do
+          Constable::Coverage.stub(:build_report, ->(*, gate:, **) { gate }) do
+            [runner.send(:build_coverage_report), runner.coverage_gate]
+          end
+        end
+      end
+
+      assert_equal [true, true], gates.first, "an unsharded run is gated"
+      assert_equal [false, true], gates.last, "a shard is not gated, and records that its merge is"
+    end
+
     # --- PATH:LINE on a cold case ------------------------------------------------------
 
     COLD_LINES_SPEC = <<~SPEC
