@@ -105,7 +105,7 @@ module Constable
       # Stops measurement without producing a report -- for teardown paths that just want
       # the hook off again. Never stops a measurement somebody else started.
       def abort!
-        ::Coverage.result(stop: true, clear: true) if @active && !@external && ::Coverage.running?
+        ::Coverage.result(stop: true, clear: true) if @active && !@external && !shared? && ::Coverage.running?
         true
       ensure
         @active = false
@@ -113,6 +113,13 @@ module Constable
       end
 
       def active?   = @active == true
+
+      # Someone attached to the measurement *after* we started it. SimpleCov checks
+      # `Coverage.running?` and, finding ours, uses it rather than starting its own -- then
+      # reads it in an at_exit. Stopping it here made that raise "coverage measurement is
+      # not enabled", and an exception in at_exit exits 1: a green run failed the build.
+      # So once anyone else is reading it, it is theirs to stop.
+      def shared? = defined?(::SimpleCov) && ::SimpleCov.respond_to?(:running) && ::SimpleCov.running == true
       def external? = @external == true
 
       # Builds a Report from a raw `::Coverage` result hash. Public because it is the
@@ -257,7 +264,7 @@ module Constable
         return nil unless active?
         return nil unless ::Coverage.running?
 
-        if external? || !stop
+        if external? || !stop || shared?
           ::Coverage.peek_result
         else
           ::Coverage.result(stop: true, clear: true)

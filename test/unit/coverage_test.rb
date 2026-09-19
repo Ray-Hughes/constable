@@ -512,6 +512,26 @@ module Constable
       ::Coverage.result(stop: true, clear: true) if ::Coverage.running?
     end
 
+    # The other order: we start, and SimpleCov -- loaded later by a spec_helper -- finds our
+    # measurement running and uses it. Stopping it at the end of our run made SimpleCov's
+    # at_exit raise "coverage measurement is not enabled", which exits 1 on a green run.
+    def test_measurement_simplecov_joined_after_us_is_left_running_for_it
+      skip("::Coverage is already running in this process") if ::Coverage.running?
+      skip("a real SimpleCov is loaded in this process") if defined?(::SimpleCov)
+
+      assert Coverage.start!(config: config_with("coverage" => true))
+      refute_predicate Coverage, :external?
+      Object.const_set(:SimpleCov, Module.new { def self.running = true })
+
+      report = Coverage.stop!(config: config_with("coverage" => true), changed_lines: nil)
+
+      assert report, "we still produce our own report"
+      assert ::Coverage.running?, "SimpleCov reads it at exit, so it must still be running"
+    ensure
+      Object.send(:remove_const, :SimpleCov) if defined?(::SimpleCov)
+      ::Coverage.result(stop: true, clear: true) if ::Coverage.running?
+    end
+
     # The whole chain at once: a real git working tree, a real ::Coverage measurement, and
     # the gate deciding from what it finds rather than from a hand-fed hash.
     def test_the_gate_detects_the_diff_from_a_real_repository

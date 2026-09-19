@@ -5,6 +5,18 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.20.2] - 2026-09-19
+
+### Coverage alongside SimpleCov no longer fails a green run
+
+With `--coverage`, Constable starts Ruby's `Coverage` before loading the suite. A
+`spec_helper` that then starts SimpleCov finds that measurement running and uses it instead
+of starting its own -- and reads it in an `at_exit`. Constable stopped it at the end of its
+run, so SimpleCov's exit hook raised "coverage measurement is not enabled", and an exception
+in `at_exit` exits 1. Every test passed and the build failed.
+
+Once SimpleCov is running on the measurement, Constable reads it without stopping it.
+
 ## [3.20.1] - 2026-09-19
 
 ### A shard is not held to the coverage gate
