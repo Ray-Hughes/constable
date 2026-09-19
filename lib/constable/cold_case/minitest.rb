@@ -54,7 +54,7 @@ module Constable
         def engine = :minitest
         def base_class_name = "Constable::ColdCase::Minitest"
 
-        def run_file(path, config: Constable.config, seed: nil, only: nil)
+        def run_file(path, config: Constable.config, seed: nil, only: nil, lines: nil)
           ColdCase.require_engine!(:minitest, path: path)
           disable_autorun!
 
@@ -72,7 +72,8 @@ module Constable
             without_rspecs_global_dsl do
               load_error = capture_load(path)
               unless load_error
-                run_runnables(discover_runnables(registry, snapshot, path), collector, seed: seed, only: only)
+                run_runnables(discover_runnables(registry, snapshot, path), collector,
+                              seed: seed, only: only, lines: lines && [path, lines])
               end
             end
 
@@ -198,7 +199,7 @@ module Constable
           false
         end
 
-        def run_runnables(runnables, collector, seed: nil, only: nil)
+        def run_runnables(runnables, collector, seed: nil, only: nil, lines: nil)
           reporter = ::Minitest::CompositeReporter.new
           reporter << collector
           reporter.start
@@ -207,10 +208,12 @@ module Constable
           # own ordering: classes run in declaration order and each class orders its
           # own methods however `test_order` says it should.
           with_minitest_seed(seed) do
+            at_lines = lines && methods_at_lines(runnables, *lines)
             runnables.each do |klass|
               next unless klass.respond_to?(:runnable_methods)
 
-              run_suite(klass, reporter, suite_options(only))
+              options = at_lines ? method_options(at_lines.fetch(klass, [])) : suite_options(only)
+              run_suite(klass, reporter, options) if options
             end
           end
 
@@ -243,6 +246,33 @@ module Constable
           return {} unless only
 
           pattern = /\A(?:test_\d{4}_)?#{Regexp.escape(only)}\z/
+          { filter: pattern, include: pattern }
+        end
+
+        # PATH:LINE. Minitest has no location filter, so this is the rule native cases
+        # use: the test declared at that line, else the nearest one above it -- across
+        # every class in the file, so a line in the second class never lands on the last
+        # method of the first. A line above every test matches nothing. Returns
+        # { klass => [method names] }.
+        def methods_at_lines(runnables, path, lines)
+          declared = runnables.select { |k| k.respond_to?(:runnable_methods) }.flat_map do |klass|
+            klass.runnable_methods.filter_map do |name|
+              file, line = klass.instance_method(name).source_location
+              [klass, name, line] if file && File.expand_path(file) == File.expand_path(path)
+            end
+          end
+
+          picked = lines.filter_map do |target|
+            declared.select { |_k, _n, line| line <= target }.max_by { |_k, _n, line| line }
+          end
+          picked.uniq.group_by(&:first).transform_values { |hits| hits.map { |_k, name, _l| name } }
+        end
+
+        # nil when the class has nothing at the lines asked for, so it is not run at all.
+        def method_options(names)
+          return nil if names.empty?
+
+          pattern = /\A#{Regexp.union(names)}\z/
           { filter: pattern, include: pattern }
         end
 

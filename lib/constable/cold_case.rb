@@ -74,8 +74,9 @@ module Constable
       # test is not under native rules.
       #
       # `only:` names one example by the description its Result carries, and runs that
-      # example alone -- what a warrant needs to rerun a failure in isolation.
-      def run_file(path, config: Constable.config, seed: nil, only: nil)
+      # example alone -- what a warrant needs to rerun a failure in isolation. `lines:`
+      # runs what is declared at those lines, the way `rspec PATH:LINE` does.
+      def run_file(path, config: Constable.config, seed: nil, only: nil, lines: nil)
         absolute = absolute_path(path, config: config)
         engine   = engine_for(absolute)
 
@@ -87,7 +88,7 @@ module Constable
                 "Constable::ColdCase::Minitest superclass."
         end
 
-        adapter_for(engine).run_file(absolute, config: config, seed: seed, only: only)
+        adapter_for(engine).run_file(absolute, config: config, seed: seed, only: only, lines: lines)
       end
 
       # Convenience for a whole batch. Files run one at a time and in the given order --

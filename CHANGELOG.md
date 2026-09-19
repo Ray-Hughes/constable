@@ -5,6 +5,20 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.19.3] - 2026-09-18
+
+### PATH:LINE runs one test in a cold case
+
+Every cold-case failure prints "Rerun just this test: constable test PATH:LINE", and that
+command ran the whole file: the line was dropped on the way to the engine. It now reaches it.
+RSpec gets its own location filter, the one `rspec PATH:LINE` uses, so a line inside an
+example runs that example and a line on a group runs the group. Minitest has no location
+filter, so it follows the rule native cases do: the test declared at that line, else the
+nearest one above it, never reaching into another class.
+
+A line past the end of the file matches nothing, as it does for a native case, rather than
+quietly running the last test above it. A file named both whole and by line runs whole.
+
 ## [3.19.2] - 2026-09-18
 
 ### Warrants rerun cold cases

@@ -422,6 +422,58 @@ module Constable
       assert_equal 3, File.read(counter).to_i, "the run, then both retries"
     end
 
+    # --- PATH:LINE on a cold case ------------------------------------------------------
+
+    COLD_LINES_SPEC = <<~SPEC
+      class LegacyLinesSpec < Constable::ColdCase::RSpec
+        describe "Lines" do
+          it "first" do
+            expect(1).to eq(1)
+          end
+
+          it "second" do
+            expect(1).to eq(2)
+          end
+        end
+      end
+    SPEC
+
+    def run_paths(*args)
+      selection = Selection.new(args, config: Constable.config, root: tmp_root, only: "cold")
+      runner = Runner.new(
+        selection: selection, config: Constable.config,
+        reporter: Reporter.new(io: StringIO.new, config: Constable.config, color: false),
+        storage: Constable.storage, workers: 1
+      )
+      [runner.call, runner]
+    end
+
+    # The command every cold failure prints as "Rerun just this test". The line was
+    # dropped on the way to the engine, so it ran the whole file.
+    def test_a_cold_path_and_line_runs_only_that_test
+      write_file("spec/lines_spec.rb", COLD_LINES_SPEC)
+
+      _status, runner = run_paths("spec/lines_spec.rb:8")
+
+      assert_equal ["Lines second"], runner.results.map(&:description)
+    end
+
+    def test_a_cold_file_named_whole_and_by_line_runs_whole
+      write_file("spec/lines_spec.rb", COLD_LINES_SPEC)
+
+      _status, runner = run_paths("spec/lines_spec.rb:8", "spec/lines_spec.rb")
+
+      assert_equal ["Lines first", "Lines second"], runner.results.map(&:description).sort
+    end
+
+    def test_a_cold_line_past_the_end_matches_nothing_rather_than_the_last_test
+      write_file("spec/lines_spec.rb", COLD_LINES_SPEC)
+
+      error = assert_raises(Constable::Error) { run_paths("spec/lines_spec.rb:999") }
+
+      assert_match(/no tests matched/, error.message)
+    end
+
     # --- balancing ----------------------------------------------------------------------
     #
     # Longest-processing-time-first only works if the runner knows what things cost. A cold

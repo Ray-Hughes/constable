@@ -26,12 +26,15 @@ module Constable
     TIMEOUT_MESSAGE = /Timeout::(?:Error|ExitException)|execution expired/
 
     class Item
-      attr_reader :investigation, :path, :kind
+      attr_reader :investigation, :path, :kind, :lines
 
-      def initialize(investigation: nil, path: nil, kind: :native)
+      # `lines` narrows a cold file to the examples at those lines (PATH:LINE); nil runs
+      # all of it.
+      def initialize(investigation: nil, path: nil, kind: :native, lines: nil)
         @investigation = investigation
         @path = path
         @kind = kind
+        @lines = lines
       end
 
       def native? = @kind == :native
@@ -253,8 +256,26 @@ module Constable
 
     def build_items
       native = native_items
-      cold = @selection.cold_targets_selected.map { |t| Item.new(path: t.path, kind: :cold) }
-      native + cold
+      native + cold_items
+    end
+
+    # One item per cold file, carrying the lines asked for. The line used to be dropped
+    # here, so `constable test spec/x_spec.rb:12` -- the command every cold failure prints
+    # as "Rerun just this test" -- ran the whole file. A file named once without a line
+    # runs whole, whatever else named it with one.
+    #
+    # A line past the end of the file is a typo, as it is for a native case: both engines
+    # would otherwise pick the last test above it and run that, green and unasked-for. A
+    # file with only such lines drops out, so the run reports that nothing matched.
+    def cold_items
+      @selection.cold_targets_selected.group_by(&:path).filter_map do |path, targets|
+        lines = targets.map(&:line)
+        next Item.new(path: path, kind: :cold) unless lines.all?
+
+        length = File.foreach(path).count
+        lines = lines.select { |line| line <= length }.uniq.sort
+        Item.new(path: path, kind: :cold, lines: lines) if lines.any?
+      end
     end
 
     def native_items
@@ -1075,7 +1096,7 @@ module Constable
       warnings_before = Constable.warnings.size
       # The seed goes in, not just onto the results: Minitest randomizes its own method
       # order, so passing it is what makes `constable test PATH --seed N` actually replay.
-      results = ColdCase.run_file(item.path, config: @config, seed: @seed)
+      results = ColdCase.run_file(item.path, config: @config, seed: @seed, lines: item.lines)
       raised = Constable.warnings[warnings_before..] || []
 
       results.each { |r| r.seed = @seed }

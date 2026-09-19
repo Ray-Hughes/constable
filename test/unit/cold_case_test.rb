@@ -282,6 +282,51 @@ module Constable
       assert_equal 4, ColdCase.run_file(path, config: Constable.config).size
     end
 
+    def test_rspec_lines_run_the_example_at_that_line
+      path = write_file("spec/arithmetic_spec.rb", RSPEC_PLAIN)
+
+      # Line 7 is inside "subtracts wrongly", not its declaration.
+      results = ColdCase.run_file(path, config: Constable.config, lines: [7])
+
+      assert_equal ["Arithmetic subtracts wrongly"], results.map(&:description)
+    end
+
+    def test_rspec_a_line_on_a_group_runs_the_group
+      path = write_file("spec/arithmetic_spec.rb", RSPEC_PLAIN)
+
+      results = ColdCase.run_file(path, config: Constable.config, lines: [15])
+
+      assert_equal ["Arithmetic with negatives negates"], results.map(&:description)
+    end
+
+    def test_minitest_lines_run_the_method_at_or_above_that_line
+      path = write_file("test/arithmetic_test.rb", MINITEST_PLAIN)
+
+      results = ColdCase.run_file(path, config: Constable.config, lines: [7, 15])
+
+      assert_equal %w[test_explodes test_subtracts_wrongly], results.map(&:description).sort
+    end
+
+    def test_minitest_lines_do_not_reach_across_into_another_class
+      path = write_file("test/two_classes_test.rb", <<~TEST)
+        class ColdFirstLinesTest < Minitest::Test
+          def test_first
+            assert true
+          end
+        end
+
+        class ColdSecondLinesTest < Minitest::Test
+          def test_second
+            assert true
+          end
+        end
+      TEST
+
+      assert_equal ["test_second"],
+                   ColdCase.run_file(path, config: Constable.config, lines: [9]).map(&:description)
+      assert_empty ColdCase.run_file(path, config: Constable.config, lines: [1])
+    end
+
     def test_minitest_only_runs_the_one_named_method
       path = write_file("test/arithmetic_test.rb", MINITEST_PLAIN)
 

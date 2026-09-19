@@ -121,13 +121,14 @@ module Constable
           @inclusions_carried = false
         end
 
-        def run_file(path, config: Constable.config, seed: nil, only: nil)
+        def run_file(path, config: Constable.config, seed: nil, only: nil, lines: nil)
           ColdCase.require_engine!(:rspec, path: path)
 
           results = []
           ColdCase.while_loading(path) do
             with_engine do
               only_example!(only) if only
+              only_lines!(path, lines) if lines
               collector  = Collector.new
               load_error = capture_load(path)
               # Immediately, while it still exists.
@@ -724,6 +725,12 @@ module Constable
           ::RSpec.configuration.filter_manager.include_only(
             full_description: /\A#{Regexp.escape(description)}\z/
           )
+        end
+
+        # PATH:LINE, with RSpec's own location filter -- the one `rspec PATH:LINE` uses, so
+        # a line inside an example runs that example and a line on a group runs the group.
+        def only_lines!(path, lines)
+          ::RSpec.configuration.filter_manager.add_location(path, lines)
         end
 
         # A file that won't even parse is news, not a crash. Report it as one errored
