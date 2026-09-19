@@ -154,6 +154,11 @@ module Constable
     # 'path'` in a file whose own require plainly provides it.
     def test_a_registration_made_before_the_session_is_carried_into_it
       ColdCase.require_engine!(:rspec)
+      # A host configuration of this test's own, put back afterwards. Asking for
+      # `::RSpec.configuration` builds the process-wide one, and leaving it built failed
+      # ColdCaseTest's "leaves no rspec globals behind" whenever this test ran first.
+      outer_configuration = ::RSpec.instance_variable_get(:@configuration)
+      ::RSpec.instance_variable_set(:@configuration, ::RSpec::Core::Configuration.new)
       helpers = Module.new { def dsl_from_a_plugin = :ok }
       ::RSpec.configuration.extend(helpers)
 
@@ -167,6 +172,8 @@ module Constable
 
       assert_equal [:passed], results.map(&:status),
                    "the boot-time `extend` never reached the session configuration"
+    ensure
+      ::RSpec.instance_variable_set(:@configuration, outer_configuration)
     end
 
     def test_bootstrap_failure_names_the_file
