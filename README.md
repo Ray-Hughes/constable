@@ -66,6 +66,7 @@ linter instead of by CI, and an adoption path that never asks you to rewrite any
   - [Escape hatches](#escape-hatches-always-visible)
   - [The linter](#the-linter)
   - [Jail, parole and warrants](#jail-parole-and-warrants)
+  - [Publishing coverage](#publishing-coverage)
   - [Identity survives renames](#identity-survives-renames)
   - [Command reference](#command-reference)
   - [Output](#output)
@@ -97,7 +98,7 @@ linter instead of by CI, and an adoption path that never asks you to rewrite any
 | **Ruby** | **3.1** | Parallel workers use `fork`, so they are unavailable on Windows and JRuby; those platforms fall back to serial automatically. |
 | **Rails** | **7.0** | Tested against 7.1 and 8.1. |
 
-Constable pulls in five gems, all of them small and already present in most Rails apps:
+Constable pulls in six gems, all of them small and already present in most Rails apps:
 
 | Gem | Version | What needs it |
 |---|---|---|
@@ -106,6 +107,7 @@ Constable pulls in five gems, all of them small and already present in most Rail
 | `thor` | `>= 1.2` | the `constable` CLI |
 | `sqlite3` | `>= 1.6` | the blotter — flake history, the jail docket, warrants |
 | `parser` | `>= 3.1` | the AST rewrite behind `constable modernize` |
+| `net-smtp` | `>= 0.3` | emailing the coverage report -- a bundled gem since Ruby 3.1, so it is named |
 
 Your app's own database is untouched by any of this: the blotter is a separate SQLite file
 Constable owns. See [The blotter](#the-blotter).
@@ -900,6 +902,55 @@ $ constable watchlist    # everything under supervision: jailed, paroled, warran
 $ constable status       # trend: native-vs-cold %, recent runs, slowest historically
 ```
 
+### Publishing coverage
+
+`coverage: true` measures; `coverage_report` decides where the result goes. Nothing is
+published until `deliver` names somewhere:
+
+```yaml
+# .constable/config.yml
+coverage: true
+coverage_report:
+  host: github          # github.com and GitHub Enterprise
+  ci: github_actions
+  deliver: [pr_comment] # any of: pr_comment, pr_description, email, custom
+```
+
+| Delivery | What it does |
+|---|---|
+| `pr_comment` | One comment on the pull request, edited in place on every run rather than re-posted |
+| `pr_description` | A fenced section of the description, replaced each run; the author's text is never touched |
+| `email` | Plain-text report over SMTP. Settings under `email:`; the password comes from an env var |
+| `custom` | POSTs the report as JSON to a URL you choose, optionally HMAC-signed. Planned for the paid tier |
+
+The report leads with the changed lines that never ran, each linked to the code, then the
+whole-suite number. Changed lines are measured from where the branch left the pull
+request's base (`GITHUB_BASE_REF`), so a repository whose PRs target `staging` is measured
+against `staging`. The base branch has to be in the clone: `fetch-depth: 0`, or fetch it.
+
+`constable test --coverage` publishes at the end of the run, but only in CI: a developer
+running with coverage never comments on a pull request or emails the team. Publishing never
+changes the exit status; a delivery that fails is printed and the rest still go out.
+
+A sharded run cannot publish from each shard: each has a fraction of the picture. Each
+shard saves its measurement to `.constable/coverage/shard-I-of-N.json`, and one job after
+the matrix merges them and publishes once:
+
+```yaml
+# each shard
+- run: bundle exec constable test --coverage --shard ${{ matrix.index }}/12
+- uses: actions/upload-artifact@v4
+  with: { name: "coverage-${{ matrix.index }}", path: .constable/coverage/ }
+
+# one job, after the matrix
+- uses: actions/download-artifact@v4
+  with: { pattern: "coverage-*", path: .constable/coverage/, merge-multiple: true }
+- run: bundle exec constable coverage publish
+  env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+```
+
+`constable coverage publish --dry-run` prints the report instead of delivering it.
+
 ### Identity survives renames
 
 Each test's key is a **content hash of its `investigate` block body**, whitespace-normalized.
@@ -940,6 +991,7 @@ worse than one that resets.
 | `constable metrics [--limit N]` | Lifetime KPIs: runs, tests executed, pass rate, runtime, flakiest |
 | `constable insights` | What to fix first, and why -- every line tied to a measurement |
 | `constable beat [--html]` | Coverage: overall %, per-file, the unpatrolled list |
+| `constable coverage publish [--dry-run]` | Merge shard coverage and deliver it where `coverage_report` says |
 | `constable history relink OLD NEW` | Carry history across a real body change |
 | `constable prepare [--workers N]` | Build the per-worker test databases `worker_databases: reuse` needs |
 | `constable prune [--dry-run]` | Forget docket rows and warrants for tests that no longer exist |

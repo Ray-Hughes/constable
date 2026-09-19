@@ -23,6 +23,14 @@ module Constable
       "coverage" => false,
       "coverage_threshold" => 90,
       "coverage_html" => false,
+      # Where the coverage report is published. Empty `deliver` publishes nothing. See
+      # Constable::CoverageReport.
+      "coverage_report" => {
+        "host" => "github",
+        "ci" => "github_actions",
+        "deliver" => [],
+        "token_env" => "GITHUB_TOKEN"
+      },
       "fail_on_warnings" => false,
       "output" => "concise",
       "parallel_workers" => "auto",

@@ -38,6 +38,7 @@ module Constable
   autoload :ColdCase,      "constable/cold_case"
   autoload :Config,        "constable/config"
   autoload :Coverage,      "constable/coverage"
+  autoload :CoverageReport, "constable/coverage_report"
   autoload :DSL,           "constable/dsl"
   autoload :Diff,          "constable/diff"
   autoload :Failure,       "constable/result"
@@ -63,6 +64,7 @@ module Constable
   autoload :Procedure,     "constable/procedure"
   autoload :Selection,     "constable/selection"
   autoload :Storage,       "constable/storage"
+  autoload :Tier,          "constable/tier"
   autoload :Warrants,      "constable/warrants"
 
   class << self
@@ -202,7 +204,7 @@ module Constable
     # NoMethodError -- which reads as "that setting does not exist".
     SETTINGS_ONLY_IN_YAML = %i[
       storage modernize cold_cases warrants warrant_retries auto_relink parole_period
-      coverage coverage_threshold coverage_html fail_on_warnings parallel_workers
+      coverage coverage_threshold coverage_html coverage_report fail_on_warnings parallel_workers
       worker_databases jail_flakes order_audit run_separately output tiers timeout heartbeat
       slowest
     ].freeze

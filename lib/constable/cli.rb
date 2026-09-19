@@ -110,6 +110,7 @@ module Constable
 
       status = runner.call
       write_failure_list(runner, options[:"failures-to"]) if options[:"failures-to"]
+      publish_coverage(runner, config)
       exit(status)
     end
 
@@ -634,6 +635,47 @@ module Constable
       end
     end
 
+    # Coverage publishing for a sharded run: every shard saves its measurement, and one job
+    # after the matrix merges them and publishes once.
+    class CoverageCommand < Thor
+      def self.exit_on_failure? = true
+
+      desc "publish [FILE...]", "Merge saved shard coverage and publish it where coverage_report says"
+      long_desc <<~DESC
+        Reads .constable/coverage/shard-*.json (or the files given), merges them into one
+        report, and delivers it to everything under coverage_report.deliver in
+        .constable/config.yml: pr_comment, pr_description, email, custom.
+
+        Changed lines are measured from where the branch left the pull request's base. The
+        base branch has to be in the clone for that -- fetch it, or use `fetch-depth: 0`.
+      DESC
+      option :"dry-run", type: :boolean, default: false, desc: "Print the report instead of delivering it"
+      option :base, type: :string, desc: "Measure changed lines from here (default: the pull request's base)"
+      def publish(*files)
+        config = Constable.config
+        files = Dir[File.join(Constable.root, CoverageReport::SHARD_DIR, "shard-*.json")] if files.empty?
+        raw, gate = CoverageReport.load_shards(files)
+        context = CoverageReport::Context.detect
+        report = CoverageReport.build(raw, config: config, gate: gate, context: context, base: options[:base])
+
+        if options[:"dry-run"]
+          say CoverageReport::Markdown.new(report, context: context).render
+          return
+        end
+
+        settings = CoverageReport::Settings.from(config)
+        unless settings.enabled?
+          raise Constable::ConfigurationError,
+                "coverage_report.deliver in #{Config::CONFIG_PATH} is empty, so there is nowhere to " \
+                "publish. Add pr_comment, pr_description, email or custom -- or pass --dry-run."
+        end
+
+        deliveries = CoverageReport.publish(report, settings: settings, context: context)
+        deliveries.each { |delivery| say delivery.to_s }
+        exit(EXIT_FAILED) if deliveries.any?(&:failed?)
+      end
+    end
+
     desc "prepare", "Build the per-worker test databases parallel runs need"
     long_desc <<~DESC
       For `worker_databases: reuse`. Creates `<database>_0` .. `<database>_<N-1>` and
@@ -720,10 +762,43 @@ module Constable
     desc "warrants SUBCOMMAND", "Outstanding warrants"
     subcommand "warrants", WarrantsCommand
 
+    desc "coverage SUBCOMMAND", "Publish coverage: merge shards and deliver the report"
+    subcommand "coverage", CoverageCommand
+
     desc "history SUBCOMMAND", "Flake history"
     subcommand "history", HistoryCommand
 
     no_commands do
+      # After a run with coverage. A shard saves its measurement for `constable coverage
+      # publish` to merge; a whole run publishes where `coverage_report` says -- but only in
+      # CI, so a developer running the suite with coverage never emails the team or edits a
+      # pull request from their laptop. `constable coverage publish` does it on purpose.
+      #
+      # Never changes the exit status: whether the tests passed is not a question about
+      # whether GitHub was reachable. A failure is printed instead.
+      def publish_coverage(runner, config)
+        return unless runner.coverage_report
+
+        console = LogRouter.console
+        if runner.shard
+          path = CoverageReport.save_shard(runner.coverage_raw, shard: runner.shard, gate: runner.coverage_gate)
+          console.puts "Coverage for shard #{runner.shard} saved to " \
+                       "#{path.delete_prefix("#{Constable.root}/")}. Once every shard has finished: " \
+                       "constable coverage publish"
+          return
+        end
+
+        settings = CoverageReport::Settings.from(config)
+        context = CoverageReport::Context.detect
+        return unless settings.enabled? && context
+
+        report = CoverageReport.build(runner.coverage_raw, config: config, gate: runner.coverage_gate, context: context)
+        CoverageReport.publish(report, settings: settings, context: context)
+                      .each { |delivery| console.puts "Coverage #{delivery}" }
+      rescue Constable::Error => e
+        console.puts "Coverage was not published: #{e.message}"
+      end
+
       # One failing test per line: file, then the full description.
       #
       # Comparing two runs -- Constable against RSpec, this branch against main, one CI

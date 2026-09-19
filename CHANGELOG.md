@@ -5,6 +5,38 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.20.0] - 2026-09-19
+
+### Publishing coverage
+
+Coverage was measured and gated, and then printed to a CI log nobody opens. A new
+`coverage_report` block in `.constable/config.yml` publishes it where the team already looks:
+
+```yaml
+coverage_report:
+  host: github            # github.com and GitHub Enterprise
+  ci: github_actions
+  deliver: [pr_comment]   # any of: pr_comment, pr_description, email, custom
+```
+
+- `pr_comment` posts one comment and edits it on every later run, rather than re-posting.
+- `pr_description` owns a fenced section of the description and leaves the rest alone.
+- `email` sends a plain-text report over SMTP, with the password read from an env var.
+- `custom` POSTs the report as JSON to a URL of your choosing, optionally HMAC-signed. It is
+  intended for the paid tier; `Constable::Tier` is where that check will live, and
+  everything is available for now.
+
+The report leads with the changed lines that never ran, each linked to the code. Changed
+lines are measured from where the branch left the pull request's base, not from
+`origin/main`, so a repository whose PRs target `staging` is measured against `staging`.
+
+`constable test --coverage` publishes at the end of a run, but only in CI, never from a
+laptop, and never changes the exit status. A sharded run saves its share to
+`.constable/coverage/shard-I-of-N.json` instead, and `constable coverage publish` merges
+the shards and delivers once. `--dry-run` prints the report instead of sending it.
+
+Adds `net-smtp` as a dependency: it is a bundled gem, not a default one, since Ruby 3.1.
+
 ## [3.19.3] - 2026-09-18
 
 ### PATH:LINE runs one test in a cold case

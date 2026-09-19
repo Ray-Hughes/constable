@@ -59,6 +59,9 @@ Gem::Specification.new do |spec|
   spec.add_dependency "activesupport", ">= 7.0"
   # The AST rewrite behind `constable modernize`.
   spec.add_dependency "parser",        ">= 3.1"
+  # Emailing the coverage report. A bundled gem rather than a default one since Ruby 3.1,
+  # so it has to be named here to be installed.
+  spec.add_dependency "net-smtp",      ">= 0.3"
   spec.add_dependency "railties",      ">= 7.0"
   # The default blotter. Swappable for Postgres or MySQL, which stay optional.
   spec.add_dependency "sqlite3",       ">= 1.6"

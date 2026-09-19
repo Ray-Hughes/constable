@@ -101,6 +101,31 @@ coverage: false          # record coverage during test runs
 coverage_threshold: 90   # diff-based -- only lines changed in the current diff are held to it
 coverage_html: false     # generate a browsable report by default
 
+# Where the coverage report is published. Nothing is, until `deliver` names somewhere.
+# Publishing happens at the end of `constable test --coverage` when running in CI, never
+# on a laptop. A sharded run saves its share to .constable/coverage/ instead, and one job
+# after the matrix runs `constable coverage publish` to merge the shards and deliver once.
+# Credentials are environment variable NAMES: this file is committed.
+coverage_report:
+  host: github             # github -- github.com and GitHub Enterprise
+  ci: github_actions
+  deliver: []              # any of: pr_comment, pr_description, email, custom
+                           #   pr_comment      one comment, edited in place on every run
+                           #   pr_description  a fenced section of the description; the rest is left alone
+                           #   email           see `email` below
+                           #   custom          POSTs the report as JSON (paid tier; see `custom`)
+  token_env: GITHUB_TOKEN  # needs pull-requests: write for the two pr_ deliveries
+  # email:
+  #   to: [lead@example.com]
+  #   from: constable@example.com
+  #   smtp_host: smtp.example.com
+  #   smtp_port: 587
+  #   smtp_user: constable
+  #   smtp_password_env: CONSTABLE_SMTP_PASSWORD
+  # custom:
+  #   webhook_url_env: CONSTABLE_COVERAGE_WEBHOOK_URL
+  #   secret_env: CONSTABLE_COVERAGE_WEBHOOK_SECRET   # signs the body: X-Constable-Signature
+
 fail_on_warnings: false  # CI: fail the build when the warning count doesn't trend down
 
 # Seconds before one item is declared hung, failed by name, and the run allowed to carry on.

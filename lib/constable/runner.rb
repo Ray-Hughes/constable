@@ -43,7 +43,8 @@ module Constable
       def label = native? ? @investigation.display_label : @path.to_s
     end
 
-    attr_reader :config, :selection, :reporter, :storage, :seed, :results, :coverage_report
+    attr_reader :config, :selection, :reporter, :storage, :seed, :results, :coverage_report,
+                :coverage_raw, :coverage_gate, :shard
 
     def initialize(selection:, config: Constable.config, reporter: nil, storage: nil,
                    seed: nil, jail_mode: false, jail_run: false, warrants: nil, coverage: nil,
@@ -1471,13 +1472,17 @@ module Constable
     # ran the code.
     def build_coverage_report
       merged = Constable::Coverage.merge_raw(Constable::Coverage.peek_raw, @worker_coverage)
+      # Kept raw as well: a shard saves this for `constable coverage publish` to merge,
+      # because a Report is per-file percentages and cannot be added to another one.
+      @coverage_raw = merged
+      @coverage_gate = !@selection.cold_only?
       report = Constable::Coverage.build_report(
         merged,
         config: @config,
         root: Constable.root,
         # Cold cases contribute their numbers but are never held to the diff gate, so a
         # run carrying nothing else must not be gated at all.
-        gate: !@selection.cold_only?
+        gate: @coverage_gate
       )
       Constable::Coverage.abort!
       report

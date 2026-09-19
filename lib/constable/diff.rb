@@ -136,6 +136,16 @@ module Constable
       rev_parse("HEAD~1", root: root) || EMPTY_TREE
     end
 
+    # Where HEAD branched from `ref`, or nil when `ref` is not in this clone. A pull
+    # request's changes are measured from here: diffing against the base branch's tip
+    # would count everything merged there since as this branch's work.
+    def merge_base(ref, root: Constable.root)
+      return nil unless rev_parse(ref, root: root)
+
+      out = git("merge-base", "HEAD", ref, root: root)&.strip
+      out.nil? || out.empty? ? nil : out
+    end
+
     # True when there is uncommitted work (staged, unstaged or untracked).
     def dirty?(root: Constable.root)
       out = git("status", "--porcelain", root: root)
