@@ -5,6 +5,23 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.22.0] - 2026-09-19
+
+### A timings file for balancing a CI matrix by time
+
+`--shard-by-time` was only safe when every machine read identical durations, and a blotter
+could not promise that: each shard writes its own, and a restored one is whatever the cache
+held when that machine asked. So a real matrix split round-robin by file name, and the
+slowest of Caseflow's twelve shards took 2.8 times as long as the fastest.
+
+- `constable test --timings FILE` reads durations from a timings file instead of the blotter.
+- `--timings-out FILE` writes what this machine measured, with its partition.
+- `constable timings merge OUT FILE...` combines a matrix's files into one for the next run,
+  and fails when the shards divided the suite differently -- some tests would then have run
+  twice and others not at all. `constable timings export` writes the blotter's as a file.
+- Every sharded run prints `Shard i/n · partition <fingerprint>`: equal on every shard that
+  divided the suite the same way.
+
 ## [3.21.0] - 2026-09-19
 
 ### A coverage report laid out like a coverage comment

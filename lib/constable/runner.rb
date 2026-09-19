@@ -44,12 +44,12 @@ module Constable
     end
 
     attr_reader :config, :selection, :reporter, :storage, :seed, :results, :coverage_report,
-                :coverage_raw, :coverage_gate, :shard
+                :coverage_raw, :coverage_gate, :shard, :partition_fingerprint
 
     def initialize(selection:, config: Constable.config, reporter: nil, storage: nil,
                    seed: nil, jail_mode: false, jail_run: false, warrants: nil, coverage: nil,
                    workers: nil, verbose: false, shard: nil, shard_by_time: false,
-                   timeout: nil, io: $stdout)
+                   timeout: nil, io: $stdout, timings: nil)
       @selection  = selection
       @config     = config
       @storage    = storage || Constable.storage
@@ -62,6 +62,9 @@ module Constable
       @verbose    = verbose
       @shard      = shard
       @shard_by_time = shard_by_time
+      # A timings file, when given, replaces the blotter as the source of durations -- see
+      # Constable::Timings. nil (no file, or unreadable) falls back to the blotter.
+      @timings = Timings.load(timings)
       @timeout    = (timeout || config.timeout).to_i
       @io         = io
       @reporter   = reporter || Reporter.new(io: io, config: config)
@@ -806,7 +809,9 @@ module Constable
     def shard_of(items)
       return items if @shard.nil? || @shard.whole?
 
-      @shard.slice(items, weights: shard_weights(items))
+      weights = shard_weights(items)
+      @partition_fingerprint = Timings.fingerprint(items, weights)
+      @shard.slice(items, weights: weights)
     end
 
     # Deliberately empty unless asked for, and this is the interesting part.
@@ -982,7 +987,11 @@ module Constable
 
     def file_durations
       @file_durations ||= begin
-        @storage.average_seconds_by_file
+        if @timings
+          @timings[:files].transform_values { |seconds| { seconds: seconds } }
+        else
+          @storage.average_seconds_by_file
+        end
       rescue StandardError
         {}
       end
@@ -990,7 +999,7 @@ module Constable
 
     def duration_index
       @duration_index ||= begin
-        @storage.duration_index
+        @timings ? @timings[:tests] : @storage.duration_index
       rescue StandardError
         {}
       end

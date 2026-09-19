@@ -986,6 +986,7 @@ worse than one that resets.
 | `constable tree` | Every command, when you forget one of these |
 | `constable test --jail` | The full run, in jail mode |
 | `constable test --shard i/n` | One slice of the suite, for a CI matrix |
+| `constable timings [export\|merge]` | Durations as a file, so every shard of a matrix balances by the same numbers |
 | `constable jail [run\|parole\|release]` | The docket. `release --all` empties it |
 | `constable warrants [release]` | Outstanding warrants |
 | `constable watchlist` | Everything under supervision right now |
@@ -1085,6 +1086,23 @@ it is safe **only when every machine reads identical duration data** — a blott
 from one shared cache, never one written back to mid-matrix. Weighting from a blotter that
 moves between shards repartitions: measured across three local shards, one file ran in two
 of them and another ran in none.
+
+A **timings file** makes identical data easy. Each shard writes what it measured, one job
+merges them, and every shard of the next run reads that one file:
+
+```yaml
+# each shard
+- run: bundle exec constable test --shard ${{ matrix.shard }}/8 --shard-by-time
+       --timings tmp/timings.json --timings-out tmp/timings-${{ matrix.shard }}.json
+# one job after the matrix: combine them and cache the result for the next run
+- run: bundle exec constable timings merge tmp/timings.json tmp/timings-*.json
+```
+
+Every sharded run prints `Shard 3/8 · partition 1a2b3c4d5e6f`. The fingerprint is equal
+on every shard that divided the suite the same way, and `timings merge` fails the job when
+they did not, rather than letting a build claim tests it never ran. Restore the timings
+file into every shard from **one exact cache key**, resolved once before the matrix starts;
+a "newest match" lookup on each machine can pick different files.
 
 ### Configuration: one home per setting
 

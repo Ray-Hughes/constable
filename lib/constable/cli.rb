@@ -71,6 +71,10 @@ module Constable
     option :shard, type: :string, desc: "Run one slice of the suite: --shard 3/8 (for a CI matrix)"
     option :"shard-by-time", type: :boolean, default: false,
                              desc: "Weight --shard by duration (needs identical blotter data everywhere)"
+    option :timings, type: :string,
+                     desc: "Read durations from this timings file instead of the blotter (see `timings`)"
+    option :"timings-out", type: :string,
+                           desc: "After the run, write this machine's timings and partition to FILE"
     option :verbose,  type: :boolean, default: false, desc: "Stream log/test.log to stdout"
     option :tier,     type: :string,  desc: "Run one tier only: unit, integration or system"
     option :output,   type: :string,  desc: "Live stream detail: concise (default) or expanded"
@@ -105,11 +109,14 @@ module Constable
         verbose: options[:verbose],
         shard: shard_from(options[:shard]),
         shard_by_time: options[:"shard-by-time"],
-        timeout: options[:timeout]
+        timeout: options[:timeout],
+        timings: options[:timings]
       )
 
       status = runner.call
       write_failure_list(runner, options[:"failures-to"]) if options[:"failures-to"]
+      report_partition(runner)
+      write_timings(runner, options[:"timings-out"]) if options[:"timings-out"]
       publish_coverage(runner, config)
       exit(status)
     end
@@ -682,6 +689,44 @@ module Constable
       end
     end
 
+    # Durations as a file, for balancing a CI matrix by time. See Constable::Timings.
+    class TimingsCommand < Thor
+      def self.exit_on_failure? = true
+
+      desc "export [--out FILE]", "Write the blotter's recorded durations as a timings file"
+      option :out, type: :string, default: ".constable/timings.json", desc: "Where to write it"
+      def export
+        say "Timings: #{Timings.write(options[:out], Timings.export(Constable.storage))}"
+      end
+
+      desc "merge OUT FILE [FILE...]", "Combine the timings every shard wrote into one file"
+      long_desc <<~DESC
+        Each shard of a matrix writes its own timings (`constable test --timings-out`). This
+        combines them into the one file every shard of the next run should read with
+        `--shard-by-time --timings`.
+
+        Fails when the shards disagreed about the partition: some tests may then have run
+        twice and others not at all, and a green build would be claiming more than it ran.
+      DESC
+      def merge(out, *files)
+        raise Constable::Error, "give at least one timings file to merge" if files.empty?
+
+        merged = Timings.merge(files)
+        disagreeing = Timings.disagreements(merged.delete("partitions"))
+        Timings.write(out, merged)
+        say "Timings: #{out} -- #{merged["files"].size} files, #{merged["tests"].size} tests"
+        return if disagreeing.empty?
+
+        disagreeing.each do |total, group|
+          say "Shards of #{total} disagreed on the partition: " +
+              group.map { |p| "#{p["shard"]}=#{p["fingerprint"]}" }.sort.join(", ")
+        end
+        raise Constable::Error, "the shards did not divide the suite the same way -- some tests may " \
+                                "have run twice and others not at all. Check that every shard read " \
+                                "the same timings file."
+      end
+    end
+
     desc "prepare", "Build the per-worker test databases parallel runs need"
     long_desc <<~DESC
       For `worker_databases: reuse`. Creates `<database>_0` .. `<database>_<N-1>` and
@@ -768,6 +813,9 @@ module Constable
     desc "warrants SUBCOMMAND", "Outstanding warrants"
     subcommand "warrants", WarrantsCommand
 
+    desc "timings SUBCOMMAND", "Durations as a file: export, and merge a matrix's"
+    subcommand "timings", TimingsCommand
+
     desc "coverage SUBCOMMAND", "Publish coverage: merge shards and deliver the report"
     subcommand "coverage", CoverageCommand
 
@@ -775,6 +823,23 @@ module Constable
     subcommand "history", HistoryCommand
 
     no_commands do
+      # Every shard of a matrix must divide the suite identically, and nothing else can see
+      # whether they did. The fingerprint is equal on every shard that did, so comparing the
+      # line across a matrix's logs -- or `constable timings merge`, which checks it -- is the
+      # whole test.
+      def report_partition(runner)
+        return unless runner.partition_fingerprint
+
+        weighting = options[:"shard-by-time"] ? "weighted by recorded time" : "round-robin"
+        LogRouter.console.puts "Shard #{runner.shard} · partition #{runner.partition_fingerprint} · #{weighting}"
+      end
+
+      def write_timings(runner, path)
+        partition = runner.partition_fingerprint && { "shard" => runner.shard.to_s,
+                                                      "fingerprint" => runner.partition_fingerprint }
+        Timings.write(path, Timings.export(Constable.storage, partition: partition))
+      end
+
       # After a run with coverage. A shard saves its measurement for `constable coverage
       # publish` to merge; a whole run publishes where `coverage_report` says -- but only in
       # CI, so a developer running the suite with coverage never emails the team or edits a

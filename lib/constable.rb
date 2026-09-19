@@ -65,6 +65,7 @@ module Constable
   autoload :Selection,     "constable/selection"
   autoload :Storage,       "constable/storage"
   autoload :Tier,          "constable/tier"
+  autoload :Timings,       "constable/timings"
   autoload :Warrants,      "constable/warrants"
 
   class << self
