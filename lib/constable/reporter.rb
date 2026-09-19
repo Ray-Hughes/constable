@@ -1124,7 +1124,7 @@ module Constable
       [paint("#{repeats.size} failing #{repeats.size == 1 ? "test has" : "tests have"} " \
              "failed repeatedly before", COLORS[:failed]),
        "Jail them to stop blocking the build while they are worked on:\n" \
-       "#{repeats.first(3).map { |r| "constable jail #{r.location}" }.join("\n")}"]
+       "#{repeats.first(3).map { |r| "constable jail add #{r.location}" }.join("\n")}"]
     end
 
     def jail_recommendation(counts)

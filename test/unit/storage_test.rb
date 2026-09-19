@@ -750,6 +750,30 @@ module Constable
       adapter&.close
     end
 
+    # --- tests_at: what `constable jail add PATH:LINE` looks up --------------------
+
+    def test_tests_at_finds_what_ran_at_a_location_newest_first
+      run_id = storage.start_run(seed: 1, mode: "full", full: true)
+      storage.record_result(run_id, result(identity: "old"))
+      storage.record_result(run_id, result(identity: "new"))
+
+      found = storage.tests_at("test/cases/sessions_case.rb", 12)
+
+      assert_equal %w[new old], found.map { |row| row[:identity] }
+      assert_equal "SessionsCase \"expires after inactivity\"", found.first[:label]
+      assert_equal 12, found.first[:line].to_i
+    end
+
+    def test_tests_at_matches_a_path_recorded_either_way_round
+      run_id = storage.start_run(seed: 1, mode: "full", full: true)
+      storage.record_result(run_id, result(identity: "aaa"))
+
+      assert_equal ["aaa"], storage.tests_at("sessions_case.rb").map { |row| row[:identity] }
+      assert_equal ["aaa"], storage.tests_at("/repo/test/cases/sessions_case.rb", 12).map { |row| row[:identity] }
+      assert_empty storage.tests_at("test/cases/sessions_case.rb", 99)
+      assert_empty storage.tests_at("test/cases/nothing_here_case.rb")
+    end
+
     private
 
     def build_with(adapter_name, url: nil)

@@ -506,6 +506,29 @@ module Constable
         exit(status)
       end
 
+      desc "add PATH:LINE", "Jail a test by name -- tracked and skipped instead of blocking the build"
+      long_desc <<~DESC
+        For a test that is known broken and being worked on. It is skipped from now on,
+        reported in its own summary category every run, and listed by `constable jail`
+        until somebody releases it. Its `briefing`/`witness` setup still runs, so setup
+        rot surfaces immediately rather than on the day it comes back.
+
+        The test has to have run at least once: Constable identifies a test by the content
+        of its body, which it learns by running it.
+      DESC
+      def add(locator)
+        jail = Jail.new(config: Constable.config, storage: Constable.storage)
+        file, line = Jail.split_target(locator)
+        found = Constable.storage.tests_at(file, line)
+        refuse_unknown(locator) if found.empty?
+        refuse_ambiguous_history(locator, found) if found.size > 1
+
+        test = found.first
+        jail.jail_identity(test[:identity], label: test[:label], file: test[:file], line: test[:line])
+        say "Jailed #{test[:file]}:#{test[:line]}  #{test[:label]}"
+        say "It is skipped and reported every run until `constable jail release` lets it out."
+      end
+
       desc "parole PATH:LINE", "Move a jailed test to parole -- runs again, but watched"
       def parole(locator)
         act(locator) { |jail, identity| jail.parole(identity) }
@@ -564,6 +587,22 @@ module Constable
             exit(EXIT_USAGE)
           end
           yield jail, identity
+        end
+
+        # `jail add` reads the history rather than the docket, so it refuses in its own
+        # words: the answer to "which test did you mean" is the list of what ran there.
+        def refuse_ambiguous_history(locator, found)
+          CLI.complain("#{locator} matches #{found.size} tests that have run. Name one:")
+          found.sort_by { |test| test[:line].to_i }.each do |test|
+            CLI.complain("  #{test[:file]}:#{test[:line]}  #{test[:label]}")
+          end
+          exit(EXIT_USAGE)
+        end
+
+        def refuse_unknown(locator)
+          CLI.complain("No test at #{locator} has run yet, so there is nothing to jail. " \
+                       "Constable identifies a test by its body, which it learns by running it.")
+          exit(EXIT_USAGE)
         end
 
         # A bare path naming several tests is a question. Answer it with the list rather

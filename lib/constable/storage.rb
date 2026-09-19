@@ -234,6 +234,31 @@ module Constable
              ))
       end
 
+      # Every test the blotter has seen at a location, most recently run first. What
+      # `constable jail add PATH:LINE` needs: a test that has never been jailed is not on
+      # the docket to look up, but it is in the history of what has run.
+      #
+      # The path is matched by suffix, so `test/cases/user_case.rb` finds a row recorded
+      # as an absolute path and the other way round.
+      def tests_at(file, line = nil)
+        needle = file.to_s.delete_prefix("/")
+        binds = ["%#{File.basename(needle)}"]
+        sql = +"SELECT identity, label, file, line, MAX(id) AS seen FROM flake_history WHERE file LIKE ?"
+        if line
+          sql << " AND line = ?"
+          binds << line.to_i
+        end
+        sql << " GROUP BY identity, label, file, line ORDER BY seen DESC"
+        # The basename narrows it in SQL; whether the rest of the path agrees is decided
+        # here, because either side may be the absolute one and `||` is not portable.
+        rows(query(sql, binds)).select { |row| self.class.same_file?(row[:file], needle) }
+      end
+
+      def self.same_file?(stored, needle)
+        stored = stored.to_s.delete_prefix("/")
+        stored == needle || stored.end_with?("/#{needle}") || needle.end_with?("/#{stored}")
+      end
+
       # The most recently recorded status for a test, as a Symbol, or nil if never seen.
       # The flake detector compares this against the status about to be recorded.
       def last_status(identity)

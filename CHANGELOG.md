@@ -5,6 +5,17 @@ All notable changes to this project are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [3.24.0] - 2026-09-19
+
+### `constable jail add PATH:LINE`
+
+There was no way to jail a test by name. Jailing happened through `--jail` (every failure in
+a run) or `jail_flakes`, and the recommendation Constable itself printed after repeated
+failures -- `constable jail PATH:LINE` -- was not a command. It is now `constable jail add`,
+which finds the test in the blotter's history, so it works for any test that has run, not
+only one already on the docket. Ambiguous or unknown locations are refused with the list of
+what did run there.
+
 ## [3.23.0] - 2026-09-19
 
 ### `constable test --watch`

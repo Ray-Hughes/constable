@@ -35,6 +35,46 @@ module Constable
       $stdout = original
     end
 
+    # --- jail add ---------------------------------------------------------------
+
+    # Records a test as having run, which is what `jail add` looks a test up in.
+    def record_a_run(identity:, file: "test/cases/reports_case.rb", line: 12,
+                     case_name: "ReportsCase", description: "is red")
+      run_id = Constable.storage.start_run(seed: 1, mode: "full", full: true)
+      Constable.storage.record_result(run_id, Result.new(
+                                                identity: identity, case_name: case_name, description: description,
+                                                file: file, line: line, kind: :native, status: :failed
+                                              ))
+    end
+
+    def test_jail_add_jails_a_test_that_has_run
+      record_a_run(identity: "abc123")
+
+      output = capture { CLI::JailCommand.new.add("test/cases/reports_case.rb:12") }
+
+      assert_predicate @jail.entry("abc123"), :jailed?
+      assert_includes output, "Jailed test/cases/reports_case.rb:12"
+      assert_includes output, %(ReportsCase "is red")
+    end
+
+    def test_jail_add_refuses_a_location_nothing_has_run_at
+      error = assert_raises(SystemExit) { capture { CLI::JailCommand.new.add("test/cases/nope_case.rb:1") } }
+
+      assert_equal CLI::EXIT_USAGE, error.status
+      assert_empty @jail.entries
+    end
+
+    # Which of the two did you mean? The answer is the list, not whichever row came back first.
+    def test_jail_add_refuses_a_file_holding_several_tests
+      record_a_run(identity: "one", line: 12, description: "is red")
+      record_a_run(identity: "two", line: 30, description: "is blue")
+
+      error = assert_raises(SystemExit) { capture { CLI::JailCommand.new.add("test/cases/reports_case.rb") } }
+
+      assert_equal CLI::EXIT_USAGE, error.status
+      assert_empty @jail.entries
+    end
+
     # --- jail parole / release --------------------------------------------------
 
     def test_jail_parole_moves_a_jailed_test_to_parole

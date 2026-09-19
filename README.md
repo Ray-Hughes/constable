@@ -882,6 +882,7 @@ work the docket down.
 
 ```console
 $ constable test --jail          # failures get jailed instead of failing the build
+$ constable jail add PATH:LINE   # or jail one known-broken test by name
 $ constable jail                 # the docket: reason, file:line, date jailed
 $ constable jail run             # re-run jailed tests sequentially
 $ constable jail parole PATH:LINE
@@ -995,7 +996,7 @@ worse than one that resets.
 | `constable test --jail` | The full run, in jail mode |
 | `constable test --shard i/n` | One slice of the suite, for a CI matrix |
 | `constable timings [export\|merge]` | Durations as a file, so every shard of a matrix balances by the same numbers |
-| `constable jail [run\|parole\|release]` | The docket. `release --all` empties it |
+| `constable jail [add\|run\|parole\|release]` | The docket. `add` jails one test; `release --all` empties it |
 | `constable warrants [release]` | Outstanding warrants |
 | `constable watchlist` | Everything under supervision right now |
 | `constable status` | How the suite is doing over time |
